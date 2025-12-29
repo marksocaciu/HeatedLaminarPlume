@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<Xdmf Version="3.0">
+  <Domain>
+    <Grid Name="mesh" GridType="Uniform">
+      <Topology NumberOfElements="42816" TopologyType="Triangle" NodesPerElement="3">
+        <DataItem Dimensions="42816 3" NumberType="UInt" Format="HDF">air_pressure.h5:/Mesh/mesh/topology</DataItem>
+      </Topology>
+      <Geometry GeometryType="XY">
+        <DataItem Dimensions="21977 2" Format="HDF">air_pressure.h5:/Mesh/mesh/geometry</DataItem>
+      </Geometry>
+      <Attribute Name="f_2308-0" AttributeType="Scalar" Center="Node">
+        <DataItem Dimensions="21977 1" Format="HDF">air_pressure.h5:/VisualisationVector/0</DataItem>
+      </Attribute>
+    </Grid>
+  </Domain>
+</Xdmf>

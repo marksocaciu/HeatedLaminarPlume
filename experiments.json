@@ -1,0 +1,93 @@
+{
+  "config_version": "1.0",
+  "defaults": {
+    "units": {
+      "length": "m",
+      "temperature": "K",
+      "pressure": "Pa",
+      "density": "kg/m^3",
+      "dynamic_viscosity": "Pa*s",
+      "thermal_conductivity": "W/(m*K)",
+      "specific_heat": "J/(kg*K)"
+    },
+    "symmetry": {
+      "coordinate_0": "x",
+      "coordinate_1": "y"
+    },
+    "gravity": [0.0, -9.81]
+  },
+  "experiments": [
+    {
+      "name": "PlumeCase_Fuji_Air",
+      "author": "Fuji",
+      "notes": "4.fuji",
+
+      "fluid": {
+        "material_name": "air",
+        "properties": {
+          "rho": 1.1614,
+          "mu": 1.85e-5,
+          "k": 0.0257,
+          "cp": 1007.0,
+          "beta": 3.4e-3
+        }
+      },
+
+      "wire": {
+        "material_name": "nichrome",
+        "properties": {
+          "rho": 8400.0,
+          "k": 10.0,
+          "cp": 450.0,
+          "emissivity": 0.8,
+          "electrical_resistivity": 1.1e-6
+        }
+      },
+
+      "dimensions": {
+        "domain": {
+          "type": "2D_axisymmetric",
+          "coordinates": {
+            "x_min": 0.0,
+            "x_max": 0.05,
+            "y_min": 0.0,
+            "y_max": 0.20
+          }
+        },
+
+        "wire": {
+          "diameter": 0.0005,
+          "center": {
+            "r": 0.0,
+            "z": 0.02
+          }
+        }
+      },
+
+      "boundary_sets": {
+        "symmetry_axis": { "description": "r=0" },
+        "outer_radial": { "description": "r=r_max" },
+        "bottom": { "description": "z=z_min" },
+        "top": { "description": "z=z_max" },
+        "wire_surface": { "description": "wire boundary/facet set" }
+      },
+
+      "mesh": {
+        "source": "mesh_plume_case_001.msh",
+        "tags": {
+          "cells": {
+            "fluid": 1,
+            "wire": 10
+          },
+          "facets": {
+            "symmetry_axis": 101,
+            "outer_radial": 102,
+            "bottom": 103,
+            "top": 104,
+            "wire_surface": 110
+          }
+        }
+      }
+    }
+  ]
+}
