@@ -60,27 +60,32 @@
               },
               "wire": {
                 "type": "object",
-                "required": ["diameter", "center"],
+                "required": ["diameter"],
                 "properties": {
-                  "diameter": { "type": "number", "exclusiveMinimum": 0.0 },
-                  "center": {
-                    "type": "object",
-                    "required": ["r", "z"],
-                    "properties": {
-                      "r": { "type": "number", "minimum": 0.0 },
-                      "z": { "type": "number" }
-                    }
-                  }
+                  "diameter": { "type": "number", "exclusiveMinimum": 0.0 }
                 }
               }
             }
           },
-
-          "boundary_sets": { "type": "object" },
-          "mesh": { "type": "object" }
+          
+          "mesh": { "type": "object" },
+          "initial_conditions": { 
+            "type": "object",
+            "properties": {
+              "temperature": { "type": "number" },
+              "wire_length": { "type": "number" },
+              "heat_volume": { "type": "number" },
+              "heat_surface": { "type": "number" },
+              "heat_length": { "type": "number" }
+            }
         },
+        "measurement_points": { 
+          "type": "array" 
+        },
+        
         "additionalProperties": true
       }
     }
   }
+}
 }
