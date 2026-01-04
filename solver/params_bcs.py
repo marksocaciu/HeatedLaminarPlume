@@ -50,17 +50,25 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     T_c = fenics.Constant(cold_wall_temperature)
     return mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
-class Hot_wall(fenics.SubDomain):
-    def inside(self, x, on_boundary):
-        return on_boundary and fenics.near((x[0]**2)+((x[1]-11.)**2)-1., 0., eps= 1.e-1) and x[1] >= 10. and x[1] <= 12.
-# hot_wall = " near((x[0]*x[0])+((x[1]-11.)*(x[1]-11.))-1., 0.)"
 
-def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature):
+def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment):
+    r = experiment.dimensions.wire.diameter / 2.
+    class Hot_wall(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                (x[0]**2)+((x[1]-11.*r)**2)\
+                    -1.*r, 0., eps= 1.e-1*r
+                ) \
+                    and x[1] >= 10.*r \
+                    and x[1] <= 12.*r
     hot_wall=Hot_wall()
 
-    cold_wall = "near(x[0],  1.) | near(x[1], 0.) | near(x[1], 1.)"
+    # x[0] - x coordinate
+    # x[1] - y coordinate
+    cold_wall = f"near(x[0],  {r * 40}) | near(x[1], {0.0}) | near(x[1], {r * 100})"
+    # cold_wall = f"near(x[0],  {experiment.dimensions.domain.y_max}) | near(x[1], {experiment.dimensions.domain.x_max}) | near(x[1], {experiment.dimensions.domain.x_min})"
 
-    adiabatic_walls = "near(x[0],  0.)"
+    # adiabatic_walls = f"near(x[0],  {experiment.dimensions.domain.y_min})"
 
     # walls = hot_wall + " | " + cold_wall + " | " + adiabatic_walls
 
@@ -68,6 +76,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature):
 
     W_T = W.sub(2)
 
+    print("Setting boundary conditions...")
     boundary_conditions = [
         fenics.DirichletBC(W_u, (0., 0.), hot_wall),
         # fenics.DirichletBC(W_T, hot_wall_temperature, hot_wall),
@@ -79,7 +88,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature):
 
 def volume_heat_source(experiment: Experiment):
     if experiment.initial_conditions.heat_length is not None:
-        heat_volume = (math.pi *(experiment.dimensions.wire.diameter / 2)**2)* experiment.initial_conditions.heat_length
+        heat_volume = experiment.initial_conditions.heat_length / (math.pi *(experiment.dimensions.wire.diameter / 2)**2) 
     elif experiment.initial_conditions.heat_volume is not None:
         heat_volume = experiment.initial_conditions.heat_volume
     elif experiment.initial_conditions.heat_surface is not None:

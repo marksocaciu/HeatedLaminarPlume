@@ -86,7 +86,8 @@
           "mu": 1.85e-5,
           "k": 0.0257,
           "cp": 1007.0,
-          "beta": 3.4e-3
+          "beta": 3.4e-3,
+          "q": 0.0
         }
       },
       "wire": {
@@ -96,7 +97,8 @@
           "k": 10.0,
           "cp": 450.0,
           "emissivity": 0.8,
-          "electrical_resistivity": 1.1e-6
+          "electrical_resistivity": 1.1e-6,
+          "h": 15.0
         }
       },
       "dimensions": {

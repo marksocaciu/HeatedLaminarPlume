@@ -16,7 +16,7 @@ SetFactory("OpenCASCADE");
 // experimental setups
 
 R_placeholder = 1;
-resolution_placeholder = 10;
+resolution_placeholder = 50;
 
 R = R_placeholder;
 w = 40 * R;
@@ -65,7 +65,12 @@ Physical Surface(11) = {1};             // air domain
 
 // Setting mesh resolution on the wire
 Transfinite Line{7} = resolution;
-Transfinite Line{6} = resolution / 10 + 1;
+Transfinite Line{6} = resolution / 10;
+Transfinite Line{1} = resolution ;
+Transfinite Line{2} = resolution * 4;
+Transfinite Line{3} = resolution ;
+Transfinite Line{4} = resolution * 3;
+Transfinite Line{5} = resolution / 2;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};

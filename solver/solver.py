@@ -23,14 +23,14 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     
     p_n, u_n, T_n = fenics.split(w_n)
     
-    fenics.plot(T_n)
-    plt.title("$T^0$")
-    plt.xlabel("$x$")
-    plt.ylabel("$y$")
+    # fenics.plot(T_n)
+    # plt.title("$T^0$")
+    # plt.xlabel("$x$")
+    # plt.ylabel("$y$")
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
-def nonlinear_solver(u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
                      W: fenics.FunctionSpace, w: fenics.Function,
                      psi_p, psi_u, psi_T,
                      mu, Pr, f_b, T_c, T_air_bc,
@@ -68,7 +68,7 @@ def nonlinear_solver(u_n: fenics.Function, u: fenics.Function, T_n: fenics.Funct
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
 
-    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment)
 
     w.leaf_node().vector()[:] = w_n.leaf_node().vector()
     problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)

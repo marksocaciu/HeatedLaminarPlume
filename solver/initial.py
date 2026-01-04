@@ -5,7 +5,7 @@ from utils.plot import *
 from fenics import *
 from dolfin import *
 
-def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume) -> fenics.Function:
+def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx) -> Tuple[fenics.Function, fenics.Function]:
     # -----------------------------------------
     # Function spaces
     # -----------------------------------------
@@ -25,10 +25,10 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume) -> fenics.Func
     # ct: MeshFunction("size_t", mesh, mesh.topology().dim())
     # ct.array() gives tag per cell in order of mesh.cells()
 
-    k_vals = np.full(mc.array().shape, k_air, dtype=float)
+    k_vals = np.full(mc.array().shape, experiment.fluid.properties["k"], dtype=float)
     k_vals[mc.array() == WIRE_TAG] = k_of_T(T_ambient)
 
-    q_vals = np.full(mc.array().shape, q_air, dtype=float)
+    q_vals = np.full(mc.array().shape, experiment.fluid.properties["q"], dtype=float)
     q_vals[mc.array() == WIRE_TAG] = heat_volume
     # Assign into DG0 functions
     k_func.vector()[:] = k_vals
@@ -37,8 +37,8 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume) -> fenics.Func
     # -----------------------------------------
     # Boundary data
     # -----------------------------------------
-    T_inf = fenics.Constant(T_ambient)
-    h     = fenics.Constant(h_conv)
+    T_inf = fenics.Constant(experiment.initial_conditions.temperature)
+    h     = fenics.Constant(experiment.wire.properties["h"])
 
     # -----------------------------------------
     # Measures
