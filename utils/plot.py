@@ -1,4 +1,4 @@
-from imports import *
+from utils.imports import *
 
 def plot_mesh(mesh,  title="Mesh", cmap="", colorbar=False, mode="", figsize=(8,6)):
     plt.figure(figsize=figsize)

@@ -373,21 +373,12 @@ def load_experiment_config(
 # -----------------------------
 # CLI
 # -----------------------------
-def parser() -> List[Experiment]:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Load experiments.json into Experiment objects.")
-    parser.add_argument("experiments_json", type=str, help="Path to experiments.json")
-    parser.add_argument("--schema", type=str, default=None, help="Path to experiments.schema.json (optional)")
-    parser.add_argument("--no-validate", action="store_true", help="Disable schema validation")
-    parser.add_argument("--strict-schema", action="store_true", help="Fail if schema validation reports errors")
-    args = parser.parse_args()
-
+def parser(experiments_json_path: str, schema_json_path: Optional[str] = None, ) -> List[Experiment]:
     cfg_version, defaults, exps, schema_errors = load_experiment_config(
-        args.experiments_json,
-        schema_json_path=args.schema,
-        validate=not args.no_validate,
-        strict_schema=args.strict_schema,
+        experiments_json_path,
+        schema_json_path=schema_json_path,
+        validate=True,
+        strict_schema=False,
     )
 
     print(f"config_version: {cfg_version}")

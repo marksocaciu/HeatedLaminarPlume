@@ -1,6 +1,7 @@
 from utils.imports import *
+from utils.parser import *
 
-def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
+def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function, T_ambient: float,
               rho_air: float, beta_air: float):
     # DG0 fields for mu, PR, Ra, and f_B
     V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
@@ -74,3 +75,13 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature):
         fenics.DirichletBC(W_T, cold_wall_temperature, cold_wall)]
     
     return boundary_conditions
+
+
+def volume_heat_source(experiment: Experiment):
+    if experiment.initial_conditions.heat_length is not None:
+        heat_volume = (math.pi *(experiment.dimensions.wire.diameter / 2)**2)* experiment.initial_conditions.heat_length
+    elif experiment.initial_conditions.heat_volume is not None:
+        heat_volume = experiment.initial_conditions.heat_volume
+    elif experiment.initial_conditions.heat_surface is not None:
+        heat_volume = 4.0 / experiment.dimensions.wire.diameter * (experiment.initial_conditions.heat_surface )
+    return heat_volume
