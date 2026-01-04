@@ -1,4 +1,4 @@
-from imports import *
+from utils.imports import *
 
 def k_of_T(T_K: float) -> float:
     _TK = np.array([300, 600, 800, 1000, 1200], dtype=float)

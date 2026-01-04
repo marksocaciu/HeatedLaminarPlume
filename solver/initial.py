@@ -5,7 +5,7 @@ from utils.plot import *
 from fenics import *
 from dolfin import *
 
-def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP) -> fenics.Function:
+def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume) -> fenics.Function:
     # -----------------------------------------
     # Function spaces
     # -----------------------------------------
@@ -29,7 +29,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP) -> fenics.Function:
     k_vals[mc.array() == WIRE_TAG] = k_of_T(T_ambient)
 
     q_vals = np.full(mc.array().shape, q_air, dtype=float)
-    q_vals[mc.array() == WIRE_TAG] = q_wire
+    q_vals[mc.array() == WIRE_TAG] = heat_volume
     # Assign into DG0 functions
     k_func.vector()[:] = k_vals
     q_func.vector()[:] = q_vals
@@ -111,13 +111,14 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP) -> fenics.Function:
     save_experiment(OUTPUT_XDMF_PATH_TEMP, mesh, [T_full])
     plot_mesh(T_full, title="Temperature Distribution in Wire and Air", cmap = "coolwarm", colorbar=True)
 
-    return T_full
+    return T_full, k_func
 
 def flux_continuity(T_full: fenics.Function,
+                    k_func: fenics.Function,
                     mesh: fenics.Mesh,
                     sub_mesh: fenics.Mesh,
-                    sub_ft: fenics.MeshFunctionSizet,
-                    mc: fenics.MeshFunctionSizet) -> fenics.Function:
+                    sub_ft: fenics.MeshFunction,
+                    mc: fenics.MeshFunction) -> fenics.Function:
     # -----------------------------------------
     # preparing for flux continuity
     # -----------------------------------------

@@ -79,6 +79,6 @@ Mesh 2;
 Mesh.Smoothing = 100;
 
 // Saving the geometry
-Save "plume_coarse.msh";
+Save "plume.msh";
 
 Exit;

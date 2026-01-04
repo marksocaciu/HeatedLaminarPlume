@@ -1,6 +1,6 @@
 from __future__ import annotations
-import dolfin
-from dolfin import *
+import fenics
+from fenics import *
 import matplotlib.pyplot as plt
 import numpy as np
 import os
@@ -9,14 +9,15 @@ import meshio
 import gmsh
 import subprocess
 import argparse
-
+import math
 from pathlib import Path
 import re
 from typing import Optional, Tuple
 
 import gmsh
 
-
+EXPERIMENTS_JSON_PATH = "experiments.json"
+SCHEMA_JSON_PATH = "experiments.schema.json"
 TRIG_XDMF_PATH = "data/plume.xdmf"         # cell mesh (Grid)
 FACETS_XDMF_PATH = "data/plume_mt.xdmf"    # facet tags (Grid)
 OUTPUT_XDMF_PATH_WIRE = "data/base/wire_temperature.xdmf" # output file for wire temperature

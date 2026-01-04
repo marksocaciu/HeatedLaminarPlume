@@ -13,7 +13,7 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     w = fenics.Function(W)
     p, u, T = fenics.split(w)
 
-    mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T_ambient, rho_air, beta_air)
+    mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T, T_ambient, rho_air, beta_air)
 
     w_n = fenics.interpolate(
     fenics.Expression(("0.", "0.", "0.", "T_full"), 
@@ -30,7 +30,7 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
-def nonlinear_solver(u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function,
+def nonlinear_solver(u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
                      W: fenics.FunctionSpace, w: fenics.Function,
                      psi_p, psi_u, psi_T,
                      mu, Pr, f_b, T_c, T_air_bc,

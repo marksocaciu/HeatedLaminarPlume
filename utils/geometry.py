@@ -1,4 +1,4 @@
-from imports import *
+from utils.imports import *
 
 def create_mesh(mesh, cell_type, prune_z=False):
     cells = mesh.get_cells_type(cell_type)
@@ -24,7 +24,7 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
                   ELEM="triangle", PRUNE_Z=True):
 
-    subprocess.run(f"gmsh {GEOM_FILE}", shell=True, check=True)
+    subprocess.run(f"gmsh {GEOM_FILE} -nopopup", shell=True, check=True)
 
     print("Converting MSH to XDMF...")
     msh = meshio.read(MSH_FILE)
@@ -154,7 +154,8 @@ def geometry_template(
     output_path = Path(output_path)
 
     # Template is next to this script
-    template_path = Path(__file__).resolve().parent / template_geo_name
+    template_path = Path.cwd()/ template_geo_name
+    print(template_path)
     if not template_path.exists():
         raise FileNotFoundError(f"Template .geo not found: {template_path}")
 
@@ -182,10 +183,12 @@ def geometry_template(
 
     # Strip directives that are inconvenient/dangerous when using the Python API
     # (we will generate and write from Python)
-    geo = re.sub(r"(?m)^\s*Mesh\s+\d+\s*;\s*$", "", geo)
-    geo = re.sub(r'(?m)^\s*Save\s+"[^"]*"\s*;\s*$', "", geo)
-    geo = re.sub(r"(?m)^\s*Exit\s*;\s*$", "", geo)
+    # geo = re.sub(r"(?m)^\s*Mesh\s+\d+\s*;\s*$", "", geo)
+    # geo = re.sub(r'(?m)^\s*Save\s+"[^"]*"\s*;\s*$', "", geo)
+    # geo = re.sub(r"(?m)^\s*Exit\s*;\s*$", "", geo)
 
+    output_path = Path.cwd()/ output_path / "geom.geo"
+    print(output_path)
     # Decide where to write the modified .geo
     if output_path.suffix.lower() == ".geo":
         modified_geo_path = output_path
