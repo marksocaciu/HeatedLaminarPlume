@@ -6,6 +6,7 @@ from utils.plot import *
 from solver.solver import *
 from solver.initial import *
 from solver.biot import *
+from solver.params_bcs import *
 
 def main():
     # Parse command line arguments
@@ -18,8 +19,9 @@ def main():
     )
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
-    experiment_list = parser()
+    experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
     experiment = experiment_list[args.experiment_index]
+    print(f"Running experiment: {experiment.name}")
 
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
@@ -38,21 +40,29 @@ def main():
     ELEM = "triangle"
 
     # Generate and read mesh
-    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
+    # generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH, MESH_NAME, PRINT_TAG_SUMMARY)
     sub_mesh, sub_ft, sub_dx, sub_ds = create_submesh(mesh,mc,mf,AIR_TAG)
-    plot_mesh(mesh, title="Full Mesh")
-    plot_mesh(sub_mesh, title="Sub-Mesh")
+    # plot_mesh(mesh, title="Full Mesh")
+    # plot_mesh(sub_mesh, title="Sub-Mesh")
 
     # Initial guess for solver
-    T_full = initial_guess(mesh,mc,mf,OUTPUT_XDMF_PATH_TEMP)
-    qn_air = flux_continuity(T_full, mesh, sub_mesh, sub_ft, mc)
+    heat_volume = volume_heat_source(experiment)
+    T_full, k_func = initial_guess(mesh,mc,mf,OUTPUT_XDMF_PATH_TEMP,heat_volume)
+    qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh, sub_ft, mc)
 
     # Solving the problem
-    w = solver(sub_mesh, sub_dx, sub_ds, T_full, qn_air, experiment.material.rho_air, experiment.material.beta_air, experiment.environment.T_ambient)
-    biot_air_h_eff, biot_air_Bi = biot(sub_mesh, sub_ft, T_full, qn_air, experiment.environment.T_ambient, experiment.material.k_wire, experiment.dimensions.wire.diameter) 
+    # w = solver(sub_mesh, sub_dx, sub_ds, T_full, qn_air, experiment.fluid.properties["rho"], experiment.fluid.properties["beta"], experiment.initial_conditions.temperature)
+    W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(sub_mesh, T_full, experiment.initial_conditions.temperature, experiment.fluid.properties["rho"], experiment.fluid.properties["beta"])
+    w = nonlinear_solver(u_n,u,T_n,T, p, W, w,
+                         psi_p, psi_u, psi_T,
+                         mu, Pr, f_b, T_c, T_air_bc,
+                         sub_dx, sub_ds, sub_ft, qn_air,
+                         w_n)
+    biot_air_h_eff, biot_air_Bi = biot(sub_mesh, sub_ft, T_full, qn_air, experiment.initial_conditions.temperature, experiment.wire.properties["k"], experiment.dimensions.wire.diameter) 
 
 
+    # p, u, T = fenics.split(w)
     p, u, T = w.split()
 
     plot_mesh(T, title="Temperature field", cmap = "coolwarm", colorbar=True)
