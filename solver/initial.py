@@ -4,6 +4,7 @@ from utils.material import *
 from utils.plot import *
 from fenics import *
 from dolfin import *
+from solver.scales import *
 
 def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx) -> Tuple[fenics.Function, fenics.Function]:
     # -----------------------------------------
@@ -118,7 +119,8 @@ def flux_continuity(T_full: fenics.Function,
                     mesh: fenics.Mesh,
                     sub_mesh: fenics.Mesh,
                     sub_ft: fenics.MeshFunction,
-                    mc: fenics.MeshFunction) -> fenics.Function:
+                    mc: fenics.MeshFunction, 
+                    sc: NondimScales) -> fenics.Function:
     # -----------------------------------------
     # preparing for flux continuity
     # -----------------------------------------
@@ -186,7 +188,10 @@ def flux_continuity(T_full: fenics.Function,
         gT = gradT_DG0(c_parent.midpoint())
         k_w = k_func(c_parent.midpoint())
 
-        qn = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
+        # qn = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
+        qn_dim = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
+        qn_star = qn_dim * (sc.Lref / (k_air * sc.dTref))
+        qn = qn_star
 
         # Accumulate into the adjacent air cell (DG0)
         qn_air.vector()[c_air_idx] += qn

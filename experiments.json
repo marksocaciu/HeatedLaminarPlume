@@ -106,9 +106,89 @@
           "type": "2D_symmetric",
           "coordinates": {
             "x_min": 0.0,
-            "x_max": 0.05,
+            "x_max": 0.005,
             "y_min": 0.0,
-            "y_max": 0.20
+            "y_max": 0.020
+          }
+        },
+        "wire": {
+          "diameter": 7.5e-5
+        }
+      },
+      "mesh": {
+        "source": "plume.msh",
+        "tags": {
+          "cells": {
+            "fluid": 1,
+            "wire": 10
+          },
+          "facets": {
+            "symmetry_axis": 101,
+            "outer_radial": 102,
+            "bottom": 103,
+            "top": 104,
+            "wire_surface": 110
+          }
+        }
+      },
+      "initial_conditions": {
+        "temperature": 292.95,
+        "wire_length": 0.04,
+        "heat_length": 9.5
+      },
+      "measurement_points": [
+        {
+          "x": 0.0,
+          "y": 0.01
+        },
+        {
+          "x": 0.0,
+          "y": 0.02
+        },
+        {
+          "x": 0.0,
+          "y": 0.04
+        },
+        {
+          "x": 0.0,
+          "y": 0.08
+        }
+      ]
+    },
+    {
+      "name": "PlumeCase_Brodowicz_Air_small",
+      "author": "Brodowicz",
+      "notes": "3.brodowicz",
+      "fluid": {
+        "material_name": "air",
+        "properties": {
+          "rho": 1.1614,
+          "mu": 1.85e-5,
+          "k": 0.0257,
+          "cp": 1007.0,
+          "beta": 3.4e-3,
+          "q": 0.0
+        }
+      },
+      "wire": {
+        "material_name": "nichrome",
+        "properties": {
+          "rho": 8400.0,
+          "k": 10.0,
+          "cp": 450.0,
+          "emissivity": 0.8,
+          "electrical_resistivity": 1.1e-6,
+          "h": 15.0
+        }
+      },
+      "dimensions": {
+        "domain": {
+          "type": "2D_symmetric",
+          "coordinates": {
+            "x_min": 0.0,
+            "x_max": 0.0,
+            "y_min": 0.0,
+            "y_max": 0.0
           }
         },
         "wire": {

@@ -11,6 +11,7 @@
 
 // Setting the appropiate kernel
 SetFactory("OpenCASCADE");
+General.NumThreads = 0; // Use all threads
 
 // Setting up the parameters for the geometry to be modelled for multiple 
 // experimental setups
@@ -67,10 +68,10 @@ Physical Surface(11) = {1};             // air domain
 Transfinite Line{7} = resolution;
 Transfinite Line{6} = resolution / 10;
 Transfinite Line{1} = resolution ;
-Transfinite Line{2} = resolution * 4;
+Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution ;
-Transfinite Line{4} = resolution * 3;
-Transfinite Line{5} = resolution / 2;
+Transfinite Line{4} = resolution * 5;
+Transfinite Line{5} = resolution ;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};

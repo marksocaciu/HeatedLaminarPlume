@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 import re
 from typing import Optional, Tuple
+from dataclasses import dataclass
 
 import gmsh
 

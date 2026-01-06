@@ -9,10 +9,11 @@ def create_mesh(mesh, cell_type, prune_z=False):
     return out_mesh
 
 def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
+    encoding = XDMFFile.Encoding.ASCII
     xdmf = XDMFFile(MPI.comm_world, OUTPUT_XDMF_PATH)
     xdmf.parameters["flush_output"] = True
     xdmf.parameters["functions_share_mesh"] = True
-    xdmf.write(mesh)
+    xdmf.write(mesh, encoding=encoding)
 
     for sol in sol_list:
         xdmf.write(sol)
@@ -24,7 +25,7 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
                   ELEM="triangle", PRUNE_Z=True):
 
-    subprocess.run(f"gmsh {GEOM_FILE} -nopopup", shell=True, check=True)
+    subprocess.run(f"gmsh -nopopup -nt 12 {GEOM_FILE}", shell=True, check=True)
 
     print("Converting MSH to XDMF...")
     msh = meshio.read(MSH_FILE)
@@ -120,9 +121,10 @@ def create_submesh(mesh, mc, mf, tag):
 def geometry_template(
     wire_radius: float,
     output_path: str | Path,
-    *,
+    xmax: Optional[float] = None,
+    ymax: Optional[float] = None,
     template_geo_name: str = "geom.geo",
-    resolution: Optional[int] = 100
+    resolution: Optional[int] = 150
 ) -> Path:
     """
     Load a .geo template located in the same directory as this script, set the wire radius
@@ -180,6 +182,29 @@ def geometry_template(
         )
         if n2 != 1:
             raise ValueError("Could not uniquely replace 'resolution_placeholder = ...;' in the .geo template.")
+
+    if xmax is not None and xmax != 0.0:
+        print(f"Replacing xmax... {xmax}")
+        geo, n3 = re.subn(
+            r"(?m)^\s*w =\s*[0-9]+ \* R;",
+            f"w = {float(xmax)};",
+            geo,
+            count=1,
+        )
+        print(n3)
+        if n3 != 1:
+            raise ValueError("Could not uniquely replace 'w = ...;' in the .geo template.")
+
+    if ymax is not None and ymax != 0.0:
+        print(f"Replacing ymax... {ymax}")
+        geo, n4 = re.subn(
+            r"(?m)^\s*h =\s*[0-9]+ \* R;",
+            f"h = {float(ymax)};",
+            geo,
+            count=1,
+        )
+        if n4 != 1:
+            raise ValueError("Could not uniquely replace 'h = ...;' in the .geo template.")
 
     # Strip directives that are inconvenient/dangerous when using the Python API
     # (we will generate and write from Python)

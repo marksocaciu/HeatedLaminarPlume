@@ -2,7 +2,7 @@ from utils.imports import *
 from solver.params_bcs import *
 
 def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
-           rho_air: float, beta_air: float):
+           rho_air: float, beta_air: float, experiment: Experiment):
     P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
     P2 = fenics.VectorElement('P', sub_mesh.ufl_cell(), 2)
     mixed_element = fenics.MixedElement([P1, P2, P1])
@@ -13,7 +13,7 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     w = fenics.Function(W)
     p, u, T = fenics.split(w)
 
-    mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T, T_ambient, rho_air, beta_air)
+    mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T, T_ambient, rho_air, beta_air, experiment)
 
     w_n = fenics.interpolate(
     fenics.Expression(("0.", "0.", "0.", "T_full"), 
