@@ -1,5 +1,6 @@
 from utils.imports import *
 from solver.params_bcs import *
+from utils.material import *
 
 def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
@@ -49,11 +50,22 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
         
     mass = -psi_p*div(u)
 
-    momentum = dot(psi_u, u_t + dot(grad(u), u) + f_b) - div(psi_u)*p \
-        + 2.*mu*inner(sym(grad(psi_u)), sym(grad(u)))
+    # momentum = dot(psi_u, u_t + dot(grad(u), u) + f_b) - div(psi_u)*p \
+    #     + 2.*mu*inner(sym(grad(psi_u)), sym(grad(u)))
 
-    energy = psi_T*T_t + dot(grad(psi_T), 1./Pr*grad(T) - T*u)
+    # energy = psi_T*T_t + dot(grad(psi_T), 1./Pr*grad(T) - T*u)
             
+    momentum = (
+        dot(psi_u, u_t + dot(grad(u), u) + f_b)
+        - div(psi_u)*p
+        + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
+    )
+
+    energy = (
+        psi_T*T_t
+        + dot(grad(psi_T), (1.0/Pr) * grad(T) - T*u)
+    )
+
     F = (mass + momentum + energy) * sub_dx
     # F = (mass + momentum + energy)*fenics.dx
 
@@ -71,9 +83,50 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment)
 
     w.leaf_node().vector()[:] = w_n.leaf_node().vector()
+
+
+    return F,w, boundary_conditions, JF, w_n
+
+def base_solver(F, w: fenics.Function, boundary_conditions, JF):
+    problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)
+    solver = fenics.NonlinearVariationalSolver(problem)
+    solver.solve()
+    return w
+
+def temp_dep_solver(F,w, boundary_conditions, JF, w_n: fenics.Function, fluid_material: TemperatureDependentMaterial):
     problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)
 
     solver = fenics.NonlinearVariationalSolver(problem)
-    solver.solve()
+    prm = solver.parameters
+    prm["nonlinear_solver"] = "newton"
 
+    prm["newton_solver"]["absolute_tolerance"] = 5e-10
+    prm["newton_solver"]["relative_tolerance"] = 5e-10
+    prm["newton_solver"]["maximum_iterations"] = 100
+
+    # Initialize
+    w.vector()[:] = w_n.vector()
+
+    # Outer loop: update materials from last temperature, then Newton solve
+    p_old, u_old, T_old = w.split(True)
+
+    for it in range(max_it):
+        fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
+
+        solver.solve()               # Newton solve with frozen coefficients
+
+        _, _, T_new = w.split(True)
+
+        # convergence check on temperature (choose your norm)
+        diff = (T_new.vector() - T_old.vector()).norm("l2")
+        norm = T_old.vector().norm("l2") + 1e-14
+        rel  = diff / norm
+
+        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+
+        if rel < rtol:
+            break
+
+        T_old.assign(T_new)
+    
     return w

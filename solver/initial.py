@@ -143,11 +143,6 @@ def flux_continuity(T_full: fenics.Function,
     sub_mesh.init(tdim-1, tdim)
     mesh.init(tdim-1, tdim)
 
-    n_eps = 1e-10  # will be scaled below (we’ll improve this using h)
-
-    # A small shift distance into the wire, based on local mesh size
-    h_air = CellDiameter(sub_mesh)
-
     for f in facets(sub_mesh):
         if sub_ft[f] != INTERFACE_TAG:
             continue

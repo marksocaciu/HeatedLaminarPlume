@@ -2,10 +2,11 @@ from utils.imports import *
 from utils.geometry import *
 from utils.plot import *
 from utils.material import *
+from solver.scales import *
 
 def biot(sub_mesh: fenics.Mesh, sub_ft: fenics.MeshFunction, T_full: fenics.Function,
          qn_air: fenics.Function, T_ambient: float,
-         k_wire: float, D_wire: float):
+         k_wire: float, D_wire: float, scale: NondimScales = None):
     V0_air = FunctionSpace(sub_mesh, "DG", 0)
 
     h_eff_air = Function(V0_air, name="h_eff_air")
