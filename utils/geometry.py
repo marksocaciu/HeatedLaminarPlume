@@ -84,7 +84,7 @@ def create_submesh(mesh, mc, mf, tag):
     #     print(" --- Fallback: SubMesh (works, but transferring facet tags is more manual")
     #     air_mesh = fenics.SubMesh(mesh, mc, AIR_TAG)
     
-    air_mesh = SubMesh(mesh, mc, AIR_TAG)
+    air_mesh = SubMesh(mesh, mc, tag)
     air_mesh.init(tdim-1, tdim)  # ensure facet-cell connectivity exists
     air_mf = MeshFunction("size_t", air_mesh, tdim-1, 0)
 
@@ -112,6 +112,8 @@ def create_submesh(mesh, mc, mf, tag):
     
     dx_air = Measure("dx", domain=air_mesh)
     ds_air = Measure("ds", domain=air_mesh, subdomain_data=air_mf)
+
+    print(f"Submesh with tag {tag}: and facet tags {set(air_mf.array())}")
 
     return air_mesh, air_mf, dx_air, ds_air
 

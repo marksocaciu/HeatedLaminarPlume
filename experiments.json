@@ -119,21 +119,19 @@
         "source": "plume.msh",
         "tags": {
           "cells": {
-            "fluid": 1,
+            "fluid": 11,
             "wire": 10
           },
           "facets": {
-            "symmetry_axis": 101,
-            "outer_radial": 102,
-            "bottom": 103,
-            "top": 104,
-            "wire_surface": 110
+            "symmetry_axis": 100,
+            "outer_fluid": 101,
+            "wire_surface": 102
           }
         }
       },
       "initial_conditions": {
         "temperature": 292.95,
-        "wire_length": 0.04,
+        "wire_length": 0.25,
         "heat_length": 9.5
       },
       "measurement_points": [
@@ -213,7 +211,7 @@
       },
       "initial_conditions": {
         "temperature": 292.95,
-        "wire_length": 0.04,
+        "wire_length": 0.25,
         "heat_length": 9.5
       },
       "measurement_points": [

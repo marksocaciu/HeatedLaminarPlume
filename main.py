@@ -9,6 +9,40 @@ from solver.biot import *
 from solver.params_bcs import *
 from solver.scales import *
 
+def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
+    # 1) dimensionalize qn_air: qn_dim [W/m^2]
+    k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
+    qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
+
+    # 2) integrate over the *half* interface boundary (your mesh is half-domain)
+    QL_half = fenics.assemble(qn_dim * sub_ds(interface_tag))  # [W/m]
+    QL_full = 2.0 * QL_half                                   # mirror symmetry -> full wire
+
+    # 3) interface length checks (helps debug tagging/completeness)
+    L_half = fenics.assemble(fenics.Constant(1.0) * sub_ds(interface_tag))  # [m]
+    L_full = 2.0 * L_half
+
+    # 4) expected values
+    QL_target = float(experiment.initial_conditions.heat_length)  # [W/m]
+    d = float(experiment.dimensions.wire.diameter)
+    qsurf_target = QL_target / (math.pi * d)  # [W/m^2]
+    qsurf_avg = (QL_half / L_half) if L_half > 0 else float("nan")
+
+    print("=== Interface power conservation ===")
+    print(f"interface_tag = {interface_tag}")
+    print(f"Interface length (half)  L_half  = {L_half:.6e} m")
+    print(f"Interface length (full)  L_full  = {L_full:.6e} m")
+    print(f"Recovered power (half)   QL_half = {QL_half:.6e} W/m")
+    print(f"Recovered power (full)   QL_full = {QL_full:.6e} W/m")
+    print(f"Target power (paper)     QL      = {QL_target:.6e} W/m")
+    print(f"Relative error (full)    = {(QL_full-QL_target)/QL_target:.3%}")
+
+    print("--- Flux magnitude sanity ---")
+    print(f"Target mean q''          = {qsurf_target:.6e} W/m^2  (QL/(pi*d))")
+    print(f"Recovered mean q'' (half)= {qsurf_avg:.6e} W/m^2  (QL_half/L_half)")
+    print("===================================")
+
+
 
 def base_version(experiment: Experiment):
     GEOM_FILE = geometry_template(
@@ -30,7 +64,7 @@ def base_version(experiment: Experiment):
     ELEM = "triangle"
 
     # Generate and read mesh
-    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
+    # generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH, MESH_NAME, PRINT_TAG_SUMMARY)
     sub_mesh, sub_ft, sub_dx, sub_ds = create_submesh(mesh,mc,mf,AIR_TAG)
     # plot_mesh(mesh, title="Full Mesh")
@@ -45,6 +79,10 @@ def base_version(experiment: Experiment):
     print(f"Using heat volume: {heat_volume} W/m^3")
     T_full, k_func = initial_guess(mesh,mc,mf,OUTPUT_XDMF_PATH_TEMP,heat_volume,experiment,dx)
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh, sub_ft, mc, scales)
+
+    # Call it right after qn_air is computed
+    check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment)
+
 
     # Project initial guess to nondim theta
     V_air = fenics.FunctionSpace(sub_mesh, "CG", 1)
@@ -267,9 +305,9 @@ def main():
     print(f"Running experiment: {experiment.name}")
 
     base_version(experiment)
-    temperature_dependent_version(experiment)
-    abs_version(experiment)
-    abs_temperature_dependent_version(experiment)
+    # temperature_dependent_version(experiment)
+    # abs_version(experiment)
+    # abs_temperature_dependent_version(experiment)
 
 
 if __name__ == "__main__":

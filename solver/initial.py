@@ -110,7 +110,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
     # Save result
     # -----------------------------------------
     save_experiment(OUTPUT_XDMF_PATH_TEMP, mesh, [T_full])
-    plot_mesh(T_full, title="Temperature Distribution in Wire and Air", cmap = "coolwarm", colorbar=True)
+    # plot_mesh(T_full, title="Temperature Distribution in Wire and Air", cmap = "coolwarm", colorbar=True)
 
     return T_full, k_func
 
@@ -184,7 +184,7 @@ def flux_continuity(T_full: fenics.Function,
         k_w = k_func(c_parent.midpoint())
 
         # qn = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
-        qn_dim = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
+        qn_dim = k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
         qn_star = qn_dim * (sc.Lref / (k_air * sc.dTref))
         qn = qn_star
 

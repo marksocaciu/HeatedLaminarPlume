@@ -1,6 +1,7 @@
 from utils.imports import *
 from solver.params_bcs import *
 from utils.material import *
+from solver.scales import *
 
 def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
@@ -74,9 +75,17 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     gamma = fenics.Constant(penalty_stabilization_parameter)
 
+    print("Max qn_air:", qn_air.vector().max())
+
     F += -psi_p * gamma * p * sub_dx
     F += qn_air * psi_T * sub_ds(INTERFACE_TAG)
     # F += -psi_p*gamma*p*fenics.dx
+
+    scales = compute_nondimensional_scales(experiment)
+    k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
+    qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
+    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG))
+    print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
 

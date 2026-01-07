@@ -64,10 +64,10 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment):
         def inside(self, x, on_boundary):
             return on_boundary and fenics.near(
                 (x[0]**2)+((x[1]-11.*r)**2)\
-                    -1.*r, 0., eps= 1.e-1*r
+                    -1.*r*r, 0., eps= 1.e-1*r
                 ) \
-                    and x[1] >= 10.*r \
-                    and x[1] <= 12.*r
+                    and x[1] >= 10.*r - 1e-12 \
+                    and x[1] <= 12.*r + 1e-12
         
     class Cold_wall_preset(fenics.SubDomain):
         def inside(self, x, on_boundary):
@@ -78,9 +78,9 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment):
         
     class Cold_wall_modified(fenics.SubDomain):
         def inside(self, x, on_boundary):
-            east = on_boundary and fenics.near(x[0],  experiment.dimensions.domain.x_max, eps = 1.e-1*r)
-            south = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_min, eps = 1.e-1*r)
-            north = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_max, eps = 1.e-1*r)
+            east = on_boundary and fenics.near(x[0],  experiment.dimensions.domain.x_max, eps = 1.e-10)
+            south = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_min, eps = 1.e-10)
+            north = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_max, eps = 1.e-10)
             return east or south or north
     hot_wall=Hot_wall()
 
@@ -88,6 +88,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment):
     # x[1] - y coordinate
     if experiment.dimensions.domain.x_max != 0.0 or experiment.dimensions.domain.y_max != 0.0:
         # cold_wall = f"near(x[0],  {experiment.dimensions.domain.x_max}) | near(x[1], {experiment.dimensions.domain.y_min}) | near(x[1], {experiment.dimensions.domain.y_max})"
+        print("Using modified cold wall BCs")
         cold_wall=Cold_wall_modified()
     else:
         # cold_wall = f"near(x[0],  {r * 40}, 1e-8) | near(x[1], {0.0}, 1e-8) | near(x[1], {r * 100}, 1e-8)"
