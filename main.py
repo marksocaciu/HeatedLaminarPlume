@@ -16,10 +16,12 @@ def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_
 
     # 2) integrate over the *half* interface boundary (your mesh is half-domain)
     QL_half = fenics.assemble(qn_dim * sub_ds(interface_tag))  # [W/m]
+    QL_half = QL_half * scales.Lref
     QL_full = 2.0 * QL_half                                   # mirror symmetry -> full wire
 
     # 3) interface length checks (helps debug tagging/completeness)
     L_half = fenics.assemble(fenics.Constant(1.0) * sub_ds(interface_tag))  # [m]
+    L_half = L_half * scales.Lref
     L_full = 2.0 * L_half
 
     # 4) expected values
@@ -72,6 +74,7 @@ def base_version(experiment: Experiment):
     scales = compute_nondimensional_scales(experiment)
     print("Scales:\n", scales)
 
+    
     # Initial guess for solver
     print("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
@@ -79,16 +82,25 @@ def base_version(experiment: Experiment):
     T_full, k_func = initial_guess(mesh,mc,mf,OUTPUT_XDMF_PATH_TEMP,heat_volume,experiment,dx)
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh, sub_ft, mc, scales)
 
+    Lref = scales.Lref
+    mesh.coordinates()[:] /= Lref
+    sub_mesh.coordinates()[:] /= Lref
+
     # Call it right after qn_air is computed
     check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment)
 
 
     # Project initial guess to nondim theta
     V_air = fenics.FunctionSpace(sub_mesh, "CG", 1)
-    theta_full = fenics.project(
-        (T_full - fenics.Constant(experiment.initial_conditions.temperature)) / fenics.Constant(scales.dTref),
-        V_air
-    )
+    # theta_full = fenics.project(
+    #     (T_full - fenics.Constant(experiment.initial_conditions.temperature)) / fenics.Constant(scales.dTref),
+    #     V_air
+    # )
+    T_full.set_allow_extrapolation(True)
+    T_air = fenics.interpolate(T_full, V_air)
+
+    theta_expr = (T_air - fenics.Constant(T_ambient)) / fenics.Constant(scales.dTref)
+    theta_full = fenics.interpolate(theta_expr, V_air)
     theta_full.rename("theta_full", "theta_full")
 
     print(f"Initial max temperature: {T_full.vector().max():.2f} K")
@@ -97,10 +109,7 @@ def base_version(experiment: Experiment):
     print(f"Initial min theta: {theta_full.vector().min():.2f}")
     print(f"Rho_air: {experiment.fluid.properties['rho']}")
     print(f"Beta_air: {experiment.fluid.properties['beta']}")
-
-    # Nondimensionalize the mesh coordinates for plotting
-    Lref = scales.Lref
-    mesh.coordinates()[:] /= Lref
+    
 
     # Solving the problem
     print("Starting solver...")

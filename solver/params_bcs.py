@@ -52,7 +52,9 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     # hot_wall_temperature = T_air_bc.vector()
     T_h = fenics.Constant(hot_wall_temperature)
 
-    cold_wall_temperature = T_ambient
+    cold_wall_temperature =fenics.Constant(0.0)
+
+    # cold_wall_temperature = T_ambient
 
     T_c = fenics.Constant(cold_wall_temperature)
     return mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
