@@ -58,8 +58,9 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     return mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
 
-def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment):
-    r = experiment.dimensions.wire.diameter / 2.
+def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, scales: NondimScales):
+    # r = experiment.dimensions.wire.diameter / 2.
+    r = (experiment.dimensions.wire.diameter/2) / scales.Lref  # == 1.0
     class Hot_wall(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return on_boundary and fenics.near(

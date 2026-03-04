@@ -89,7 +89,7 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
 
-    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
     w.leaf_node().vector()[:] = w_n.leaf_node().vector()
 

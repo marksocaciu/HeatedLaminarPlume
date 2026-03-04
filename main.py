@@ -70,8 +70,7 @@ def base_version(experiment: Experiment):
     # plot_mesh(mesh, title="Full Mesh")
     # plot_mesh(sub_mesh, title="Sub-Mesh")
     scales = compute_nondimensional_scales(experiment)
-    print(scales)
-
+    print("Scales:\n", scales)
 
     # Initial guess for solver
     print("Computing initial guess for temperature field...")
@@ -98,6 +97,10 @@ def base_version(experiment: Experiment):
     print(f"Initial min theta: {theta_full.vector().min():.2f}")
     print(f"Rho_air: {experiment.fluid.properties['rho']}")
     print(f"Beta_air: {experiment.fluid.properties['beta']}")
+
+    # Nondimensionalize the mesh coordinates for plotting
+    Lref = scales.Lref
+    mesh.coordinates()[:] /= Lref
 
     # Solving the problem
     print("Starting solver...")
@@ -295,7 +298,7 @@ def main():
     argparser.add_argument(
         "--experiment-index",
         type=int,
-        default=0,
+        default=1,
         help="Index of the experiment to run from experiments.json",
     )
     args = argparser.parse_args()
