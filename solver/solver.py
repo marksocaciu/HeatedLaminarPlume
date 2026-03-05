@@ -180,6 +180,11 @@ def temp_dep_solver(F,w, boundary_conditions, JF, w_n: fenics.Function, fluid_ma
     prm["newton_solver"]["relative_tolerance"] = 5e-10
     prm["newton_solver"]["maximum_iterations"] = 100
 
+    nprm = solver.parameters["newton_solver"]
+    nprm["linear_solver"] = "petsc"
+    nprm["preconditioner"] = "none"
+    # prm["preconditioner"] = "none"
+
     # Initialize
     w.vector()[:] = w_n.vector()
 
