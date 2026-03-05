@@ -12,6 +12,9 @@ class NondimScales:
     qsurf: Optional[float] = None     # [W/m^2] if available/derived
     QL: Optional[float] = None        # [W/m]   if provided
     qstar: Optional[float] = None     # [-] nondimensional flux on interface (often 1.0)
+    e: float = 0.0    # Kis' perturbation param
+    Ec: float = 0.0   # Eq19 Kis
+    fEc: float = 0.0  # Eq23 Kis
 
 def compute_nondimensional_scales(experiment) -> NondimScales:
     """
@@ -84,9 +87,17 @@ def compute_nondimensional_scales(experiment) -> NondimScales:
     # nondimensional interface flux under this dTref choice
     qstar = qsurf * Lref / (k * dTref)  # should be 1.0 (up to roundoff)
 
+    Tref = float(experiment.initial_conditions.temperature)  # ambient/reference temperature [K]
+
+    e = dTref / Tref
+    Ec = (Uref**2) / (cp * dTref)
+    fEc = Ec / e   # = Uref^2 * Tref / (cp * dTref^2)
+
+
     return NondimScales(
         Lref=Lref, dTref=dTref, Uref=Uref, Pr=Pr, Ra=Ra,
-        nu=nu, alpha=alpha, qsurf=qsurf, QL=QL, qstar=qstar
+        nu=nu, alpha=alpha, qsurf=qsurf, QL=QL, qstar=qstar,
+        e=e, Ec=Ec, fEc=fEc
     )
 
 

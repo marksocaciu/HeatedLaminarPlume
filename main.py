@@ -510,12 +510,13 @@ def abs_version(experiment: Experiment):
         experiment
     )
 
-    F, w, boundary_conditions, JF, w_n = nonlinear_solver(
+    F, w, boundary_conditions, JF, w_n = nonlinear_solver_ABE(
         experiment, u_n, u, T_n, T, p, W, w,
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
-        w_n
+        w_n,
+        fenics.Constant(scales.fEc)
     )
 
     w = base_solver(F, w, boundary_conditions, JF)
@@ -544,7 +545,7 @@ def abs_version(experiment: Experiment):
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
 
-    
+
 def abs_temperature_dependent_version(experiment: Experiment):
     pass
 
