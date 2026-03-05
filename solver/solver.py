@@ -3,6 +3,19 @@ from solver.params_bcs import *
 from utils.material import *
 from solver.scales import *
 
+
+class RestrictToAir(fenics.UserExpression):
+    def __init__(self, T_full, **kwargs):
+        super().__init__(**kwargs)
+        self.T_full = T_full
+
+    def eval(self, values, x):
+        # Evaluate full-mesh temperature at point x
+        values[0] = self.T_full(x)
+
+    def value_shape(self):
+        return ()
+    
 def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
     P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
@@ -17,14 +30,34 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T, T_ambient, rho_air, beta_air, experiment)
 
+    w_n = fenics.Function(W)
+    # --- Temperature space on air submesh (must match the mixed T block)
+    V_T = fenics.FunctionSpace(sub_mesh, P1)
+    T0_air = fenics.Function(V_T)
+    T0_air.interpolate(RestrictToAir(T_full, degree=1))
     w_n = fenics.interpolate(
     fenics.Expression(("0.", "0.", "0.", "T_full"), 
-                      T_full = T_full,
+                      T_full = T0_air,
                       element = mixed_element),
                         W)
+    # p0, u0, th0 = w_n.split()  # (depending on your mixed layout)
+
+    # # assign zero to p and u
+    # w_n.sub(0).vector().zero()
+    # w_n.sub(1).vector().zero()
+
+    # assign theta initial guess safely
+    print(f"Initial guess max theta (star-submesh): {T_full.vector().max():.6e}")
+    print(f"Initial guess min theta (star-submesh): {T_full.vector().min():.6e}")
+    # w_n.sub(2).assign(T_full)
+    print(f"Initial guess max theta (star-submesh): {w_n.sub(2).vector().max():.6e}")
+    print(f"Initial guess min theta (star-submesh): {w_n.sub(2).vector().min():.6e}")
+    w_n.vector().apply("insert")
     
     p_n, u_n, T_n = fenics.split(w_n)
-    
+
+    print(f"Initial guess max theta (star-submesh): {T_n.vector().max():.6e}")
+    print(f"Initial guess min theta (star-submesh): {T_n.vector().min():.6e}")
     # fenics.plot(T_n)
     # plt.title("$T^0$")
     # plt.xlabel("$x$")
