@@ -126,7 +126,7 @@ def geometry_template(
     xmax: Optional[float] = None,
     ymax: Optional[float] = None,
     template_geo_name: str = "geom.geo",
-    resolution: Optional[int] = 150
+    resolution: Optional[int] = 350
 ) -> Path:
     """
     Load a .geo template located in the same directory as this script, set the wire radius
@@ -193,7 +193,7 @@ def geometry_template(
             geo,
             count=1,
         )
-        print(n3)
+        # print(n3)
         if n3 != 1:
             raise ValueError("Could not uniquely replace 'w = ...;' in the .geo template.")
 

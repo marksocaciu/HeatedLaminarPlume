@@ -30,34 +30,49 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(sub_mesh, T_full, T, T_ambient, rho_air, beta_air, experiment)
 
+    # Build mixed initial state
     w_n = fenics.Function(W)
-    # --- Temperature space on air submesh (must match the mixed T block)
-    V_T = fenics.FunctionSpace(sub_mesh, P1)
-    T0_air = fenics.Function(V_T)
-    T0_air.interpolate(RestrictToAir(T_full, degree=1))
-    w_n = fenics.interpolate(
-    fenics.Expression(("0.", "0.", "0.", "T_full"), 
-                      T_full = T0_air,
-                      element = mixed_element),
-                        W)
-    # p0, u0, th0 = w_n.split()  # (depending on your mixed layout)
 
-    # # assign zero to p and u
-    # w_n.sub(0).vector().zero()
-    # w_n.sub(1).vector().zero()
+    # Collapsed subspaces (these are the canonical source spaces for assignment)
+    Vp, p_to_W = W.sub(0).collapse(True)   # scalar
+    Vu, u_to_W = W.sub(1).collapse(True)   # vector
+    VT, T_to_W = W.sub(2).collapse(True)   # scalar
 
-    # assign theta initial guess safely
-    print(f"Initial guess max theta (star-submesh): {T_full.vector().max():.6e}")
-    print(f"Initial guess min theta (star-submesh): {T_full.vector().min():.6e}")
-    # w_n.sub(2).assign(T_full)
-    print(f"Initial guess max theta (star-submesh): {w_n.sub(2).vector().max():.6e}")
-    print(f"Initial guess min theta (star-submesh): {w_n.sub(2).vector().min():.6e}")
+    # Source functions (must live in the collapsed spaces)
+    p0 = fenics.Function(Vp)
+    u0 = fenics.Function(Vu)
+    T0 = fenics.Function(VT)
+
+    p0.vector().zero()
+    u0.vector().zero()
+
+    # Temperature initial guess:
+    # If T_full is already a scalar Function on the *same sub_mesh* (your current pipeline),
+    # interpolate it onto VT (safe even if VT is a different object).
+    T0.interpolate(T_full)
+
+    # If you ever pass a function on a different mesh, you cannot do this; you'd need restriction/projection.
+
+    # Assign into mixed function using FunctionAssigners that match spaces exactly
+    assign_p = fenics.FunctionAssigner(W.sub(0), Vp)
+    assign_u = fenics.FunctionAssigner(W.sub(1), Vu)
+    assign_T = fenics.FunctionAssigner(W.sub(2), VT)
+
+    assign_p.assign(w_n.sub(0), p0)
+    assign_u.assign(w_n.sub(1), u0)
+    assign_T.assign(w_n.sub(2), T0)
+
     w_n.vector().apply("insert")
-    
+
+    print("Init T min/max:",
+        w_n.sub(2).vector().min(),
+        w_n.sub(2).vector().max())
+
+    # Now split for convenience (these are UFL objects / views; OK for variational forms)
     p_n, u_n, T_n = fenics.split(w_n)
 
-    print(f"Initial guess max theta (star-submesh): {T_n.vector().max():.6e}")
-    print(f"Initial guess min theta (star-submesh): {T_n.vector().min():.6e}")
+    print(f"Initial guess max theta (air): {w_n.sub(2).vector().max():.6e}")
+    print(f"Initial guess min theta (air): {w_n.sub(2).vector().min():.6e}")
     # fenics.plot(T_n)
     # plt.title("$T^0$")
     # plt.xlabel("$x$")
@@ -132,6 +147,25 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 def base_solver(F, w: fenics.Function, boundary_conditions, JF):
     problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)
     solver = fenics.NonlinearVariationalSolver(problem)
+    nprm = solver.parameters["newton_solver"]
+    nprm["linear_solver"] = "petsc"
+    nprm["preconditioner"] = "none"
+    # nprm = solver.parameters["newton_solver"]
+    # nprm["absolute_tolerance"] = 1e-10
+    # nprm["relative_tolerance"] = 1e-9
+    # nprm["maximum_iterations"] = 200
+    # nprm["report"] = True
+    # nprm["error_on_nonconvergence"] = True
+
+    # # Linear solver inside Newton
+    # nprm["linear_solver"] = "gmres"
+    # # nprm["linear_solver"] = "mumps"
+    # nprm["preconditioner"] = "ilu"  # robust baseline
+
+    # kprm = nprm["krylov_solver"]
+    # kprm["relative_tolerance"] = 1e-8
+    # kprm["maximum_iterations"] = 200
+    # kprm["monitor_convergence"] = True
     solver.solve()
     return w
 
