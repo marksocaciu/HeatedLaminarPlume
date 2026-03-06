@@ -213,7 +213,9 @@ def base_version(experiment: Experiment):
     # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
     y0_m_list = [0.01, 0.04, 0.08]
     hmin_star = sub_mesh_star.hmin()   # dimensionless
-    eps_m = 2 * hmin_star * scales.Lref
+    hmax_star = sub_mesh_star.hmax()
+    eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
+    # eps_m = 2 * hmin_star * scales.Lref
     flux_rows = plane_fluxes_slab_star(
         sub_mesh_star,
         u, T,                   # your returned nondim u and theta
@@ -416,7 +418,9 @@ def temperature_dependent_version(experiment: Experiment):
     # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
     y0_m_list = [0.01, 0.04, 0.08]
     hmin_star = sub_mesh_star.hmin()   # dimensionless
-    eps_m = 2 * hmin_star * scales.Lref
+    hmax_star = sub_mesh_star.hmax()
+    eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
+    # eps_m = 2 * hmin_star * scales.Lref
     flux_rows = plane_fluxes_slab_star(
         sub_mesh_star,
         u, T,                   # your returned nondim u and theta
@@ -611,7 +615,9 @@ def abs_version(experiment: Experiment):
     # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
     y0_m_list = [0.01, 0.04, 0.08]
     hmin_star = sub_mesh_star.hmin()   # dimensionless
-    eps_m = 2 * hmin_star * scales.Lref
+    hmax_star = sub_mesh_star.hmax()
+    eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
+    # eps_m = 2 * hmin_star * scales.Lref
     flux_rows = plane_fluxes_slab_star(
         sub_mesh_star,
         u, T,                   # your returned nondim u and theta
