@@ -81,37 +81,54 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
         
     class Cold_wall_modified(fenics.SubDomain):
         def inside(self, x, on_boundary):
-            east = on_boundary and fenics.near(x[0],  experiment.dimensions.domain.x_max, eps = 1.e-10)
-            south = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_min, eps = 1.e-10)
-            north = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_max, eps = 1.e-10)
+            east = on_boundary and fenics.near(x[0],  experiment.dimensions.domain.x_max / scales.Lref, eps = 1.e-10)
+            south = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_min / scales.Lref, eps = 1.e-10)
+            north = on_boundary and fenics.near(x[1],  experiment.dimensions.domain.y_max / scales.Lref, eps = 1.e-10)
             return east or south or north
+    
+    class EastBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                x[0], experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
+            )
+
+    class PressurePin(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return (
+                fenics.near(x[0], experiment.dimensions.domain.x_max / scales.Lref, 1.0e-10)
+                and fenics.near(x[1], experiment.dimensions.domain.y_min / scales.Lref, 1.0e-10)
+            )
+    
     hot_wall=Hot_wall()
+    east = EastBoundary()
+    p_pin = PressurePin()
 
     # x[0] - x coordinate
     # x[1] - y coordinate
-    if experiment.dimensions.domain.x_max != 0.0 or experiment.dimensions.domain.y_max != 0.0:
-        # cold_wall = f"near(x[0],  {experiment.dimensions.domain.x_max}) | near(x[1], {experiment.dimensions.domain.y_min}) | near(x[1], {experiment.dimensions.domain.y_max})"
-        print("Using modified cold wall BCs")
-        cold_wall=Cold_wall_modified()
-    else:
-        # cold_wall = f"near(x[0],  {r * 40}, 1e-8) | near(x[1], {0.0}, 1e-8) | near(x[1], {r * 100}, 1e-8)"
-        cold_wall=Cold_wall_preset()
+    # if experiment.dimensions.domain.x_max != 0.0 or experiment.dimensions.domain.y_max != 0.0:
+    #     # cold_wall = f"near(x[0],  {experiment.dimensions.domain.x_max}) | near(x[1], {experiment.dimensions.domain.y_min}) | near(x[1], {experiment.dimensions.domain.y_max})"
+    #     print("Using modified cold wall BCs")
+    #     cold_wall=Cold_wall_modified()
+    # else:
+    #     # cold_wall = f"near(x[0],  {r * 40}, 1e-8) | near(x[1], {0.0}, 1e-8) | near(x[1], {r * 100}, 1e-8)"
+    #     cold_wall=Cold_wall_preset()
 
     adiabatic_walls = f"near(x[0],  {experiment.dimensions.domain.x_min})"
 
     # walls = hot_wall + " | " + cold_wall + " | " + adiabatic_walls
-
+    W_p = W.sub(0)
     W_u = W.sub(1)
-
     W_T = W.sub(2)
 
     print("Setting boundary conditions...")
     boundary_conditions = [
         fenics.DirichletBC(W_u, (0., 0.), hot_wall),                    # no-slip on wire
-        fenics.DirichletBC(W_u, (0., 0.), cold_wall),                  # no-slip on cold walls
+        # fenics.DirichletBC(W_u, (0., 0.), cold_wall),                  # no-slip on cold walls
         # fenics.DirichletBC(W_T, hot_wall_temperature, hot_wall),
         # fenics.DirichletBC(W_T,T_air_bc,sub_ft,INTERFACE_TAG),
         # fenics.DirichletBC(W_T, cold_wall_temperature, cold_wall)
+        # fenics.DirichletBC(W_T, fenics.Constant(0.0), east),
+        fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise")
         ]
     
     return boundary_conditions

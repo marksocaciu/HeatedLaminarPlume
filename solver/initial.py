@@ -96,10 +96,10 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
 
         print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
+        T_full.assign(T_full_new)
         if rel < rtol:
             break
 
-        T_full.assign(T_full_new)
 
 
 

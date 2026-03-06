@@ -141,6 +141,14 @@ def base_version(experiment: Experiment):
 
     # --- 7) transfer theta_full_dim onto the new scaled submesh
     V_air_star = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
+    V0_star = fenics.FunctionSpace(sub_mesh_star, "DG", 0)
+    qn_air_star = fenics.Function(V0_star)
+    qn_air.set_allow_extrapolation(True)
+
+    dof_coords = V0_star.tabulate_dof_coordinates().reshape((-1, sub_mesh_star.geometry().dim()))
+    vals = [qn_air(x) for x in dof_coords]
+    qn_air_star.vector()[:] = vals
+    qn_air_star.vector().apply("insert")
 
     # Build a plain Function on the star submesh
     theta_full_star = fenics.Function(V_air_star)
@@ -175,15 +183,19 @@ def base_version(experiment: Experiment):
         experiment
     )
 
-    F, w, boundary_conditions, JF, w_n = nonlinear_solver(
-        experiment, u_n, u, T_n, T, p, W, w,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
-        w_n
-    )
+    # F, w, boundary_conditions, JF, w_n = nonlinear_solver(
+    #     experiment, u_n, u, T_n, T, p, W, w,
+    #     psi_p, psi_u, psi_T,
+    #     mu, Pr, f_b, T_c, T_air_bc,
+    #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+    #     w_n
+    # )
 
-    w = base_solver(F, w, boundary_conditions, JF)
+    # w = base_solver(F, w, boundary_conditions, JF)
+    
+    w = solve_steady_picard(experiment=experiment, W=W, w=w, w_n=w_n,
+                            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                            mu=mu, Pr=Pr, Ra=Ra, sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star)
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -195,19 +207,29 @@ def base_version(experiment: Experiment):
         experiment.fluid.properties["rho"]
     )
 
+    # on sub_mesh_star, with theta (nondim)
+    k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
+    n = fenics.FacetNormal(sub_mesh_star)
+    dTref = float(scales.dTref)
+
+    # Example: if facet tags exist for TOP and FAR boundaries
+    Q_far  = -k_inf*dTref * fenics.assemble(fenics.dot(fenics.grad(theta), n) * sub_ds_star(OUTER_AIR_TAG))
+    print(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
+
+
     # plotting + output
     plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
                 cmap="coolwarm", colorbar=True)
-    plot_mesh(theta, title="Temperature field", label="Temperature (nondim)",
+    plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
                 cmap="coolwarm", colorbar=True)
     plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
                 cmap="coolwarm", colorbar=True, mode="glyphs")
     plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
                 cmap="coolwarm", colorbar=True)
 
-    save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_star, [p_dim])
-    save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
-    save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
+    save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
+    save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])
+    save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
     # save_experiment(OUTPUT_XDMF_PATH_AIR_PVT, sub_mesh, [p,u,T])
 
     # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
@@ -218,7 +240,7 @@ def base_version(experiment: Experiment):
     # eps_m = 2 * hmin_star * scales.Lref
     flux_rows = plane_fluxes_slab_star(
         sub_mesh_star,
-        u, T,                   # your returned nondim u and theta
+        u_star, theta,                   # your returned nondim u and theta
         y0_m_list,
         scales=scales,
         rho=experiment.fluid.properties["rho"],
