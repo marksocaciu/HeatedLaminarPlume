@@ -8,6 +8,8 @@ from solver.initial import *
 from solver.biot import *
 from solver.params_bcs import *
 from solver.scales import *
+from utils.results import *
+
 
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
     # 1) dimensionalize qn_air: qn_dim [W/m^2]
@@ -208,6 +210,37 @@ def base_version(experiment: Experiment):
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
     # save_experiment(OUTPUT_XDMF_PATH_AIR_PVT, sub_mesh, [p,u,T])
 
+    # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
+    y0_m_list = [0.01, 0.04, 0.08]
+    hmin_star = sub_mesh_star.hmin()   # dimensionless
+    eps_m = 2 * hmin_star * scales.Lref
+    flux_rows = plane_fluxes_slab_star(
+        sub_mesh_star,
+        u, T,                   # your returned nondim u and theta
+        y0_m_list,
+        scales=scales,
+        rho=experiment.fluid.properties["rho"],
+        cp=experiment.fluid.properties["cp"],
+        k=experiment.fluid.properties["k"],
+        eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
+    )
+
+    for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+            f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
+        
+    out_dir=Path.cwd()
+    csv_path = os.path.join(out_dir,experiment.name, "base", "plane_fluxes.csv")
+    write_header = not os.path.exists(csv_path)
+
+    with open(csv_path, "a", newline="") as f:
+        wcsv = csv.writer(f)
+        if write_header:
+            wcsv.writerow(["time", "y0_m", "Qconv_W_per_m", "Qcond_W_per_m", "Qtot_W_per_m", "mdot_kg_per_s_per_m"])
+        t=0
+        for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+            wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
+
 def temperature_dependent_version(experiment: Experiment):
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
@@ -379,7 +412,37 @@ def temperature_dependent_version(experiment: Experiment):
     save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_star, [p_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
-# save_experiment(OUTPUT_XDMF_PATH_AIR_PVT, sub_mesh, [p,u,T])
+
+    # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
+    y0_m_list = [0.01, 0.04, 0.08]
+    hmin_star = sub_mesh_star.hmin()   # dimensionless
+    eps_m = 2 * hmin_star * scales.Lref
+    flux_rows = plane_fluxes_slab_star(
+        sub_mesh_star,
+        u, T,                   # your returned nondim u and theta
+        y0_m_list,
+        scales=scales,
+        rho=experiment.fluid.properties["rho"],
+        cp=experiment.fluid.properties["cp"],
+        k=experiment.fluid.properties["k"],
+        eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
+    )
+
+    for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+            f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
+        
+    out_dir=Path.cwd()
+    csv_path = os.path.join(out_dir,experiment.name, "t_dep_mat", "plane_fluxes.csv")
+    write_header = not os.path.exists(csv_path)
+
+    with open(csv_path, "a", newline="") as f:
+        wcsv = csv.writer(f)
+        if write_header:
+            wcsv.writerow(["time", "y0_m", "Qconv_W_per_m", "Qcond_W_per_m", "Qtot_W_per_m", "mdot_kg_per_s_per_m"])
+        t=0
+        for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+            wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
 
 def abs_version(experiment: Experiment):
@@ -545,6 +608,37 @@ def abs_version(experiment: Experiment):
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
 
+    # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
+    y0_m_list = [0.01, 0.04, 0.08]
+    hmin_star = sub_mesh_star.hmin()   # dimensionless
+    eps_m = 2 * hmin_star * scales.Lref
+    flux_rows = plane_fluxes_slab_star(
+        sub_mesh_star,
+        u, T,                   # your returned nondim u and theta
+        y0_m_list,
+        scales=scales,
+        rho=experiment.fluid.properties["rho"],
+        cp=experiment.fluid.properties["cp"],
+        k=experiment.fluid.properties["k"],
+        eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
+    )
+
+    for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+            f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
+    
+    out_dir=Path.cwd()
+    csv_path = os.path.join(out_dir,experiment.name, "abs", "plane_fluxes.csv")
+    write_header = not os.path.exists(csv_path)
+
+    with open(csv_path, "a", newline="") as f:
+        wcsv = csv.writer(f)
+        if write_header:
+            wcsv.writerow(["time", "y0_m", "Qconv_W_per_m", "Qcond_W_per_m", "Qtot_W_per_m", "mdot_kg_per_s_per_m"])
+        t=0
+        for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+            wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
+
 
 def abs_temperature_dependent_version(experiment: Experiment):
     pass
@@ -565,8 +659,8 @@ def main():
     print(f"Running experiment: {experiment.name}")
 
     base_version(experiment)
-    # temperature_dependent_version(experiment)
-    # abs_version(experiment)
+    temperature_dependent_version(experiment)
+    abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 
 
