@@ -665,8 +665,8 @@ def main():
     print(f"Running experiment: {experiment.name}")
 
     base_version(experiment)
-    temperature_dependent_version(experiment)
-    abs_version(experiment)
+    # temperature_dependent_version(experiment)
+    # abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 
 

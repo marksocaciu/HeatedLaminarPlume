@@ -132,7 +132,7 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     scales = compute_nondimensional_scales(experiment)
     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
     qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
-    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG))
+    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
     print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
