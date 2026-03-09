@@ -515,11 +515,16 @@ def solve_steady_newton_continuation(
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
 
         stage_attempts = [
-            ("stokes", False),
-            ("full", True),
+            ("stokes", False, 0.0),
+            ("conv_0.05", True, 0.05),
+            ("conv_0.10", True, 0.10),
+            ("conv_0.20", True, 0.20),
+            ("conv_0.40", True, 0.40),
+            ("conv_0.70", True, 0.70),
+            ("full", True, 1.00),
         ]
 
-        for stage_name, include_convection in stage_attempts:
+        for stage_name, include_convection, conv_scale in stage_attempts:
             print(f"  --- stage: {stage_name} ---")
             stage_success = False
             last_error = None
@@ -541,6 +546,7 @@ def solve_steady_newton_continuation(
                         buoyancy_scale=lam,
                         qn_scale=lam,
                         include_convection=include_convection,
+                        convection_scale=conv_scale
                     )
 
                     w = base_solver(
