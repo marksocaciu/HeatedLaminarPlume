@@ -4,34 +4,6 @@ from solver.scales import *
 
 def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function, T_ambient: float,
               rho_air: float, beta_air: float, experiment: Experiment):
-    # DG0 fields for mu, PR, Ra, and f_B
-    V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
-
-    # -----------------------------------------
-    # Fill cellwise values (using MeshFunction ct)
-    # -----------------------------------------
-    # ct: MeshFunction("size_t", mesh, mesh.topology().dim())
-    # ct.array() gives tag per cell in order of mesh.cells()
-
-    # dynamic_viscosity = 1.
-    # prandtl_number = 0.71
-    # rayleigh_number = 10
-
-    # mu = fenics.Constant(dynamic_viscosity)
-
-    # Pr = fenics.Constant(prandtl_number)
-
-    # Ra = fenics.Constant(rayleigh_number)
-
-    # gvec = fenics.Constant((0.0, -1.0))
-
-    # T_ref = fenics.Constant(T_ambient)
-
-
-    # f_b = rho_air * beta_air * (T - T_ref) * gvec
-    # f_b = (Ra/Pr) * T * gvec
-    # f_b_vals = Ra_func/Pr_func*T*fenics.Constant((0., -1.))
-    # f_b_func.vector()[:] = f_b_vals
     sc = compute_nondimensional_scales(experiment)
     Pr = fenics.Constant(sc.Pr)
     Ra = fenics.Constant(sc.Ra)
@@ -106,13 +78,6 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
 
     # x[0] - x coordinate
     # x[1] - y coordinate
-    # if experiment.dimensions.domain.x_max != 0.0 or experiment.dimensions.domain.y_max != 0.0:
-    #     # cold_wall = f"near(x[0],  {experiment.dimensions.domain.x_max}) | near(x[1], {experiment.dimensions.domain.y_min}) | near(x[1], {experiment.dimensions.domain.y_max})"
-    #     print("Using modified cold wall BCs")
-    #     cold_wall=Cold_wall_modified()
-    # else:
-    #     # cold_wall = f"near(x[0],  {r * 40}, 1e-8) | near(x[1], {0.0}, 1e-8) | near(x[1], {r * 100}, 1e-8)"
-    #     cold_wall=Cold_wall_preset()
 
     adiabatic_walls = f"near(x[0],  {experiment.dimensions.domain.x_min})"
 
@@ -124,11 +89,11 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     print("Setting boundary conditions...")
     boundary_conditions = [
         fenics.DirichletBC(W_u, (0., 0.), hot_wall),                    # no-slip on wire
-        fenics.DirichletBC(W_u, (0., 0.), cold_wall),                  # no-slip on cold walls
+        # fenics.DirichletBC(W_u, (0., 0.), cold_wall),                  # no-slip on cold walls
         # fenics.DirichletBC(W_T, hot_wall_temperature, hot_wall),
         # fenics.DirichletBC(W_T,T_air_bc,sub_ft,INTERFACE_TAG),
-        fenics.DirichletBC(W_T, fenics.Constant(0.0), cold_wall),
-        # fenics.DirichletBC(W_T, fenics.Constant(0.0), east),
+        # fenics.DirichletBC(W_T, fenics.Constant(0.0), cold_wall),
+        fenics.DirichletBC(W_T, fenics.Constant(0.0), east),
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise")
         ]
     

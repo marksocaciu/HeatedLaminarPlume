@@ -80,59 +80,6 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
-# def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
-#                      W: fenics.FunctionSpace, w: fenics.Function,
-#                      psi_p, psi_u, psi_T,
-#                      mu, Pr, f_b, T_c, T_air_bc,
-#                      sub_dx, sub_ds, sub_ft, qn_air,
-#                      w_n: fenics.Function):
-
-#     inner, dot, grad, div, sym = \
-#         fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
-        
-#     mass = -psi_p*div(u)
-
-#     # momentum = dot(psi_u, u_t + dot(grad(u), u) + f_b) - div(psi_u)*p \
-#     #     + 2.*mu*inner(sym(grad(psi_u)), sym(grad(u)))
-
-#     # energy = psi_T*T_t + dot(grad(psi_T), 1./Pr*grad(T) - T*u)
-            
-#     momentum = (
-#         dot(psi_u, dot(grad(u), u) + f_b)
-#         - div(psi_u)*p
-#         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
-#     )
-
-#     energy = (dot(grad(psi_T), (1.0/Pr) * grad(T) - T * u))
-
-#     F = (mass + momentum + energy) * sub_dx
-#     # F = (mass + momentum + energy)*fenics.dx
-
-
-#     penalty_stabilization_parameter = 1.e-7
-
-#     gamma = fenics.Constant(penalty_stabilization_parameter)
-
-#     print("Max qn_air:", qn_air.vector().max())
-
-#     # F += -psi_p * gamma * p * sub_dx
-#     F += qn_air * psi_T * sub_ds(INTERFACE_TAG)
-#     # F += -psi_p*gamma*p*fenics.dx
-
-#     scales = compute_nondimensional_scales(experiment)
-#     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
-#     qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
-#     QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
-#     print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
-
-#     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
-
-#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-
-#     w.leaf_node().vector()[:] = w_n.leaf_node().vector()
-
-#     return F,w, boundary_conditions, JF, w_n
-
 def nonlinear_solver_ABE(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
                      W: fenics.FunctionSpace, w: fenics.Function,
                      psi_p, psi_u, psi_T,
@@ -153,11 +100,6 @@ def nonlinear_solver_ABE(experiment: Experiment,u_n: fenics.Function, u: fenics.
         fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
         
     mass = -psi_p*div(u)
-
-    # momentum = dot(psi_u, u_t + dot(grad(u), u) + f_b) - div(psi_u)*p \
-    #     + 2.*mu*inner(sym(grad(psi_u)), sym(grad(u)))
-
-    # energy = psi_T*T_t + dot(grad(psi_T), 1./Pr*grad(T) - T*u)
             
     momentum = (
         dot(psi_u, u_t + dot(grad(u), u) + f_b)
@@ -223,63 +165,6 @@ def base_solver(F, w: fenics.Function, boundary_conditions, JF,
     solver.solve()
     return w
 
-# def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
-#                      W: fenics.FunctionSpace, w: fenics.Function,
-#                      psi_p, psi_u, psi_T,
-#                      mu, Pr, f_b, T_c, T_air_bc,
-#                      sub_dx, sub_ds, sub_ft, qn_air,
-#                      w_n: fenics.Function,
-#                      buoyancy_scale=1.0,
-#                      qn_scale=1.0,
-#                      include_convection=True):
-
-#     inner, dot, grad, div, sym = \
-#         fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
-        
-#     mass = -psi_p*div(u)
-
-#     # momentum = dot(psi_u, u_t + dot(grad(u), u) + f_b) - div(psi_u)*p \
-#     #     + 2.*mu*inner(sym(grad(psi_u)), sym(grad(u)))
-
-#     # energy = psi_T*T_t + dot(grad(psi_T), 1./Pr*grad(T) - T*u)
-            
-#     buoyancy_scale = fenics.Constant(float(buoyancy_scale))
-#     convection_term = dot(grad(u), u) if include_convection else fenics.Constant((0.0, 0.0))
-
-#     momentum = (
-#         dot(psi_u, convection_term + buoyancy_scale * f_b)
-#         - div(psi_u)*p
-#         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
-#     )
-
-#     energy = (dot(grad(psi_T), (1.0/Pr) * grad(T) - T * u))
-
-#     F = (mass + momentum + energy) * sub_dx
-#     # F = (mass + momentum + energy)*fenics.dx
-
-#     # penalty_stabilization_parameter = 1.e-7
-#     # gamma = fenics.Constant(penalty_stabilization_parameter)
-    
-#     print("Max qn_air:", qn_air.vector().max())
-
-#     # F += -psi_p * gamma * p * sub_dx
-#     F += fenics.Constant(float(qn_scale)) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
-#     # F += -psi_p*gamma*p*fenics.dx
-
-#     scales = compute_nondimensional_scales(experiment)
-#     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
-#     qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
-#     QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
-#     print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
-
-#     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
-
-#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-
-#     w.leaf_node().vector()[:] = w_n.leaf_node().vector()
-
-#     return F,w, boundary_conditions, JF, w_n
-
 def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
                      W: fenics.FunctionSpace, w: fenics.Function,
                      psi_p, psi_u, psi_T,
@@ -315,14 +200,14 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     print("Max qn_air:", qn_air.vector().max())
     print(f"Applied qn_scale: {float(qn_scale):.4f}")
 
-    F += qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += - qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     scales = compute_nondimensional_scales(experiment)
     k_inf = float(experiment.fluid.properties["k"])
     qn_dim = qn_scale_c * qn_air * fenics.Constant(
         k_inf * float(scales.dTref) / float(scales.Lref)
     )
-    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
+    QL_half = -fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
     print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
@@ -382,7 +267,7 @@ def _build_linear_startup_problem(
     energy = dot(grad(s), (1.0 / Pr) * grad(T_trial))
 
     F = (mass + momentum + energy) * sub_dx
-    F += fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+    F += -fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
@@ -511,17 +396,17 @@ def solve_steady_newton_continuation(
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
 
-    for i, lam in enumerate(lambdas):
+    for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
 
         stage_attempts = [
-            ("stokes", False, 0.0),
-            ("conv_0.05", True, 0.05),
-            ("conv_0.10", True, 0.10),
-            ("conv_0.20", True, 0.20),
-            ("conv_0.40", True, 0.40),
-            ("conv_0.70", True, 0.70),
-            ("full", True, 1.00),
+            ("stokes",   False, 0.00),
+            ("conv_005", True,  0.05),
+            ("conv_010", True,  0.10),
+            ("conv_020", True,  0.20),
+            ("conv_040", True,  0.40),
+            ("conv_070", True,  0.70),
+            ("full",     True,  1.00),
         ]
 
         for stage_name, include_convection, conv_scale in stage_attempts:
@@ -532,7 +417,7 @@ def solve_steady_newton_continuation(
             for relaxation in relaxation_schedule:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
 
-                # Always restart this attempt from the last accepted state
+                # restart from last accepted continuation state
                 w.vector()[:] = w_n.vector()
                 w.vector().apply("insert")
 
@@ -546,7 +431,7 @@ def solve_steady_newton_continuation(
                         buoyancy_scale=lam,
                         qn_scale=lam,
                         include_convection=include_convection,
-                        convection_scale=conv_scale
+                        convection_scale=conv_scale,
                     )
 
                     w = base_solver(
@@ -554,10 +439,10 @@ def solve_steady_newton_continuation(
                         relaxation=relaxation,
                         maxit=100,
                         atol=1e-7,
-                        rtol=1e-6
+                        rtol=1e-6,
                     )
 
-                    # Promote converged stage result
+                    # accept stage result
                     w_n.vector()[:] = w.vector()
                     w_n.vector().apply("insert")
 
@@ -626,139 +511,124 @@ def temp_dep_solver(F,w, boundary_conditions, JF, w_n: fenics.Function, fluid_ma
     
     return w
 
-def steady_picard_forms(
+def solve_thermal_sign_check(
     experiment: Experiment,
     W: fenics.FunctionSpace,
-    w_k: fenics.Function,
-    mu, Pr, Ra,
-    sub_dx, sub_ds,
-    qn_air
+    w: fenics.Function,
+    mu, Pr,
+    sub_dx, sub_ds, sub_ft,
+    qn_air,
+    T_c,
+    T_air_bc,
+    w_n: fenics.Function,
 ):
-    inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
+    """
+    Solves only the conduction part in the air with the same mixed space.
+    Velocity is forced to zero by the BCs that act on W_u; there is no buoyancy
+    and no advection in the residual. Use this to verify the interface heat-flux sign.
+    """
+    F, bcs, JF = _build_linear_startup_problem(
+        experiment=experiment,
+        W=W,
+        w=w,
+        mu=mu,
+        Pr=Pr,
+        sub_dx=sub_dx,
+        sub_ds=sub_ds,
+        sub_ft=sub_ft,
+        qn_air=qn_air,
+        T_c=T_c,
+        T_air_bc=T_air_bc,
+        qn_scale=1.0,
+        frozen_buoyancy_temperature=None,
+    )
 
-    # unknown of current Picard step
-    dw = fenics.TrialFunction(W)
-    p, u, T = fenics.split(dw)
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
 
-    # test functions
-    q, v, s = fenics.TestFunctions(W)
+    w = base_solver(
+        F, w, bcs, JF,
+        relaxation=1.0,
+        maxit=50,
+        atol=1e-7,
+        rtol=1e-6,
+    )
 
-    # previous iterate (known / frozen)
-    p_k, u_k, T_k = fenics.split(w_k)
+    theta = w.sub(2, deepcopy=True)
+    print("Thermal sign check:")
+    print(f"  theta min/max = {theta.vector().min():.6e}, {theta.vector().max():.6e}")
 
-    gvec = fenics.Constant((0.0, -1.0))
-    f_b = (Ra / Pr) * T * gvec
+    return w
 
-    # continuity
-    a_mass = (-q * div(u)) * sub_dx
-    L_mass = fenics.Constant(0.0) * q * sub_dx
-
-    # Oseen / Picard momentum
-    a_mom = (
-        0.5 * (dot(v, dot(grad(u), u_k)) - dot(u, dot(grad(v), u_k)))
-        - div(v) * p
-        + 2.0 * mu * inner(sym(grad(v)), sym(grad(u)))
-        + dot(v, f_b)
-        + fenics.Constant(0.05) * div(u) * div(v)
-    ) * sub_dx
-    L_mom = fenics.Constant(0.0) * q * sub_dx
-
-    # Picard energy
-    a_eng = (
-        (1.0 / Pr) * dot(grad(s), grad(T))
-        + 0.5 * (s * dot(u_k, grad(T)) - T * dot(u_k, grad(s)))
-    ) * sub_dx
-
-    L_eng = (-qn_air * s) * sub_ds(INTERFACE_TAG)
-
-    # optional mild SUPG for temperature
-    h = fenics.CellDiameter(W.mesh())
-    unorm = fenics.sqrt(dot(u_k, u_k) + fenics.Constant(1.0e-12))
-    tau_T = h / (2.0 * unorm)
-
-    RT = dot(u_k, grad(T)) - (1.0 / Pr) * div(grad(T))
-    a_supg = (tau_T * dot(u_k, grad(s)) * RT) * sub_dx
-
-    a = a_mass + a_mom + a_eng + a_supg
-    L = L_mass + L_mom + L_eng
-
-    bcs = set_bcs(W, None, None, None, experiment, compute_nondimensional_scales(experiment))
-    return a, L, bcs
-
-def solve_steady_picard(
-    experiment,
-    W,
-    w,
-    w_n,
-    psi_p, psi_u, psi_T,   # kept for compatibility, not used here
-    mu, Pr, Ra,
-    sub_dx, sub_ds, sub_ft, qn_air
+def solve_buoyancy_sign_check(
+    experiment: Experiment,
+    W: fenics.FunctionSpace,
+    w: fenics.Function,
+    mu, Pr,
+    sub_dx, sub_ds, sub_ft,
+    qn_air,
+    T_c,
+    T_air_bc,
+    w_n: fenics.Function,
 ):
-    w_k = fenics.Function(W)
-    w_k.vector()[:] = w_n.vector()
+    theta_ref = w_n.sub(2, deepcopy=True)
 
-    # continuation in forcing
-    lambdas = [0.02, 0.05, 0.10, 0.20, 0.35, 0.50, 0.70, 1.00]
+    qn_zero = fenics.Function(qn_air.function_space())
+    qn_zero.vector().zero()
+    qn_zero.vector().apply("insert")
 
-    qn_air_full = fenics.Function(qn_air.function_space())
-    qn_air_full.vector()[:] = qn_air.vector()
+    F, bcs, JF = _build_linear_startup_problem(
+        experiment=experiment,
+        W=W,
+        w=w,
+        mu=mu,
+        Pr=Pr,
+        sub_dx=sub_dx,
+        sub_ds=sub_ds,
+        sub_ft=sub_ft,
+        qn_air=qn_zero,
+        T_c=T_c,
+        T_air_bc=T_air_bc,
+        qn_scale=0.0,
+        frozen_buoyancy_temperature=theta_ref,
+    )
 
-    for lam in lambdas:
-        print(f"\n=== continuation lambda = {lam:.2f} ===")
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
 
-        qn_lam = fenics.Function(qn_air.function_space())
-        qn_lam.vector()[:] = lam * qn_air_full.vector().get_local()
-        qn_lam.vector().apply("insert")
+    w = base_solver(
+        F, w, bcs, JF,
+        relaxation=1.0,
+        maxit=50,
+        atol=4.5e-6,
+        rtol=2.5e-5,
+    )
 
-        Ra_lam = fenics.Constant(float(Ra) * lam)
+    u_chk = w.sub(1, deepcopy=True)
+    Vscal = fenics.FunctionSpace(u_chk.function_space().mesh(), "CG", 1)
+    uy = fenics.project(u_chk[1], Vscal)
 
-        picard_tol = 1.0e-8
-        picard_max = 500
+    print("Buoyancy sign check:")
+    print(f"  uy min/max = {uy.vector().min():.6e}, {uy.vector().max():.6e}")
 
-        for k in range(picard_max):
-            a, L, bcs = steady_picard_forms(
-                experiment=experiment,
-                W=W,
-                w_k=w_k,
-                mu=mu, Pr=Pr, Ra=Ra_lam,
-                sub_dx=sub_dx, sub_ds=sub_ds,
-                qn_air=qn_lam
-            )
+    r = (experiment.dimensions.wire.diameter / 2) / compute_nondimensional_scales(experiment).Lref
+    x_probe = 0.5 * r
+    y0 = 11.0 * r
 
-            fenics.solve(
-                a == L, w, bcs,
-                solver_parameters={
-                    "linear_solver": "mumps"
-                }
-            )
+    probe_points = [
+        (x_probe, y0 + 1.5 * r),
+        (x_probe, y0 + 3.0 * r),
+        (x_probe, y0 + 6.0 * r),
+        (x_probe, y0 + 8.0 * r),
+    ]
 
-            # diff = w.vector().copy()
-            # diff.axpy(-1.0, w_k.vector())
-            # rel = diff.norm("l2") / (w.vector().norm("l2") + 1.0e-14)
+    print("Buoyancy sign check probes (uy):")
+    for xp, yp in probe_points:
+        try:
+            val = uy(xp, yp)
+            print(f"  uy({xp:.6e}, {yp:.6e}) = {val:.6e}")
+        except RuntimeError:
+            print(f"  probe failed at ({xp:.6e}, {yp:.6e})")
 
-            p_new, u_new, T_new = w.split(deepcopy=True)
-            p_old, u_old, T_old = w_k.split(deepcopy=True)
-
-            du = u_new.vector().copy()
-            du.axpy(-1.0, u_old.vector())
-
-            dT = T_new.vector().copy()
-            dT.axpy(-1.0, T_old.vector())
-
-            num = (du.norm("l2")**2 + dT.norm("l2")**2)**0.5
-            den = (u_new.vector().norm("l2")**2 + T_new.vector().norm("l2")**2)**0.5 + 1e-14
-            rel = num / den
-
-            print(f"  Picard iter {k:02d}: rel = {rel:.3e}")
-
-            # w_k.vector()[:] = w.vector()
-            omega = 0.3   # start conservative
-            w_k.vector()[:] = (1.0 - omega) * w_k.vector().get_local() + omega * w.vector().get_local()
-            w_k.vector().apply("insert")
-
-            if rel < picard_tol:
-                break
-        else:
-            print(f"Picard failed to converge at lambda={lam:.2f}")
 
     return w
