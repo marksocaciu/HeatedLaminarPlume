@@ -66,12 +66,12 @@ Physical Surface(11) = {1};             // air domain
 
 // Setting mesh resolution on the wire
 Transfinite Line{7} = resolution;
-Transfinite Line{6} = resolution / 10;
-Transfinite Line{1} = resolution ;
+Transfinite Line{6} = resolution / 20;
+Transfinite Line{1} = resolution * w / h;
 Transfinite Line{2} = resolution ;
-Transfinite Line{3} = resolution ;
-Transfinite Line{4} = resolution * 5;
-Transfinite Line{5} = resolution ;
+Transfinite Line{3} = resolution * w / h;
+Transfinite Line{4} = resolution * 10;
+Transfinite Line{5} = resolution / 5;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};

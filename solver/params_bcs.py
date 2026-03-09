@@ -127,7 +127,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
         # fenics.DirichletBC(W_T, hot_wall_temperature, hot_wall),
         # fenics.DirichletBC(W_T,T_air_bc,sub_ft,INTERFACE_TAG),
         # fenics.DirichletBC(W_T, cold_wall_temperature, cold_wall)
-        # fenics.DirichletBC(W_T, fenics.Constant(0.0), east),
+        fenics.DirichletBC(W_T, fenics.Constant(0.0), east),
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise")
         ]
     

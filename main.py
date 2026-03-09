@@ -182,20 +182,55 @@ def base_version(experiment: Experiment):
         experiment.fluid.properties["beta"],
         experiment
     )
+    
+    # Use Stokes initial guess for better convergene
+    print("Solving Stokes problem for initial guess...")
+    w_n = stokes_initial_guess(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=(0.05, 0.10, 0.20, 0.40, 0.70, 1.00),
+        relaxation=0.25,
+        maxit=80,
+        atol=1.8e-7,
+        rtol=2.1e-6,
+    )
 
+    # Solve the full nonlinear problem with previous initial guess
     # F, w, boundary_conditions, JF, w_n = nonlinear_solver(
     #     experiment, u_n, u, T_n, T, p, W, w,
     #     psi_p, psi_u, psi_T,
     #     mu, Pr, f_b, T_c, T_air_bc,
     #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-    #     w_n
+    #     w_n,
+    #     buoyancy_scale=1.0,
+    #     qn_scale=1.0,
+    #     include_convection=True,
+    #     convection_scale=1.0,
     # )
 
     # w = base_solver(F, w, boundary_conditions, JF)
+
+    w = solve_steady_newton_continuation(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=[0.02, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.50, 0.70, 0.85, 1.00],
+        relaxation_schedule=(0.25,0.15, 0.10, 0.05, 0.02),
+        stokes_startup=False,
+    )
     
-    w = solve_steady_picard(experiment=experiment, W=W, w=w, w_n=w_n,
-                            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-                            mu=mu, Pr=Pr, Ra=Ra, sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star)
+    # w = solve_steady_picard(experiment=experiment, W=W, w=w, w_n=w_n,
+    #                         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #                         mu=mu, Pr=Pr, Ra=Ra, sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star)
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
