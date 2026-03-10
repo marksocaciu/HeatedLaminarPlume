@@ -25,7 +25,7 @@ h = 100 * R;
 lc1 = R_placeholder / 10;
 lc2 = R_placeholder / 1000;
 resolution = resolution_placeholder;
-dist = h / 10 + 11 * R - h / 12
+dist = h / 10 + 11 * R - h / 12;
 
 // Setting the points of the domain
 Point(1) = {0.0, 0.0,    0.0, lc1};
@@ -52,7 +52,7 @@ Line(8) = {9, 7};
 Line(9) = {8, 5};
 
 // Setting the outside curve
-Curve Loop(1) = {1, 2, 3, 4, 7, 5};
+Curve Loop(1) = {1, 2, 3, 4, 8, 7, 9, 5};
 Curve Loop(2) = {7, -6};
 //Curve (3) = {6};
 //Curve (4) = {7};
@@ -62,7 +62,7 @@ Plane Surface(1) = {1};
 Plane Surface(2) = {2};
 
 // Setting Physical surfaces
-Physical Curve(100) = {4,5,8,9};            // symmetry boundary of the air domain
+Physical Curve(100) = {4,5};            // symmetry boundary of the air domain
 Physical Curve(101) = {1,2,3};          // outer boundary of the air domain
 Physical Curve(102) = {7};              // outer boundary of the wire domain
 Physical Curve(103) = {6};              // symmetry boundary of the wire domain
