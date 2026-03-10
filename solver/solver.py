@@ -3,6 +3,7 @@ from solver.params_bcs import *
 from utils.material import *
 from solver.scales import *
 from utils.plot import *
+from utils.geometry import *
 
 class RestrictToAir(fenics.UserExpression):
     def __init__(self, T_full, **kwargs):
@@ -200,7 +201,7 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     print("Max qn_air:", qn_air.vector().max())
     print(f"Applied qn_scale: {float(qn_scale):.4f}")
 
-    F += qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += - qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     scales = compute_nondimensional_scales(experiment)
     k_inf = float(experiment.fluid.properties["k"])
@@ -382,6 +383,7 @@ def solve_steady_newton_continuation(
     relaxation_schedule=(0.2, 0.1, 0.05),
     stokes_startup=True,
     sub_mesh_star=None,
+    sub_mesh_dim=None,
 ):
     """
     Steady continuation solve with damped Newton + MUMPS.
@@ -410,14 +412,18 @@ def solve_steady_newton_continuation(
                 scales.Uref, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
-            plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-                        cmap="coolwarm", colorbar=True)
-            plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
-                        cmap="coolwarm", colorbar=True)
-            plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-                        cmap="coolwarm", colorbar=True, mode="glyphs")
-            plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-                        cmap="coolwarm", colorbar=True)
+            # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+            #             cmap="coolwarm", colorbar=True)
+            # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
+            #             cmap="coolwarm", colorbar=True)
+            # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+            #             cmap="coolwarm", colorbar=True, mode="glyphs")
+            # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+            #             cmap="coolwarm", colorbar=True)
+            
+            save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
+            save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])
+            save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
 
         stage_attempts = [
             ("stokes",   False, 0.00),
