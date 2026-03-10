@@ -31,9 +31,9 @@ Point(1) = {0.0, 0.0,    0.0, lc1};
 Point(2) = {w,   0.0,    0.0, lc1};
 Point(3) = {w,   h,      0.0, lc1};
 Point(4) = {0.0, h,      0.0, lc1};
-Point(5) = {0.0, 10 * R, 0.0, lc2};
-Point(6) = {0.0, 11 * R, 0.0, lc2};
-Point(7) = {0.0, 12 * R, 0.0, lc2};
+Point(5) = {0.0, h / 10 + 10 * R, 0.0, lc2};
+Point(6) = {0.0, h / 10 + 11 * R, 0.0, lc2};
+Point(7) = {0.0, h / 10 + 12 * R, 0.0, lc2};
 
 // Setting the domain edges
 Line(1) = {1, 2};
@@ -65,13 +65,13 @@ Physical Surface(10) = {2};             // wire domain
 Physical Surface(11) = {1};             // air domain
 
 // Setting mesh resolution on the wire
-Transfinite Line{7} = resolution;
+Transfinite Line{7} = resolution * 2;
 Transfinite Line{6} = resolution / 20;
 Transfinite Line{1} = resolution * w / h;
 Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
-Transfinite Line{4} = resolution * 10;
-Transfinite Line{5} = resolution / 5;
+Transfinite Line{-4} = resolution * 20;
+Transfinite Line{-5} = resolution ;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};

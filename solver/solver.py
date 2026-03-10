@@ -2,7 +2,7 @@ from utils.imports import *
 from solver.params_bcs import *
 from utils.material import *
 from solver.scales import *
-
+from utils.plot import *
 
 class RestrictToAir(fenics.UserExpression):
     def __init__(self, T_full, **kwargs):
@@ -200,14 +200,14 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     print("Max qn_air:", qn_air.vector().max())
     print(f"Applied qn_scale: {float(qn_scale):.4f}")
 
-    F += - qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     scales = compute_nondimensional_scales(experiment)
     k_inf = float(experiment.fluid.properties["k"])
     qn_dim = qn_scale_c * qn_air * fenics.Constant(
         k_inf * float(scales.dTref) / float(scales.Lref)
     )
-    QL_half = -fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
+    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
     print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
@@ -267,7 +267,7 @@ def _build_linear_startup_problem(
     energy = dot(grad(s), (1.0 / Pr) * grad(T_trial))
 
     F = (mass + momentum + energy) * sub_dx
-    F += -fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+    F += - fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
@@ -284,8 +284,8 @@ def stokes_initial_guess(
     lambdas=(0.10, 0.25, 0.50, 1.00),
     relaxation=0.2,
     maxit=60,
-    atol=1e-9,
-    rtol=1e-8,
+    atol=4.5e-8,
+    rtol=3.2e-7,
 ):
     """
     Build a genuinely linear startup state before the full nonlinear solve.
@@ -381,6 +381,7 @@ def solve_steady_newton_continuation(
     lambdas=None,
     relaxation_schedule=(0.2, 0.1, 0.05),
     stokes_startup=True,
+    sub_mesh_star=None,
 ):
     """
     Steady continuation solve with damped Newton + MUMPS.
@@ -398,14 +399,38 @@ def solve_steady_newton_continuation(
 
     for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+        if lam == 0.5:
+            # Split nondimensional solution
+            p_star, u_star, theta = w.split(deepcopy=True)
+            scales = compute_nondimensional_scales(experiment)
+
+            # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+            u_dim, p_dim, T_dim = dimensionalize_fields(
+                sub_mesh_star, u_star, p_star, theta,
+                scales.Uref, scales.dTref, T_ambient,
+                experiment.fluid.properties["rho"]
+            )
+            plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+                        cmap="coolwarm", colorbar=True)
+            plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
+                        cmap="coolwarm", colorbar=True)
+            plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+                        cmap="coolwarm", colorbar=True, mode="glyphs")
+            plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+                        cmap="coolwarm", colorbar=True)
 
         stage_attempts = [
             ("stokes",   False, 0.00),
             ("conv_005", True,  0.05),
             ("conv_010", True,  0.10),
             ("conv_020", True,  0.20),
+            ("conv_030", True,  0.30),
             ("conv_040", True,  0.40),
+            ("conv_050", True,  0.50),
+            ("conv_060", True,  0.60),
             ("conv_070", True,  0.70),
+            ("conv_080", True,  0.80),
+            ("conv_090", True,  0.90),
             ("full",     True,  1.00),
         ]
 
@@ -416,6 +441,7 @@ def solve_steady_newton_continuation(
 
             for relaxation in relaxation_schedule:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
+                
 
                 # restart from last accepted continuation state
                 w.vector()[:] = w_n.vector()
@@ -438,8 +464,8 @@ def solve_steady_newton_continuation(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
                         maxit=100,
-                        atol=1e-7,
-                        rtol=1e-6,
+                        atol=5e-6,
+                        rtol=4e-5,
                     )
 
                     # accept stage result
@@ -550,8 +576,8 @@ def solve_thermal_sign_check(
         F, w, bcs, JF,
         relaxation=1.0,
         maxit=50,
-        atol=1e-7,
-        rtol=1e-6,
+        atol=5e-6,
+        rtol=4e-5,
     )
 
     theta = w.sub(2, deepcopy=True)
@@ -600,8 +626,8 @@ def solve_buoyancy_sign_check(
         F, w, bcs, JF,
         relaxation=1.0,
         maxit=50,
-        atol=4.5e-6,
-        rtol=2.5e-5,
+        atol=5e-6,
+        rtol=4e-5,
     )
 
     u_chk = w.sub(1, deepcopy=True)

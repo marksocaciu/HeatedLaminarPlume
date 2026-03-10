@@ -195,24 +195,40 @@ def base_version(experiment: Experiment):
         w_n=w_n,
         lambdas=(0.05, 0.10, 0.20, 0.40, 0.70, 1.00),
         relaxation=0.25,
-        maxit=80,
-        atol=5e-7,
-        rtol=3e-6,
+        maxit=80
     )
 
     # Solve the full nonlinear problem with previous initial guess
     print("Starting checks")
-    w =solve_thermal_sign_check(experiment=experiment,W=W,w=w,
+    w_t = w.copy(deepcopy=True)
+    w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
                                 mu=mu,Pr=Pr,
                                 sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                 qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
-
-    w = solve_buoyancy_sign_check(experiment=experiment,W=W,w=w,
+    w_p = w.copy(deepcopy=True)
+    w_p = solve_buoyancy_sign_check(experiment=experiment,W=W,w=w_p,
                                   mu=mu,Pr=Pr,
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
 
     print("Checks complete")
+    # # Split nondimensional solution
+    # p_star, u_star, theta = w.split(deepcopy=True)
+
+    # # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+    # u_dim, p_dim, T_dim = dimensionalize_fields(
+    #     sub_mesh_star, u_star, p_star, theta,
+    #     scales.Uref, scales.dTref, T_ambient,
+    #     experiment.fluid.properties["rho"]
+    # )
+    # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+    #             cmap="coolwarm", colorbar=True, mode="glyphs")
+    # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+    #             cmap="coolwarm", colorbar=True)
 
     w = solve_steady_newton_continuation(
         experiment=experiment,
@@ -222,9 +238,10 @@ def base_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=[0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.50, 0.70, 1.00],
-        relaxation_schedule=(0.15, 0.10, 0.05, 0.02),
+        lambdas=[0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+        relaxation_schedule=(0.35, 0.30, 0.25, 0.20, 0.15, 0.10, 0.05, 0.02, 0.01),
         stokes_startup=False,
+        sub_mesh_star=sub_mesh_star
     )
     
     # Split nondimensional solution
@@ -248,14 +265,14 @@ def base_version(experiment: Experiment):
 
 
     # plotting + output
-    plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-                cmap="coolwarm", colorbar=True)
-    plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
-                cmap="coolwarm", colorbar=True)
-    plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-                cmap="coolwarm", colorbar=True, mode="glyphs")
-    plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-                cmap="coolwarm", colorbar=True)
+    # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+    #             cmap="coolwarm", colorbar=True, mode="glyphs")
+    # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+    #             cmap="coolwarm", colorbar=True)
 
     save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])

@@ -38,11 +38,11 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     class Hot_wall(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return on_boundary and fenics.near(
-                (x[0]**2)+((x[1]-11.*r)**2)\
+                (x[0]**2)+((x[1]-(experiment.dimensions.domain.y_max / scales.Lref / 10. + 11.*r))**2)\
                     -1.*r*r, 0., eps= 1.e-1*r
                 ) \
-                    and x[1] >= 10.*r - 1e-12 \
-                    and x[1] <= 12.*r + 1e-12
+                    and x[1] >= experiment.dimensions.domain.y_max / scales.Lref / 10. + 10.*r - 1e-12 \
+                    and x[1] <= experiment.dimensions.domain.y_max / scales.Lref / 10. + 12.*r + 1e-12
         
     class Cold_wall_preset(fenics.SubDomain):
         def inside(self, x, on_boundary):
@@ -68,7 +68,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
         def inside(self, x, on_boundary):
             return (
                 fenics.near(x[0], experiment.dimensions.domain.x_max / scales.Lref, 1.0e-10)
-                and fenics.near(x[1], experiment.dimensions.domain.y_min / scales.Lref, 1.0e-10)
+                and fenics.near(x[1], experiment.dimensions.domain.y_max / scales.Lref, 1.0e-10)
             )
     
     hot_wall=Hot_wall()
@@ -89,7 +89,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     print("Setting boundary conditions...")
     boundary_conditions = [
         fenics.DirichletBC(W_u, (0., 0.), hot_wall),                    # no-slip on wire
-        # fenics.DirichletBC(W_u, (0., 0.), cold_wall),                  # no-slip on cold walls
+        fenics.DirichletBC(W_u, (0., 0.), east),                  # no-slip on cold walls
         # fenics.DirichletBC(W_T, hot_wall_temperature, hot_wall),
         # fenics.DirichletBC(W_T,T_air_bc,sub_ft,INTERFACE_TAG),
         # fenics.DirichletBC(W_T, fenics.Constant(0.0), cold_wall),
