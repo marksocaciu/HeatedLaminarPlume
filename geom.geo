@@ -25,6 +25,7 @@ h = 100 * R;
 lc1 = R_placeholder / 10;
 lc2 = R_placeholder / 1000;
 resolution = resolution_placeholder;
+dist = h / 10 + 11 * R - h / 12
 
 // Setting the points of the domain
 Point(1) = {0.0, 0.0,    0.0, lc1};
@@ -34,16 +35,21 @@ Point(4) = {0.0, h,      0.0, lc1};
 Point(5) = {0.0, h / 10 + 10 * R, 0.0, lc2};
 Point(6) = {0.0, h / 10 + 11 * R, 0.0, lc2};
 Point(7) = {0.0, h / 10 + 12 * R, 0.0, lc2};
+Point(8) = {0.0, h / 12, 0.0, lc2};
+Point(9) = {0.0, h / 12 + 2 * dist, 0.0, lc2};
 
 // Setting the domain edges
 Line(1) = {1, 2};
 Line(2) = {2, 3};
 Line(3) = {3, 4};
-Line(4) = {4, 7};
-Line(5) = {5, 1};
+Line(4) = {4, 9};
+Line(5) = {8, 1};
 Line(6) = {7, 5};
 
 Circle(7) = {7, 6, 5};
+
+Line(8) = {9, 7};
+Line(9) = {8, 5};
 
 // Setting the outside curve
 Curve Loop(1) = {1, 2, 3, 4, 7, 5};
@@ -56,7 +62,7 @@ Plane Surface(1) = {1};
 Plane Surface(2) = {2};
 
 // Setting Physical surfaces
-Physical Curve(100) = {4,5};            // symmetry boundary of the air domain
+Physical Curve(100) = {4,5,8,9};            // symmetry boundary of the air domain
 Physical Curve(101) = {1,2,3};          // outer boundary of the air domain
 Physical Curve(102) = {7};              // outer boundary of the wire domain
 Physical Curve(103) = {6};              // symmetry boundary of the wire domain
@@ -70,8 +76,10 @@ Transfinite Line{6} = resolution / 20;
 Transfinite Line{1} = resolution * w / h;
 Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
-Transfinite Line{-4} = resolution * 20;
-Transfinite Line{-5} = resolution ;
+Transfinite Line{4} = resolution * 20;
+Transfinite Line{5} = resolution ;
+Transfinite Line{8} = 20 ;
+Transfinite Line{9} = 20 ;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};
