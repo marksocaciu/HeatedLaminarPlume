@@ -126,7 +126,7 @@ def geometry_template(
     xmax: Optional[float] = None,
     ymax: Optional[float] = None,
     template_geo_name: str = "geom.geo",
-    resolution: Optional[int] = 150
+    resolution: Optional[int] = 450
 ) -> Path:
     """
     Load a .geo template located in the same directory as this script, set the wire radius

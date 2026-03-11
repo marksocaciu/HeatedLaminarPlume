@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<Xdmf Version="3.0">
+  <Domain>
+    <Grid Name="mesh" GridType="Uniform">
+      <Topology NumberOfElements="1133238" TopologyType="Triangle" NodesPerElement="3">
+        <DataItem Dimensions="1133238 3" NumberType="UInt" Format="HDF">temperature.h5:/Mesh/mesh/topology</DataItem>
+      </Topology>
+      <Geometry GeometryType="XY">
+        <DataItem Dimensions="572522 2" Format="HDF">temperature.h5:/Mesh/mesh/geometry</DataItem>
+      </Geometry>
+      <Attribute Name="T_conduction_full" AttributeType="Scalar" Center="Node">
+        <DataItem Dimensions="572522 1" Format="HDF">temperature.h5:/VisualisationVector/0</DataItem>
+      </Attribute>
+    </Grid>
+  </Domain>
+</Xdmf>
