@@ -6,7 +6,7 @@ import numpy as np
 import os
 import sys
 import meshio
-import gmsh
+# import gmsh
 import subprocess
 import argparse
 import math
@@ -16,7 +16,7 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 import csv, os
 
-import gmsh
+# import gmsh
 
 EXPERIMENTS_JSON_PATH = "experiments.json"
 SCHEMA_JSON_PATH = "experiments.schema.json"

@@ -53,7 +53,7 @@ Line(9) = {8, 5};
 
 // Setting the outside curve
 Curve Loop(1) = {1, 2, 3, 4, 8, 7, 9, 5};
-Curve Loop(2) = {7, -6};
+Curve Loop(2) = {-7, 6};
 //Curve (3) = {6};
 //Curve (4) = {7};
 
@@ -78,8 +78,8 @@ Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
 Transfinite Line{4} = resolution * 20;
 Transfinite Line{5} = resolution ;
-Transfinite Line{8} = 20 ;
-Transfinite Line{9} = 20 ;
+Transfinite Line{8} = resolution * 2;
+Transfinite Line{9} = resolution * 2;
 
 //Setting mesh on air
 //Transfinite Surface{1} = {1, 2, 3, 4};

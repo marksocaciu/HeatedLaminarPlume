@@ -384,6 +384,9 @@ def solve_steady_newton_continuation(
     stokes_startup=True,
     sub_mesh_star=None,
     sub_mesh_dim=None,
+    p_path: str = "",
+    u_path: str = "",
+    T_path: str = "",
 ):
     """
     Steady continuation solve with damped Newton + MUMPS.
@@ -401,29 +404,31 @@ def solve_steady_newton_continuation(
 
     for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
-        if lam == 0.5:
-            # Split nondimensional solution
-            p_star, u_star, theta = w.split(deepcopy=True)
-            scales = compute_nondimensional_scales(experiment)
+        # Split nondimensional solution
+        p_star, u_star, theta = w.split(deepcopy=True)
+        scales = compute_nondimensional_scales(experiment)
 
-            # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
-            u_dim, p_dim, T_dim = dimensionalize_fields(
-                sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
-                experiment.fluid.properties["rho"]
-            )
-            # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-            #             cmap="coolwarm", colorbar=True)
-            # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
-            #             cmap="coolwarm", colorbar=True)
-            # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-            #             cmap="coolwarm", colorbar=True, mode="glyphs")
-            # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-            #             cmap="coolwarm", colorbar=True)
-            
-            save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
-            save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])
-            save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
+        # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+        u_dim, p_dim, T_dim = dimensionalize_fields(
+            sub_mesh_star, u_star, p_star, theta,
+            scales.Uref, scales.dTref, T_ambient,
+            experiment.fluid.properties["rho"]
+        )
+        # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+        #             cmap="coolwarm", colorbar=True)
+        # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
+        #             cmap="coolwarm", colorbar=True)
+        # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+        #             cmap="coolwarm", colorbar=True, mode="glyphs")
+        # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+        #             cmap="coolwarm", colorbar=True)
+        p_path = p_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        v_path = u_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        t_path = T_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        
+        save_experiment(p_path, sub_mesh_dim, [p_dim])
+        save_experiment(v_path, sub_mesh_dim, [u_dim])
+        save_experiment(t_path, sub_mesh_dim, [T_dim])
 
         stage_attempts = [
             ("stokes",   False, 0.00),
@@ -436,7 +441,19 @@ def solve_steady_newton_continuation(
             ("conv_060", True,  0.60),
             ("conv_070", True,  0.70),
             ("conv_080", True,  0.80),
+            ("conv_083", True,  0.83),
+            ("conv_085", True,  0.85),
+            ("conv_087", True,  0.87),
             ("conv_090", True,  0.90),
+            ("conv_091", True,  0.91),
+            ("conv_092", True,  0.92),
+            ("conv_093", True,  0.93),
+            ("conv_094", True,  0.94),
+            ("conv_095", True,  0.95),
+            ("conv_096", True,  0.96),
+            ("conv_097", True,  0.97),
+            ("conv_098", True,  0.98),
+            ("conv_099", True,  0.99),
             ("full",     True,  1.00),
         ]
 
