@@ -606,12 +606,6 @@ def solve_steady_newton_continuation(
     second = True
 
     for lam in lambdas:
-        if first: 
-            first = False
-            continue
-        elif second:
-            second = False
-            continue
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
         # Split nondimensional solution
         p_star, u_star, theta = w.split(deepcopy=True)
@@ -699,6 +693,12 @@ def solve_steady_newton_continuation(
             )
 
             for relaxation in relaxation_schedule:
+                if first: 
+                    first = False
+                    continue
+                elif second:
+                    second = False
+                    continue
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
                 
                 # restart from last accepted continuation state

@@ -68,7 +68,7 @@ def base_version(experiment: Experiment):
     ELEM = "triangle"
 
     # Generate and read mesh
-    # generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
+    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
     
     # --- 1) read mesh (dim)  [already]
     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
