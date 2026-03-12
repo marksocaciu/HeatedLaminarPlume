@@ -15,13 +15,12 @@ General.NumThreads = 0; // Use all threads
 
 // Setting up the parameters for the geometry to be modelled for multiple 
 // experimental setups
-
-R_placeholder = 1;
-resolution_placeholder = 50;
+R_placeholder = 3.75e-05;
+resolution_placeholder = 250;
 
 R = R_placeholder;
-w = 40 * R;
-h = 100 * R;
+w = 0.02;
+h = 0.2;
 lc1 = R_placeholder / 10;
 lc2 = R_placeholder / 1000;
 resolution = resolution_placeholder;
