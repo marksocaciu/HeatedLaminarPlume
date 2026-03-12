@@ -25,7 +25,7 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
                   ELEM="triangle", PRUNE_Z=True):
 
-    subprocess.run(f"gmsh -nopopup -nt 12 {GEOM_FILE}", shell=True, check=True)
+    #subprocess.run(f"gmsh -nopopup -nt 12 {GEOM_FILE}", shell=True, check=True)
 
     print("Converting MSH to XDMF...")
     msh = meshio.read(MSH_FILE)
@@ -126,7 +126,7 @@ def geometry_template(
     xmax: Optional[float] = None,
     ymax: Optional[float] = None,
     template_geo_name: str = "geom.geo",
-    resolution: Optional[int] = 450
+    resolution: Optional[int] = 80
 ) -> Path:
     """
     Load a .geo template located in the same directory as this script, set the wire radius

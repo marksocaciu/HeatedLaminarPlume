@@ -219,60 +219,229 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     return F,w, boundary_conditions, JF, w_n
 
-def _assign_mixed_temperature(W: fenics.FunctionSpace, w_mixed: fenics.Function, theta_src: fenics.Function):
-    """Assign a scalar temperature field into W.sub(2)."""
+# def _assign_mixed_temperature(W: fenics.FunctionSpace, w_mixed: fenics.Function, theta_src: fenics.Function):
+#     """Assign a scalar temperature field into W.sub(2)."""
+#     VT, _ = W.sub(2).collapse(True)
+#     theta_tmp = fenics.Function(VT)
+#     theta_tmp.interpolate(theta_src)
+#     assign_T = fenics.FunctionAssigner(W.sub(2), VT)
+#     assign_T.assign(w_mixed.sub(2), theta_tmp)
+#     w_mixed.vector().apply("insert")
+
+def _build_temperature_assigner(W: fenics.FunctionSpace):
     VT, _ = W.sub(2).collapse(True)
-    theta_tmp = fenics.Function(VT)
-    theta_tmp.interpolate(theta_src)
     assign_T = fenics.FunctionAssigner(W.sub(2), VT)
+    return VT, assign_T
+
+
+def _assign_mixed_temperature(
+    w_mixed: fenics.Function,
+    theta_src: fenics.Function,
+    VT: fenics.FunctionSpace,
+    assign_T: fenics.FunctionAssigner,
+    theta_tmp: fenics.Function = None,
+):
+    if theta_tmp is None:
+        theta_tmp = fenics.Function(VT)
+
+    theta_tmp.interpolate(theta_src)
     assign_T.assign(w_mixed.sub(2), theta_tmp)
     w_mixed.vector().apply("insert")
+    return theta_tmp
+
+# def _build_linear_startup_problem(
+#     experiment: Experiment,
+#     W: fenics.FunctionSpace,
+#     w: fenics.Function,
+#     mu, Pr,
+#     sub_dx, sub_ds, sub_ft,
+#     qn_air,
+#     T_c,
+#     T_air_bc,
+#     qn_scale=1.0,
+#     frozen_buoyancy_temperature=None,
+# ):
+#     """
+#     Linear startup problem used to generate a robust initial guess.
+#     - momentum convection is removed
+#     - thermal advection is removed
+#     - buoyancy may be frozen from a prescribed temperature field
+#     """
+#     q, v, s = fenics.TestFunctions(W)
+#     p_trial, u_trial, T_trial = fenics.split(w)
+#     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
+
+#     scales = compute_nondimensional_scales(experiment)
+#     gvec = fenics.Constant((0.0, -1.0))
+#     buoyancy_coeff = fenics.Constant(float(scales.Ra / scales.Pr))
+
+#     mass = -q * div(u_trial)
+
+#     momentum = (
+#         - div(v) * p_trial
+#         + 2.0 * mu * inner(sym(grad(v)), sym(grad(u_trial)))
+#     )
+
+#     if frozen_buoyancy_temperature is not None:
+#         momentum += dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec)
+
+#     energy = dot(grad(s), (1.0 / Pr) * grad(T_trial))
+
+#     F = (mass + momentum + energy) * sub_dx
+#     F += - fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+
+#     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
+#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+#     return F, boundary_conditions, JF
 
 def _build_linear_startup_problem(
     experiment: Experiment,
     W: fenics.FunctionSpace,
-    w: fenics.Function,
     mu, Pr,
-    sub_dx, sub_ds, sub_ft,
+    sub_dx, sub_ds,
     qn_air,
-    T_c,
-    T_air_bc,
     qn_scale=1.0,
     frozen_buoyancy_temperature=None,
+    scales=None,
 ):
     """
-    Linear startup problem used to generate a robust initial guess.
+    Return bilinear form a and linear form L for the startup solve.
 
-    - momentum convection is removed
-    - thermal advection is removed
-    - buoyancy may be frozen from a prescribed temperature field
+    Unknowns: (p, u, T)
+    Test functions: (q, v, s)
     """
+    p, u, T = fenics.TrialFunctions(W)
     q, v, s = fenics.TestFunctions(W)
-    p_trial, u_trial, T_trial = fenics.split(w)
+
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
-    scales = compute_nondimensional_scales(experiment)
+    if scales is None:
+        scales = compute_nondimensional_scales(experiment)
+
     gvec = fenics.Constant((0.0, -1.0))
     buoyancy_coeff = fenics.Constant(float(scales.Ra / scales.Pr))
 
-    mass = -q * div(u_trial)
+    a = (
+        (-q * fenics.div(u))
+        + (-fenics.div(v) * p + 2.0 * mu * fenics.inner(fenics.sym(fenics.grad(v)),
+                                                        fenics.sym(fenics.grad(u))))
+        + fenics.dot(fenics.grad(s), (1.0 / Pr) * fenics.grad(T))
+    ) * sub_dx
 
-    momentum = (
-        - div(v) * p_trial
-        + 2.0 * mu * inner(sym(grad(v)), sym(grad(u_trial)))
-    )
+    L = fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
 
     if frozen_buoyancy_temperature is not None:
-        momentum += dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec)
+        L += - dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec) * sub_dx
 
-    energy = dot(grad(s), (1.0 / Pr) * grad(T_trial))
+    return a, L
 
-    F = (mass + momentum + energy) * sub_dx
-    F += - fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
+    problem = fenics.LinearVariationalProblem(a, L, w, boundary_conditions)
+    solver = fenics.LinearVariationalSolver(problem)
 
-    JF = fenics.derivative(F, w, fenics.TrialFunction(W))
-    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    return F, boundary_conditions, JF
+    prm = solver.parameters
+    prm["linear_solver"] = linear_solver
+
+    solver.solve()
+    w.vector().apply("insert")
+    return w
+
+# def stokes_initial_guess(
+#     experiment: Experiment,
+#     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+#     W: fenics.FunctionSpace, w: fenics.Function,
+#     psi_p, psi_u, psi_T,
+#     mu, Pr, f_b, T_c, T_air_bc,
+#     sub_dx, sub_ds, sub_ft, qn_air,
+#     w_n: fenics.Function,
+#     lambdas=(0.10, 0.25, 0.50, 1.00),
+#     relaxation=0.2,
+#     maxit=60,
+#     atol=4.5e-8,
+#     rtol=3.2e-7,
+# ):
+#     """
+#     Build a genuinely linear startup state before the full nonlinear solve.
+
+#     For each continuation parameter lambda:
+#     1) solve pure conduction with q'' scaled by lambda
+#     2) solve linear Stokes with buoyancy frozen from that conduction field
+
+#     The same BC construction is reused, so the pointwise pressure pin stays active.
+#     """
+#     # Reference conduction field corresponding to full heating (lambda = 1).
+#     theta_ref = w_n.sub(2, deepcopy=True)
+
+#     w.vector()[:] = w_n.vector()
+#     w.vector().apply("insert")
+
+#     for lam in lambdas:
+#         print(f"\n=== Linear startup lambda = {lam:.2f} ===")
+
+#         # Keep the initial temperature guess consistent with the current continuation step.
+#         theta_lam = fenics.Function(theta_ref.function_space())
+#         theta_lam.vector()[:] = float(lam) * theta_ref.vector().get_local()
+#         theta_lam.vector().apply("insert")
+#         _assign_mixed_temperature(W, w_n, theta_lam)
+#         w.vector()[:] = w_n.vector()
+#         w.vector().apply("insert")
+
+#         print("  -> Stage A: conduction-only solve")
+#         F_cond, boundary_conditions, JF_cond = _build_linear_startup_problem(
+#             experiment=experiment,
+#             W=W,
+#             w=w,
+#             mu=mu,
+#             Pr=Pr,
+#             sub_dx=sub_dx,
+#             sub_ds=sub_ds,
+#             sub_ft=sub_ft,
+#             qn_air=qn_air,
+#             T_c=T_c,
+#             T_air_bc=T_air_bc,
+#             qn_scale=lam,
+#             frozen_buoyancy_temperature=None,
+#         )
+#         w = base_solver(
+#             F_cond, w, boundary_conditions, JF_cond,
+#             relaxation=1.0,
+#             maxit=maxit,
+#             atol=atol,
+#             rtol=rtol,
+#         )
+
+#         theta_cond = w.sub(2, deepcopy=True)
+#         w_n.assign(w)
+#         w_n.vector().apply("insert")
+
+#         print("  -> Stage B: frozen-temperature Stokes solve")
+#         F_stokes, boundary_conditions, JF_stokes = _build_linear_startup_problem(
+#             experiment=experiment,
+#             W=W,
+#             w=w,
+#             mu=mu,
+#             Pr=Pr,
+#             sub_dx=sub_dx,
+#             sub_ds=sub_ds,
+#             sub_ft=sub_ft,
+#             qn_air=qn_air,
+#             T_c=T_c,
+#             T_air_bc=T_air_bc,
+#             qn_scale=lam,
+#             frozen_buoyancy_temperature=theta_cond,
+#         )
+#         w = base_solver(
+#             F_stokes, w, boundary_conditions, JF_stokes,
+#             relaxation=1.0,
+#             maxit=maxit,
+#             atol=atol,
+#             rtol=rtol,
+#         )
+
+#         w_n.assign(w)
+#         w_n.vector().apply("insert")
+
+#     return w_n
 
 def stokes_initial_guess(
     experiment: Experiment,
@@ -283,22 +452,27 @@ def stokes_initial_guess(
     sub_dx, sub_ds, sub_ft, qn_air,
     w_n: fenics.Function,
     lambdas=(0.10, 0.25, 0.50, 1.00),
-    relaxation=0.2,
-    maxit=60,
-    atol=4.5e-8,
-    rtol=3.2e-7,
 ):
     """
-    Build a genuinely linear startup state before the full nonlinear solve.
-
-    For each continuation parameter lambda:
-    1) solve pure conduction with q'' scaled by lambda
-    2) solve linear Stokes with buoyancy frozen from that conduction field
-
-    The same BC construction is reused, so the pointwise pressure pin stays active.
+    Fast linear startup:
+      1) conduction-only solve
+      2) frozen-temperature Stokes solve
+    for each continuation lambda.
     """
-    # Reference conduction field corresponding to full heating (lambda = 1).
-    theta_ref = w_n.sub(2, deepcopy=True)
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    # cache temperature assignment machinery
+    VT, assign_T = _build_temperature_assigner(W)
+    theta_tmp = fenics.Function(VT)
+
+    # reference temperature field for continuation scaling
+    theta_ref = fenics.Function(VT)
+    theta_ref.vector()[:] = w_n.sub(2, deepcopy=True).vector()
+    theta_ref.vector().apply("insert")
+
+    # working storage
+    theta_lam = fenics.Function(VT)
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
@@ -306,70 +480,95 @@ def stokes_initial_guess(
     for lam in lambdas:
         print(f"\n=== Linear startup lambda = {lam:.2f} ===")
 
-        # Keep the initial temperature guess consistent with the current continuation step.
-        theta_lam = fenics.Function(theta_ref.function_space())
-        theta_lam.vector()[:] = float(lam) * theta_ref.vector().get_local()
+        # scale reference thermal field for the current continuation level
+        theta_lam.vector()[:] = theta_ref.vector()
+        theta_lam.vector()[:] *= float(lam)
         theta_lam.vector().apply("insert")
-        _assign_mixed_temperature(W, w_n, theta_lam)
+
+        _assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
+
+        # start each stage from latest accepted mixed state
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
 
         print("  -> Stage A: conduction-only solve")
-        F_cond, boundary_conditions, JF_cond = _build_linear_startup_problem(
+        a_cond, L_cond = _build_linear_startup_problem(
             experiment=experiment,
             W=W,
-            w=w,
             mu=mu,
             Pr=Pr,
             sub_dx=sub_dx,
             sub_ds=sub_ds,
-            sub_ft=sub_ft,
             qn_air=qn_air,
-            T_c=T_c,
-            T_air_bc=T_air_bc,
             qn_scale=lam,
             frozen_buoyancy_temperature=None,
+            scales=scales,
         )
-        w = base_solver(
-            F_cond, w, boundary_conditions, JF_cond,
-            relaxation=1.0,
-            maxit=maxit,
-            atol=atol,
-            rtol=rtol,
-        )
+        w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
 
         theta_cond = w.sub(2, deepcopy=True)
+
         w_n.assign(w)
         w_n.vector().apply("insert")
 
         print("  -> Stage B: frozen-temperature Stokes solve")
-        F_stokes, boundary_conditions, JF_stokes = _build_linear_startup_problem(
+        a_stokes, L_stokes = _build_linear_startup_problem(
             experiment=experiment,
             W=W,
-            w=w,
             mu=mu,
             Pr=Pr,
             sub_dx=sub_dx,
             sub_ds=sub_ds,
-            sub_ft=sub_ft,
             qn_air=qn_air,
-            T_c=T_c,
-            T_air_bc=T_air_bc,
             qn_scale=lam,
             frozen_buoyancy_temperature=theta_cond,
+            scales=scales,
         )
-        w = base_solver(
-            F_stokes, w, boundary_conditions, JF_stokes,
-            relaxation=1.0,
-            maxit=maxit,
-            atol=atol,
-            rtol=rtol,
-        )
+        w = solve_linear_problem(a_stokes, L_stokes, w, boundary_conditions)
 
         w_n.assign(w)
         w_n.vector().apply("insert")
 
     return w_n
+
+def build_nonlinear_problem(
+    W, w,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b,
+    sub_dx, sub_ds, qn_air,
+    buoyancy_scale=1.0,
+    qn_scale=1.0,
+    include_convection=True,
+    convection_scale=1.0,
+):
+    inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
+
+    p, u, T = fenics.split(w)
+
+    buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
+    convection_scale_c = fenics.Constant(float(convection_scale))
+    qn_scale_c = fenics.Constant(float(qn_scale))
+
+    mass = -psi_p * div(u)
+
+    convection_term = (
+        convection_scale_c * dot(grad(u), u)
+        if include_convection else fenics.Constant((0.0, 0.0))
+    )
+
+    momentum = (
+        dot(psi_u, convection_term + buoyancy_scale_c * f_b)
+        - div(psi_u) * p
+        + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
+    )
+
+    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u)
+
+    F = (mass + momentum + energy) * sub_dx
+    F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+
+    JF = fenics.derivative(F, w, fenics.TrialFunction(W))
+    return F, JF
 
 def solve_steady_newton_continuation(
     experiment: Experiment,
@@ -401,12 +600,21 @@ def solve_steady_newton_continuation(
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+    first = True
+    second = True
 
     for lam in lambdas:
+        if first: 
+            first = False
+            continue
+        elif second:
+            second = False
+            continue
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
         # Split nondimensional solution
         p_star, u_star, theta = w.split(deepcopy=True)
-        scales = compute_nondimensional_scales(experiment)
 
         # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
         u_dim, p_dim, T_dim = dimensionalize_fields(
@@ -467,28 +675,37 @@ def solve_steady_newton_continuation(
             print(f"  --- stage: {stage_name} ---")
             stage_success = False
             last_error = None
+            # F, w, boundary_conditions, JF, _ = nonlinear_solver(
+            #     experiment, u_n, u, T_n, T, p, W, w,
+            #     psi_p, psi_u, psi_T,
+            #     mu, Pr, f_b, T_c, T_air_bc,
+            #     sub_dx, sub_ds, sub_ft, qn_air,
+            #     w_n,
+            #     buoyancy_scale=lam,
+            #     qn_scale=lam,
+            #     include_convection=include_convection,
+            #     convection_scale=conv_scale,
+            # )
+
+            F, JF = build_nonlinear_problem(
+                W=W, w=w,
+                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                mu=mu, Pr=Pr, f_b=f_b,
+                sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+                buoyancy_scale=lam,
+                qn_scale=lam,
+                include_convection=include_convection,
+                convection_scale=conv_scale,
+            )
 
             for relaxation in relaxation_schedule:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
                 
-
                 # restart from last accepted continuation state
                 w.vector()[:] = w_n.vector()
                 w.vector().apply("insert")
 
                 try:
-                    F, w, boundary_conditions, JF, _ = nonlinear_solver(
-                        experiment, u_n, u, T_n, T, p, W, w,
-                        psi_p, psi_u, psi_T,
-                        mu, Pr, f_b, T_c, T_air_bc,
-                        sub_dx, sub_ds, sub_ft, qn_air,
-                        w_n,
-                        buoyancy_scale=lam,
-                        qn_scale=lam,
-                        include_convection=include_convection,
-                        convection_scale=conv_scale,
-                    )
-
                     w = base_solver(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
@@ -582,32 +799,32 @@ def solve_thermal_sign_check(
     Velocity is forced to zero by the BCs that act on W_u; there is no buoyancy
     and no advection in the residual. Use this to verify the interface heat-flux sign.
     """
-    F, bcs, JF = _build_linear_startup_problem(
-        experiment=experiment,
-        W=W,
-        w=w,
-        mu=mu,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        sub_ds=sub_ds,
-        sub_ft=sub_ft,
-        qn_air=qn_air,
-        T_c=T_c,
-        T_air_bc=T_air_bc,
-        qn_scale=1.0,
-        frozen_buoyancy_temperature=None,
-    )
+    # F, bcs, JF = _build_linear_startup_problem(
+    #     experiment=experiment,
+    #     W=W,
+    #     w=w,
+    #     mu=mu,
+    #     Pr=Pr,
+    #     sub_dx=sub_dx,
+    #     sub_ds=sub_ds,
+    #     sub_ft=sub_ft,
+    #     qn_air=qn_air,
+    #     T_c=T_c,
+    #     T_air_bc=T_air_bc,
+    #     qn_scale=1.0,
+    #     frozen_buoyancy_temperature=None,
+    # )
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
 
-    w = base_solver(
-        F, w, bcs, JF,
-        relaxation=1.0,
-        maxit=50,
-        atol=5e-6,
-        rtol=4e-5,
-    )
+    # w = base_solver(
+    #     F, w, bcs, JF,
+    #     relaxation=1.0,
+    #     maxit=50,
+    #     atol=5e-6,
+    #     rtol=4e-5,
+    # )
 
     theta = w.sub(2, deepcopy=True)
     print("Thermal sign check:")
@@ -626,42 +843,42 @@ def solve_buoyancy_sign_check(
     T_air_bc,
     w_n: fenics.Function,
 ):
-    theta_ref = w_n.sub(2, deepcopy=True)
+    # theta_ref = w_n.sub(2, deepcopy=True)
 
-    qn_zero = fenics.Function(qn_air.function_space())
-    qn_zero.vector().zero()
-    qn_zero.vector().apply("insert")
+    # qn_zero = fenics.Function(qn_air.function_space())
+    # qn_zero.vector().zero()
+    # qn_zero.vector().apply("insert")
 
-    F, bcs, JF = _build_linear_startup_problem(
-        experiment=experiment,
-        W=W,
-        w=w,
-        mu=mu,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        sub_ds=sub_ds,
-        sub_ft=sub_ft,
-        qn_air=qn_zero,
-        T_c=T_c,
-        T_air_bc=T_air_bc,
-        qn_scale=0.0,
-        frozen_buoyancy_temperature=theta_ref,
-    )
+    # F, bcs, JF = _build_linear_startup_problem(
+    #     experiment=experiment,
+    #     W=W,
+    #     w=w,
+    #     mu=mu,
+    #     Pr=Pr,
+    #     sub_dx=sub_dx,
+    #     sub_ds=sub_ds,
+    #     sub_ft=sub_ft,
+    #     qn_air=qn_zero,
+    #     T_c=T_c,
+    #     T_air_bc=T_air_bc,
+    #     qn_scale=0.0,
+    #     frozen_buoyancy_temperature=theta_ref,
+    # )
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
 
-    w = base_solver(
-        F, w, bcs, JF,
-        relaxation=1.0,
-        maxit=50,
-        atol=5e-6,
-        rtol=4e-5,
-    )
+    # w = base_solver(
+    #     F, w, bcs, JF,
+    #     relaxation=1.0,
+    #     maxit=50,
+    #     atol=5e-6,
+    #     rtol=4e-5,
+    # )
 
     u_chk = w.sub(1, deepcopy=True)
     Vscal = fenics.FunctionSpace(u_chk.function_space().mesh(), "CG", 1)
-    uy = fenics.project(u_chk[1], Vscal)
+    uy = fenics.project(u_chk[1], Vscal,solver_type="mumps")
 
     print("Buoyancy sign check:")
     print(f"  uy min/max = {uy.vector().min():.6e}, {uy.vector().max():.6e}")

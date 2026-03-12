@@ -67,7 +67,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
     T_full = fenics.Function(V_T_full)
     fenics.solve(a_T == L_T, T_full, bcs_T,
         solver_parameters={
-            "linear_solver": "lu"
+            "linear_solver": "mumps"
         })
 
     for it in range(max_it):
@@ -85,7 +85,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
 
         fenics.solve(a_T == L_T, T_full_new, bcs_T,
         solver_parameters={
-            "linear_solver": "lu"
+            "linear_solver": "mumps"
         })
 
 
