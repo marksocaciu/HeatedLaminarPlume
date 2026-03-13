@@ -562,7 +562,7 @@ def build_nonlinear_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u)
+    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
 
     F = (mass + momentum + energy) * sub_dx
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
@@ -643,25 +643,25 @@ def solve_steady_newton_continuation(
             ("conv_060", True,  0.60),
             ("conv_070", True,  0.70),
             ("conv_080", True,  0.80),
-            ("conv_081", True,  0.81),
-            ("conv_082", True,  0.82),
-            ("conv_083", True,  0.83),
-            ("conv_084", True,  0.84),
+            # ("conv_081", True,  0.81),
+            # ("conv_082", True,  0.82),
+            # ("conv_083", True,  0.83),
+            # ("conv_084", True,  0.84),
             ("conv_085", True,  0.85),
-            ("conv_086", True,  0.86),
-            ("conv_087", True,  0.87),
-            ("conv_088", True,  0.88),
-            ("conv_089", True,  0.89),
+            # ("conv_086", True,  0.86),
+            # ("conv_087", True,  0.87),
+            # ("conv_088", True,  0.88),
+            # ("conv_089", True,  0.89),
             ("conv_090", True,  0.90),
-            ("conv_091", True,  0.91),
-            ("conv_092", True,  0.92),
-            ("conv_093", True,  0.93),
-            ("conv_094", True,  0.94),
+            # ("conv_091", True,  0.91),
+            # ("conv_092", True,  0.92),
+            # ("conv_093", True,  0.93),
+            # ("conv_094", True,  0.94),
             ("conv_095", True,  0.95),
-            ("conv_096", True,  0.96),
-            ("conv_097", True,  0.97),
-            ("conv_098", True,  0.98),
-            ("conv_099", True,  0.99),
+            # ("conv_096", True,  0.96),
+            # ("conv_097", True,  0.97),
+            # ("conv_098", True,  0.98),
+            # ("conv_099", True,  0.99),
             ("full",     True,  1.00),
         ]
 
@@ -710,8 +710,8 @@ def solve_steady_newton_continuation(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
                         maxit=100,
-                        atol=5e-6,
-                        rtol=4e-5,
+                        atol=1e-6,
+                        rtol=1e-5,
                     )
 
                     # accept stage result
