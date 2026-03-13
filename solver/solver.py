@@ -602,8 +602,6 @@ def solve_steady_newton_continuation(
     w.vector().apply("insert")
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    first = True
-    second = True
 
     for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
@@ -641,27 +639,33 @@ def solve_steady_newton_continuation(
             ("conv_040", True,  0.40),
             ("conv_050", True,  0.50),
             ("conv_060", True,  0.60),
+            ("conv_060", True,  0.62),
+            ("conv_060", True,  0.64),
+            ("conv_060", True,  0.66),
+            ("conv_060", True,  0.67),
             ("conv_070", True,  0.70),
+            ("conv_070", True,  0.72),
+            ("conv_070", True,  0.74),
+            ("conv_070", True,  0.76),
+            ("conv_070", True,  0.78),
             ("conv_080", True,  0.80),
-            # ("conv_081", True,  0.81),
-            # ("conv_082", True,  0.82),
-            # ("conv_083", True,  0.83),
-            # ("conv_084", True,  0.84),
+            ("conv_082", True,  0.82),
+            ("conv_084", True,  0.84),
             ("conv_085", True,  0.85),
-            # ("conv_086", True,  0.86),
-            # ("conv_087", True,  0.87),
-            # ("conv_088", True,  0.88),
-            # ("conv_089", True,  0.89),
+            ("conv_086", True,  0.86),
+            ("conv_087", True,  0.87),
+            ("conv_088", True,  0.88),
+            ("conv_089", True,  0.89),
             ("conv_090", True,  0.90),
-            # ("conv_091", True,  0.91),
-            # ("conv_092", True,  0.92),
-            # ("conv_093", True,  0.93),
-            # ("conv_094", True,  0.94),
+            ("conv_091", True,  0.91),
+            ("conv_092", True,  0.92),
+            ("conv_093", True,  0.93),
+            ("conv_094", True,  0.94),
             ("conv_095", True,  0.95),
-            # ("conv_096", True,  0.96),
-            # ("conv_097", True,  0.97),
-            # ("conv_098", True,  0.98),
-            # ("conv_099", True,  0.99),
+            ("conv_096", True,  0.96),
+            ("conv_097", True,  0.97),
+            ("conv_098", True,  0.98),
+            ("conv_099", True,  0.99),
             ("full",     True,  1.00),
         ]
 
@@ -691,14 +695,10 @@ def solve_steady_newton_continuation(
                 include_convection=include_convection,
                 convection_scale=conv_scale,
             )
-
-            for relaxation in relaxation_schedule:
-                if first: 
-                    first = False
-                    continue
-                elif second:
-                    second = False
-                    continue
+            relax = relaxation_schedule[:]
+            if conv_scale > 0.6 :
+                relax = relax[1:]
+            for relaxation in relax:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
                 
                 # restart from last accepted continuation state
@@ -710,8 +710,8 @@ def solve_steady_newton_continuation(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
                         maxit=100,
-                        atol=1e-6,
-                        rtol=1e-5,
+                        atol=1e-7,
+                        rtol=1e-6,
                     )
 
                     # accept stage result
