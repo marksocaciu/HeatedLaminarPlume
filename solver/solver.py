@@ -710,8 +710,8 @@ def solve_steady_newton_continuation(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
                         maxit=100,
-                        atol=1e-7,
-                        rtol=1e-6,
+                        atol=1e-8,
+                        rtol=1e-7,
                     )
 
                     # accept stage result
