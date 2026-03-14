@@ -638,11 +638,12 @@ def solve_steady_newton_continuation(
             ("conv_030", True,  0.30),
             ("conv_040", True,  0.40),
             ("conv_050", True,  0.50),
+            ("conv_055", True,  0.55),
             ("conv_060", True,  0.60),
-            ("conv_060", True,  0.62),
-            ("conv_060", True,  0.64),
-            ("conv_060", True,  0.66),
-            ("conv_060", True,  0.67),
+            ("conv_062", True,  0.62),
+            ("conv_064", True,  0.64),
+            ("conv_066", True,  0.66),
+            ("conv_068", True,  0.68),
             ("conv_070", True,  0.70),
             ("conv_070", True,  0.72),
             ("conv_070", True,  0.74),
@@ -697,7 +698,8 @@ def solve_steady_newton_continuation(
             )
             relax = relaxation_schedule[:]
             if conv_scale > 0.6 :
-                relax = relax[1:]
+                relax = relax[:]
+                relax[0] = 0.7
             for relaxation in relax:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
                 
@@ -709,9 +711,9 @@ def solve_steady_newton_continuation(
                     w = base_solver(
                         F, w, boundary_conditions, JF,
                         relaxation=relaxation,
-                        maxit=100,
-                        atol=1e-8,
-                        rtol=1e-7,
+                        maxit=60,
+                        atol=1e-9,
+                        rtol=1e-8,
                     )
 
                     # accept stage result
