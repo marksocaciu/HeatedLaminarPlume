@@ -21,7 +21,7 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
     P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
     P2 = fenics.VectorElement('P', sub_mesh.ufl_cell(), 2)
-    mixed_element = fenics.MixedElement([P1, P2, P1])
+    mixed_element = fenics.MixedElement([P1, P2, P2]) 
     W = fenics.FunctionSpace(sub_mesh, mixed_element)
 
     psi_p, psi_u, psi_T = fenics.TestFunctions(W)
@@ -699,7 +699,7 @@ def solve_steady_newton_continuation(
             relax = relaxation_schedule[:]
             if conv_scale > 0.6 :
                 relax = relax[:]
-                relax[0] = 0.7
+                # relax[0] = 0.7
             for relaxation in relax:
                 print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
                 
