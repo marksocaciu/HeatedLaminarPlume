@@ -186,8 +186,8 @@ def base_version(experiment: Experiment):
                                   mu=mu,Pr=Pr,
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
-
     print("Checks complete")
+
     # # Split nondimensional solution
     # p_star, u_star, theta = w.split(deepcopy=True)
 
@@ -218,7 +218,7 @@ def base_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=[0.01, 0.02, 0.03, 0.4, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+        lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
         relaxation_schedule=(0.9, 0.5, 0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
         stokes_startup=False,
         sub_mesh_star=sub_mesh_star,
@@ -422,6 +422,7 @@ def temperature_dependent_version(experiment: Experiment):
         experiment
     )
 
+    
     # Use Stokes initial guess for better convergene
     print("Solving Stokes problem for initial guess...")
     w_n = stokes_initial_guess(
@@ -434,16 +435,39 @@ def temperature_dependent_version(experiment: Experiment):
         w_n=w_n,
         lambdas=(0.01, 0.03, 0.05)
     )
-    
-    F, w, boundary_conditions, JF, w_n = nonlinear_solver(
-        experiment, u_n, u, T_n, T, p, W, w,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
-        w_n
-    )
-    w = temp_dep_solver(F,w, boundary_conditions, JF, w_n, fluid_material)
 
+    print("Starting checks")
+    w_t = w.copy(deepcopy=True)
+    w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
+                                mu=mu,Pr=Pr,
+                                sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
+                                qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
+    w_p = w.copy(deepcopy=True)
+    w_p = solve_buoyancy_sign_check(experiment=experiment,W=W,w=w_p,
+                                  mu=mu,Pr=Pr,
+                                  sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
+                                  qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
+    print("Checks complete")
+
+    # w = temp_dep_solver(F,w, boundary_conditions, JF, w_n, fluid_material)
+    w = solve_temp_newton_continuation(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=[0.01, 0.02, 0.03, 0.4, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+        relaxation_schedule=(0.9, 0.5, 0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
+        stokes_startup=False,
+        sub_mesh_star=sub_mesh_star,
+        sub_mesh_dim=sub_mesh_dim,
+        p_path=OUTPUT_XDMF_PATH_AIR_P,
+        u_path=OUTPUT_XDMF_PATH_AIR_V,
+        T_path=OUTPUT_XDMF_PATH_AIR_T,
+        fluid_material=fluid_material,
+    )
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
 
@@ -453,6 +477,16 @@ def temperature_dependent_version(experiment: Experiment):
         scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
+
+    # on sub_mesh_star, with theta (nondim)
+    k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
+    n = fenics.FacetNormal(sub_mesh_star)
+    dTref = float(scales.dTref)
+
+    # Example: if facet tags exist for TOP and FAR boundaries
+    Q_far  = -k_inf*dTref * fenics.assemble(fenics.dot(fenics.grad(theta), n) * sub_ds_star(OUTER_AIR_TAG))
+    print(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
+
 
     # plotting + output
     plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
@@ -584,42 +618,27 @@ def abs_version(experiment: Experiment):
 
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
-    mesh.coordinates()[:] /= Lref
-
-    # IMPORTANT: also scale the OLD dim-submesh in-place so theta_full_dim now
-    # lives on star-coordinates (needed for safe interpolation between submeshes)
-    sub_mesh_dim.coordinates()[:] /= Lref
+    scale_mesh_inplace(mesh, Lref)
+    scale_mesh_inplace(sub_mesh_dim, Lref)
 
     # --- 6) recreate submesh + measures on scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
-
-    # --- 7) transfer theta_full_dim onto the new scaled submesh
-    V_air_star = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
-
-    # Build a plain Function on the star submesh
-    theta_full_star = fenics.Function(V_air_star)
-    theta_full_dim.set_allow_extrapolation(True)
-
-    # Sample theta_full_dim at star-submesh DOF coordinates
-    dof_coords = V_air_star.tabulate_dof_coordinates().reshape((-1, sub_mesh_star.geometry().dim()))
-    values = []
-
-    for x in dof_coords:
-        values.append(theta_full_dim(x))
-
-    theta_full_star.vector()[:] = values
-    theta_full_star.vector().apply("insert")
-    theta_full_star.rename("theta_full", "theta_full")
+    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = \
+    build_star_submesh_and_transfer(
+        mesh=mesh,
+        mc=mc,
+        mf=mf,
+        air_tag=AIR_TAG,
+        theta_full_dim=theta_full_dim,
+        qn_air=qn_air,
+    )
 
     print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
     print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
     print(f"Rho_air: {experiment.fluid.properties['rho']}")
     print(f"Beta_air: {experiment.fluid.properties['beta']}")
     
-
     # Solving the problem
     print("Starting solver...")
-   
     W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
         sub_mesh_star,
@@ -630,16 +649,60 @@ def abs_version(experiment: Experiment):
         experiment
     )
 
-    F, w, boundary_conditions, JF, w_n = nonlinear_solver_ABE(
-        experiment, u_n, u, T_n, T, p, W, w,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
-        w_n,
-        fenics.Constant(scales.fEc)
+    # Use Stokes initial guess for better convergene
+    print("Solving Stokes problem for initial guess...")
+    w_n = stokes_initial_guess(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=(0.01, 0.03, 0.05)
     )
 
-    w = base_solver(F, w, boundary_conditions, JF)
+    # Solve the full nonlinear problem with previous initial guess
+    print("Starting checks")
+    w_t = w.copy(deepcopy=True)
+    w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
+                                mu=mu,Pr=Pr,
+                                sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
+                                qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
+    w_p = w.copy(deepcopy=True)
+    w_p = solve_buoyancy_sign_check(experiment=experiment,W=W,w=w_p,
+                                  mu=mu,Pr=Pr,
+                                  sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
+                                  qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
+    print("Checks complete")
+
+    # F, w, boundary_conditions, JF, w_n = nonlinear_solver_ABE(
+    #     experiment, u_n, u, T_n, T, p, W, w,
+    #     psi_p, psi_u, psi_T,
+    #     mu, Pr, f_b, T_c, T_air_bc,
+    #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
+    #     w_n,
+    #     fenics.Constant(scales.fEc)
+    # )
+
+    # w = base_solver(F, w, boundary_conditions, JF)
+    w = solve_steady_newton_continuation(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=[0.01, 0.02, 0.03, 0.4, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+        relaxation_schedule=(0.9, 0.5, 0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
+        stokes_startup=False,
+        sub_mesh_star=sub_mesh_star,
+        sub_mesh_dim=sub_mesh_dim,
+        p_path=OUTPUT_XDMF_PATH_AIR_P,
+        u_path=OUTPUT_XDMF_PATH_AIR_V,
+        T_path=OUTPUT_XDMF_PATH_AIR_T
+    )
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
