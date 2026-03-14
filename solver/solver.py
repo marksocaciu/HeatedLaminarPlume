@@ -21,7 +21,7 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
     P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
     P2 = fenics.VectorElement('P', sub_mesh.ufl_cell(), 2)
-    mixed_element = fenics.MixedElement([P1, P2, P2]) 
+    mixed_element = fenics.MixedElement([P1, P2, P1]) 
     W = fenics.FunctionSpace(sub_mesh, mixed_element)
 
     psi_p, psi_u, psi_T = fenics.TestFunctions(W)
@@ -74,10 +74,6 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     print(f"Initial guess max theta (air): {w_n.sub(2).vector().max():.6e}")
     print(f"Initial guess min theta (air): {w_n.sub(2).vector().min():.6e}")
-    # fenics.plot(T_n)
-    # plt.title("$T^0$")
-    # plt.xlabel("$x$")
-    # plt.ylabel("$y$")
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
@@ -219,15 +215,6 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     return F,w, boundary_conditions, JF, w_n
 
-# def _assign_mixed_temperature(W: fenics.FunctionSpace, w_mixed: fenics.Function, theta_src: fenics.Function):
-#     """Assign a scalar temperature field into W.sub(2)."""
-#     VT, _ = W.sub(2).collapse(True)
-#     theta_tmp = fenics.Function(VT)
-#     theta_tmp.interpolate(theta_src)
-#     assign_T = fenics.FunctionAssigner(W.sub(2), VT)
-#     assign_T.assign(w_mixed.sub(2), theta_tmp)
-#     w_mixed.vector().apply("insert")
-
 def _build_temperature_assigner(W: fenics.FunctionSpace):
     VT, _ = W.sub(2).collapse(True)
     assign_T = fenics.FunctionAssigner(W.sub(2), VT)
@@ -248,51 +235,6 @@ def _assign_mixed_temperature(
     assign_T.assign(w_mixed.sub(2), theta_tmp)
     w_mixed.vector().apply("insert")
     return theta_tmp
-
-# def _build_linear_startup_problem(
-#     experiment: Experiment,
-#     W: fenics.FunctionSpace,
-#     w: fenics.Function,
-#     mu, Pr,
-#     sub_dx, sub_ds, sub_ft,
-#     qn_air,
-#     T_c,
-#     T_air_bc,
-#     qn_scale=1.0,
-#     frozen_buoyancy_temperature=None,
-# ):
-#     """
-#     Linear startup problem used to generate a robust initial guess.
-#     - momentum convection is removed
-#     - thermal advection is removed
-#     - buoyancy may be frozen from a prescribed temperature field
-#     """
-#     q, v, s = fenics.TestFunctions(W)
-#     p_trial, u_trial, T_trial = fenics.split(w)
-#     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
-
-#     scales = compute_nondimensional_scales(experiment)
-#     gvec = fenics.Constant((0.0, -1.0))
-#     buoyancy_coeff = fenics.Constant(float(scales.Ra / scales.Pr))
-
-#     mass = -q * div(u_trial)
-
-#     momentum = (
-#         - div(v) * p_trial
-#         + 2.0 * mu * inner(sym(grad(v)), sym(grad(u_trial)))
-#     )
-
-#     if frozen_buoyancy_temperature is not None:
-#         momentum += dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec)
-
-#     energy = dot(grad(s), (1.0 / Pr) * grad(T_trial))
-
-#     F = (mass + momentum + energy) * sub_dx
-#     F += - fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
-
-#     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
-#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-#     return F, boundary_conditions, JF
 
 def _build_linear_startup_problem(
     experiment: Experiment,
@@ -345,103 +287,6 @@ def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
     solver.solve()
     w.vector().apply("insert")
     return w
-
-# def stokes_initial_guess(
-#     experiment: Experiment,
-#     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
-#     W: fenics.FunctionSpace, w: fenics.Function,
-#     psi_p, psi_u, psi_T,
-#     mu, Pr, f_b, T_c, T_air_bc,
-#     sub_dx, sub_ds, sub_ft, qn_air,
-#     w_n: fenics.Function,
-#     lambdas=(0.10, 0.25, 0.50, 1.00),
-#     relaxation=0.2,
-#     maxit=60,
-#     atol=4.5e-8,
-#     rtol=3.2e-7,
-# ):
-#     """
-#     Build a genuinely linear startup state before the full nonlinear solve.
-
-#     For each continuation parameter lambda:
-#     1) solve pure conduction with q'' scaled by lambda
-#     2) solve linear Stokes with buoyancy frozen from that conduction field
-
-#     The same BC construction is reused, so the pointwise pressure pin stays active.
-#     """
-#     # Reference conduction field corresponding to full heating (lambda = 1).
-#     theta_ref = w_n.sub(2, deepcopy=True)
-
-#     w.vector()[:] = w_n.vector()
-#     w.vector().apply("insert")
-
-#     for lam in lambdas:
-#         print(f"\n=== Linear startup lambda = {lam:.2f} ===")
-
-#         # Keep the initial temperature guess consistent with the current continuation step.
-#         theta_lam = fenics.Function(theta_ref.function_space())
-#         theta_lam.vector()[:] = float(lam) * theta_ref.vector().get_local()
-#         theta_lam.vector().apply("insert")
-#         _assign_mixed_temperature(W, w_n, theta_lam)
-#         w.vector()[:] = w_n.vector()
-#         w.vector().apply("insert")
-
-#         print("  -> Stage A: conduction-only solve")
-#         F_cond, boundary_conditions, JF_cond = _build_linear_startup_problem(
-#             experiment=experiment,
-#             W=W,
-#             w=w,
-#             mu=mu,
-#             Pr=Pr,
-#             sub_dx=sub_dx,
-#             sub_ds=sub_ds,
-#             sub_ft=sub_ft,
-#             qn_air=qn_air,
-#             T_c=T_c,
-#             T_air_bc=T_air_bc,
-#             qn_scale=lam,
-#             frozen_buoyancy_temperature=None,
-#         )
-#         w = base_solver(
-#             F_cond, w, boundary_conditions, JF_cond,
-#             relaxation=1.0,
-#             maxit=maxit,
-#             atol=atol,
-#             rtol=rtol,
-#         )
-
-#         theta_cond = w.sub(2, deepcopy=True)
-#         w_n.assign(w)
-#         w_n.vector().apply("insert")
-
-#         print("  -> Stage B: frozen-temperature Stokes solve")
-#         F_stokes, boundary_conditions, JF_stokes = _build_linear_startup_problem(
-#             experiment=experiment,
-#             W=W,
-#             w=w,
-#             mu=mu,
-#             Pr=Pr,
-#             sub_dx=sub_dx,
-#             sub_ds=sub_ds,
-#             sub_ft=sub_ft,
-#             qn_air=qn_air,
-#             T_c=T_c,
-#             T_air_bc=T_air_bc,
-#             qn_scale=lam,
-#             frozen_buoyancy_temperature=theta_cond,
-#         )
-#         w = base_solver(
-#             F_stokes, w, boundary_conditions, JF_stokes,
-#             relaxation=1.0,
-#             maxit=maxit,
-#             atol=atol,
-#             rtol=rtol,
-#         )
-
-#         w_n.assign(w)
-#         w_n.vector().apply("insert")
-
-#     return w_n
 
 def stokes_initial_guess(
     experiment: Experiment,
@@ -614,14 +459,7 @@ def solve_steady_newton_continuation(
             scales.Uref, scales.dTref, T_ambient,
             experiment.fluid.properties["rho"]
         )
-        # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-        #             cmap="coolwarm", colorbar=True)
-        # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
-        #             cmap="coolwarm", colorbar=True)
-        # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-        #             cmap="coolwarm", colorbar=True, mode="glyphs")
-        # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-        #             cmap="coolwarm", colorbar=True)
+
         p_path = p_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
         v_path = u_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
         t_path = T_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
@@ -630,61 +468,66 @@ def solve_steady_newton_continuation(
         save_experiment(v_path, sub_mesh_dim, [u_dim])
         save_experiment(t_path, sub_mesh_dim, [T_dim])
 
-        stage_attempts = [
-            ("stokes",   False, 0.00),
-            ("conv_005", True,  0.05),
-            ("conv_010", True,  0.10),
-            ("conv_020", True,  0.20),
-            ("conv_030", True,  0.30),
-            ("conv_040", True,  0.40),
-            ("conv_050", True,  0.50),
-            ("conv_055", True,  0.55),
-            ("conv_060", True,  0.60),
-            ("conv_062", True,  0.62),
-            ("conv_064", True,  0.64),
-            ("conv_066", True,  0.66),
-            ("conv_068", True,  0.68),
-            ("conv_070", True,  0.70),
-            ("conv_072", True,  0.72),
-            ("conv_074", True,  0.74),
-            ("conv_076", True,  0.76),
-            ("conv_078", True,  0.78),
-            ("conv_080", True,  0.80),
-            ("conv_082", True,  0.82),
-            ("conv_084", True,  0.84),
-            ("conv_085", True,  0.85),
-            ("conv_086", True,  0.86),
-            ("conv_087", True,  0.87),
-            ("conv_088", True,  0.88),
-            ("conv_089", True,  0.89),
-            ("conv_090", True,  0.90),
-            ("conv_091", True,  0.91),
-            ("conv_092", True,  0.92),
-            ("conv_093", True,  0.93),
-            ("conv_094", True,  0.94),
-            ("conv_095", True,  0.95),
-            ("conv_096", True,  0.96),
-            ("conv_097", True,  0.97),
-            ("conv_098", True,  0.98),
-            ("conv_099", True,  0.99),
-            ("full",     True,  1.00),
-        ]
+        if lam < 0.05:
+                stage_attempts = [
+                ("stokes",   False, 0.00),
+                ("conv_005", True,  0.05),
+                ("conv_010", True,  0.10),
+                ("conv_020", True,  0.20),
+                ("conv_030", True,  0.30),
+                ("conv_040", True,  0.40),
+                ("conv_050", True,  0.50),
+                ("conv_060", True,  0.60),
+                ("conv_070", True,  0.70),
+                ("conv_080", True,  0.80),
+                ("conv_090", True,  0.90),
+                ("full",     True,  1.00),
+            ]
+        else:
+            stage_attempts = [
+                ("stokes",   False, 0.00),
+                ("conv_005", True,  0.05),
+                ("conv_010", True,  0.10),
+                ("conv_020", True,  0.20),
+                ("conv_030", True,  0.30),
+                ("conv_040", True,  0.40),
+                ("conv_050", True,  0.50),
+                ("conv_055", True,  0.55),
+                ("conv_060", True,  0.60),
+                ("conv_062", True,  0.62),
+                ("conv_064", True,  0.64),
+                ("conv_066", True,  0.66),
+                ("conv_068", True,  0.68),
+                ("conv_070", True,  0.70),
+                ("conv_072", True,  0.72),
+                ("conv_074", True,  0.74),
+                ("conv_076", True,  0.76),
+                ("conv_078", True,  0.78),
+                ("conv_080", True,  0.80),
+                ("conv_082", True,  0.82),
+                ("conv_084", True,  0.84),
+                ("conv_085", True,  0.85),
+                ("conv_086", True,  0.86),
+                ("conv_087", True,  0.87),
+                ("conv_088", True,  0.88),
+                ("conv_089", True,  0.89),
+                ("conv_090", True,  0.90),
+                ("conv_091", True,  0.91),
+                ("conv_092", True,  0.92),
+                ("conv_093", True,  0.93),
+                ("conv_094", True,  0.94),
+                ("conv_095", True,  0.95),
+                ("conv_096", True,  0.96),
+                ("conv_097", True,  0.97),
+                ("conv_098", True,  0.98),
+                ("conv_099", True,  0.99),
+                ("full",     True,  1.00),
+            ]
 
         for stage_name, include_convection, conv_scale in stage_attempts:
             print(f"  --- stage: {stage_name} ---")
             stage_success = False
             last_error = None
-            # F, w, boundary_conditions, JF, _ = nonlinear_solver(
-            #     experiment, u_n, u, T_n, T, p, W, w,
-            #     psi_p, psi_u, psi_T,
-            #     mu, Pr, f_b, T_c, T_air_bc,
-            #     sub_dx, sub_ds, sub_ft, qn_air,
-            #     w_n,
-            #     buoyancy_scale=lam,
-            #     qn_scale=lam,
-            #     include_convection=include_convection,
-            #     convection_scale=conv_scale,
-            # )
 
             F, JF = build_nonlinear_problem(
                 W=W, w=w,
@@ -801,32 +644,8 @@ def solve_thermal_sign_check(
     Velocity is forced to zero by the BCs that act on W_u; there is no buoyancy
     and no advection in the residual. Use this to verify the interface heat-flux sign.
     """
-    # F, bcs, JF = _build_linear_startup_problem(
-    #     experiment=experiment,
-    #     W=W,
-    #     w=w,
-    #     mu=mu,
-    #     Pr=Pr,
-    #     sub_dx=sub_dx,
-    #     sub_ds=sub_ds,
-    #     sub_ft=sub_ft,
-    #     qn_air=qn_air,
-    #     T_c=T_c,
-    #     T_air_bc=T_air_bc,
-    #     qn_scale=1.0,
-    #     frozen_buoyancy_temperature=None,
-    # )
-
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
-
-    # w = base_solver(
-    #     F, w, bcs, JF,
-    #     relaxation=1.0,
-    #     maxit=50,
-    #     atol=5e-6,
-    #     rtol=4e-5,
-    # )
 
     theta = w.sub(2, deepcopy=True)
     print("Thermal sign check:")
@@ -845,38 +664,9 @@ def solve_buoyancy_sign_check(
     T_air_bc,
     w_n: fenics.Function,
 ):
-    # theta_ref = w_n.sub(2, deepcopy=True)
-
-    # qn_zero = fenics.Function(qn_air.function_space())
-    # qn_zero.vector().zero()
-    # qn_zero.vector().apply("insert")
-
-    # F, bcs, JF = _build_linear_startup_problem(
-    #     experiment=experiment,
-    #     W=W,
-    #     w=w,
-    #     mu=mu,
-    #     Pr=Pr,
-    #     sub_dx=sub_dx,
-    #     sub_ds=sub_ds,
-    #     sub_ft=sub_ft,
-    #     qn_air=qn_zero,
-    #     T_c=T_c,
-    #     T_air_bc=T_air_bc,
-    #     qn_scale=0.0,
-    #     frozen_buoyancy_temperature=theta_ref,
-    # )
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
-
-    # w = base_solver(
-    #     F, w, bcs, JF,
-    #     relaxation=1.0,
-    #     maxit=50,
-    #     atol=5e-6,
-    #     rtol=4e-5,
-    # )
 
     u_chk = w.sub(1, deepcopy=True)
     Vscal = fenics.FunctionSpace(u_chk.function_space().mesh(), "CG", 1)

@@ -129,19 +129,11 @@ def base_version(experiment: Experiment):
     print(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
 
     # --- 5) scale parent mesh coordinates (dim→star)
-    # Lref = float(scales.Lref)
-    # mesh.coordinates()[:] /= Lref
-    
-    # # IMPORTANT: also scale the OLD dim-submesh in-place so theta_full_dim now
-    # # lives on star-coordinates (needed for safe interpolation between submeshes)
-    # sub_mesh_dim.coordinates()[:] /= Lref
-
     Lref = float(scales.Lref)
     scale_mesh_inplace(mesh, Lref)
     scale_mesh_inplace(sub_mesh_dim, Lref)
 
     # --- 6) recreate submesh + measures on scaled parent mesh
-    # sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
     sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = \
     build_star_submesh_and_transfer(
         mesh=mesh,
@@ -152,38 +144,11 @@ def base_version(experiment: Experiment):
         qn_air=qn_air,
     )
 
-    # --- 7) transfer theta_full_dim onto the new scaled submesh
-    # V_air_star = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
-    # V0_star = fenics.FunctionSpace(sub_mesh_star, "DG", 0)
-    # qn_air_star = fenics.Function(V0_star)
-    # qn_air.set_allow_extrapolation(True)
-
-    # dof_coords = V0_star.tabulate_dof_coordinates().reshape((-1, sub_mesh_star.geometry().dim()))
-    # vals = [qn_air(x) for x in dof_coords]
-    # qn_air_star.vector()[:] = vals
-    # qn_air_star.vector().apply("insert")
-
-    # # Build a plain Function on the star submesh
-    # theta_full_star = fenics.Function(V_air_star)
-    # theta_full_dim.set_allow_extrapolation(True)
-
-    # # Sample theta_full_dim at star-submesh DOF coordinates
-    # dof_coords = V_air_star.tabulate_dof_coordinates().reshape((-1, sub_mesh_star.geometry().dim()))
-    # values = []
-
-    # for x in dof_coords:
-    #     values.append(theta_full_dim(x))
-
-    # theta_full_star.vector()[:] = values
-    # theta_full_star.vector().apply("insert")
-    # theta_full_star.rename("theta_full", "theta_full")
-
     print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
     print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
     print(f"Rho_air: {experiment.fluid.properties['rho']}")
     print(f"Beta_air: {experiment.fluid.properties['beta']}")
     
-
     # Solving the problem
     print("Starting solver...")
     W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
@@ -413,32 +378,19 @@ def temperature_dependent_version(experiment: Experiment):
 
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
-    mesh.coordinates()[:] /= Lref
-
-    # IMPORTANT: also scale the OLD dim-submesh in-place so theta_full_dim now
-    # lives on star-coordinates (needed for safe interpolation between submeshes)
-    sub_mesh_dim.coordinates()[:] /= Lref
+    scale_mesh_inplace(mesh, Lref)
+    scale_mesh_inplace(sub_mesh_dim, Lref)
 
     # --- 6) recreate submesh + measures on scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
-
-    # --- 7) transfer theta_full_dim onto the new scaled submesh
-    V_air_star = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
-
-    # Build a plain Function on the star submesh
-    theta_full_star = fenics.Function(V_air_star)
-    theta_full_dim.set_allow_extrapolation(True)
-
-    # Sample theta_full_dim at star-submesh DOF coordinates
-    dof_coords = V_air_star.tabulate_dof_coordinates().reshape((-1, sub_mesh_star.geometry().dim()))
-    values = []
-
-    for x in dof_coords:
-        values.append(theta_full_dim(x))
-
-    theta_full_star.vector()[:] = values
-    theta_full_star.vector().apply("insert")
-    theta_full_star.rename("theta_full", "theta_full")
+    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = \
+    build_star_submesh_and_transfer(
+        mesh=mesh,
+        mc=mc,
+        mf=mf,
+        air_tag=AIR_TAG,
+        theta_full_dim=theta_full_dim,
+        qn_air=qn_air,
+    )
 
     print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
     print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
@@ -470,6 +422,19 @@ def temperature_dependent_version(experiment: Experiment):
         experiment
     )
 
+    # Use Stokes initial guess for better convergene
+    print("Solving Stokes problem for initial guess...")
+    w_n = stokes_initial_guess(
+        experiment=experiment,
+        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        w_n=w_n,
+        lambdas=(0.01, 0.03, 0.05)
+    )
+    
     F, w, boundary_conditions, JF, w_n = nonlinear_solver(
         experiment, u_n, u, T_n, T, p, W, w,
         psi_p, psi_u, psi_T,
