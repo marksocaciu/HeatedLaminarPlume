@@ -686,7 +686,7 @@ def abs_version(experiment: Experiment):
     # )
 
     # w = base_solver(F, w, boundary_conditions, JF)
-    w = solve_steady_newton_continuation(
+    w = solve_ABE_newton_continuation(
         experiment=experiment,
         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
         W=W, w=w,

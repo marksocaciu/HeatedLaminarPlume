@@ -531,7 +531,7 @@ def solve_steady_newton_continuation(
             stage_success = False
             last_error = None
 
-            F, JF = build_nonlinear_ABE_problem(
+            F, JF = build_nonlinear_problem(
                 W=W, w=w,
                 psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
                 mu=mu, Pr=Pr, f_b=f_b,
@@ -539,8 +539,7 @@ def solve_steady_newton_continuation(
                 buoyancy_scale=lam,
                 qn_scale=lam,
                 include_convection=include_convection,
-                convection_scale=conv_scale,
-                fEc=fenics.Constant(scales.fEc)
+                convection_scale=conv_scale
             )
             relax = relaxation_schedule[:]
             if conv_scale > 0.6 :
@@ -586,49 +585,6 @@ def solve_steady_newton_continuation(
                     f"during stage '{stage_name}'. Last error: {last_error}"
                 )
 
-    return w
-
-def temp_dep_solver(F,w, boundary_conditions, JF, w_n: fenics.Function, fluid_material: TemperatureDependentMaterial):
-    problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)
-
-    solver = fenics.NonlinearVariationalSolver(problem)
-    prm = solver.parameters
-    prm["nonlinear_solver"] = "newton"
-
-    prm["newton_solver"]["absolute_tolerance"] = 5e-10
-    prm["newton_solver"]["relative_tolerance"] = 5e-10
-    prm["newton_solver"]["maximum_iterations"] = 100
-
-    nprm = solver.parameters["newton_solver"]
-    nprm["linear_solver"] = "petsc"
-    nprm["preconditioner"] = "none"
-    # prm["preconditioner"] = "none"
-
-    # Initialize
-    w.vector()[:] = w_n.vector()
-
-    # Outer loop: update materials from last temperature, then Newton solve
-    p_old, u_old, T_old = w.split(True)
-
-    for it in range(max_it):
-        fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
-
-        solver.solve()               # Newton solve with frozen coefficients
-
-        _, _, T_new = w.split(True)
-
-        # convergence check on temperature (choose your norm)
-        diff = (T_new.vector() - T_old.vector()).norm("l2")
-        norm = T_old.vector().norm("l2") + 1e-14
-        rel  = diff / norm
-
-        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
-
-        if rel < rtol:
-            break
-
-        T_old.assign(T_new)
-    
     return w
 
 def solve_temp_newton_continuation(
@@ -834,72 +790,7 @@ def solve_temp_newton_continuation(
 
     return w
 
-def nonlinear_solver_ABE(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
-                     W: fenics.FunctionSpace, w: fenics.Function,
-                     psi_p, psi_u, psi_T,
-                     mu, Pr, f_b, T_c, T_air_bc,
-                     sub_dx, sub_ds, sub_ft, qn_air,
-                     w_n: fenics.Function,
-                     fEc: fenics.Constant
-                     ):
-    timestep_size = 0.001
-
-    Delta_t = fenics.Constant(timestep_size)
-
-    u_t = (u - u_n)/Delta_t
-
-    T_t = (T - T_n)/Delta_t
-
-    inner, dot, grad, div, sym = \
-        fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
-        
-    mass = -psi_p*div(u)
-            
-    momentum = (
-        dot(psi_u, u_t + dot(grad(u), u) + f_b)
-        - div(psi_u)*p
-        + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
-    )
- 
-    gvec = fenics.Constant((0.0, -1.0))
-
-    energy = (
-        psi_T*T_t
-        + dot(grad(psi_T), (1.0/Pr) * grad(T) - T*u)
-        - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
-
-    )
-
-    F = (mass + momentum + energy) * sub_dx
-    # F = (mass + momentum + energy)*fenics.dx
-
-
-    penalty_stabilization_parameter = 1.e-7
-
-    gamma = fenics.Constant(penalty_stabilization_parameter)
-
-    print("Max qn_air:", qn_air.vector().max())
-
-    F += -psi_p * gamma * p * sub_dx
-    F += qn_air * psi_T * sub_ds(INTERFACE_TAG)
-    # F += -psi_p*gamma*p*fenics.dx
-
-    scales = compute_nondimensional_scales(experiment)
-    k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
-    qn_dim = qn_air * fenics.Constant(k_inf * float(scales.dTref) / float(scales.Lref))
-    QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG))
-    print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
-
-    JF = fenics.derivative(F, w, fenics.TrialFunction(W))
-
-    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-
-    w.leaf_node().vector()[:] = w_n.leaf_node().vector()
-
-
-    return F,w, boundary_conditions, JF, w_n
-
-def build_nonlinear_problem(
+def build_nonlinear_ABE_problem(
     W, w,
     psi_p, psi_u, psi_T,
     mu, Pr, f_b,
@@ -917,6 +808,7 @@ def build_nonlinear_problem(
     buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
     convection_scale_c = fenics.Constant(float(convection_scale))
     qn_scale_c = fenics.Constant(float(qn_scale))
+    gvec = fenics.Constant((0.0, -1.0))
 
     mass = -psi_p * div(u)
 
@@ -931,10 +823,182 @@ def build_nonlinear_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c) \
+        - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
 
     F = (mass + momentum + energy) * sub_dx
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
+
+def solve_ABE_newton_continuation(
+    experiment: Experiment,
+    u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+    W: fenics.FunctionSpace, w: fenics.Function,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b, T_c, T_air_bc,
+    sub_dx, sub_ds, sub_ft, qn_air,
+    w_n: fenics.Function,
+    lambdas=None,
+    relaxation_schedule=(0.2, 0.1, 0.05),
+    stokes_startup=True,
+    sub_mesh_star=None,
+    sub_mesh_dim=None,
+    p_path: str = "",
+    u_path: str = "",
+    T_path: str = "",
+):
+    """
+    Steady continuation solve with damped Newton + MUMPS.
+
+    For each lambda:
+      1) solve a no-momentum-convection stage
+      2) solve the full nonlinear stage
+    and promote the converged solution after each successful stage.
+    """
+    if lambdas is None:
+        lambdas = [0.05, 0.10, 0.20, 0.40, 0.70, 1.00]
+
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    for lam in lambdas:
+        print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+        # Split nondimensional solution
+        p_star, u_star, theta = w.split(deepcopy=True)
+
+        # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+        u_dim, p_dim, T_dim = dimensionalize_fields(
+            sub_mesh_star, u_star, p_star, theta,
+            scales.Uref, scales.dTref, T_ambient,
+            experiment.fluid.properties["rho"]
+        )
+
+        p_path = p_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        v_path = u_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        t_path = T_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+        
+        save_experiment(p_path, sub_mesh_dim, [p_dim])
+        save_experiment(v_path, sub_mesh_dim, [u_dim])
+        save_experiment(t_path, sub_mesh_dim, [T_dim])
+
+        if lam < 0.05:
+                stage_attempts = [
+                ("stokes",   False, 0.00),
+                ("conv_005", True,  0.05),
+                ("conv_010", True,  0.10),
+                ("conv_020", True,  0.20),
+                ("conv_030", True,  0.30),
+                ("conv_040", True,  0.40),
+                ("conv_050", True,  0.50),
+                ("conv_060", True,  0.60),
+                ("conv_070", True,  0.70),
+                ("conv_080", True,  0.80),
+                ("conv_090", True,  0.90),
+                ("full",     True,  1.00),
+            ]
+        else:
+            stage_attempts = [
+                ("stokes",   False, 0.00),
+                ("conv_005", True,  0.05),
+                ("conv_010", True,  0.10),
+                ("conv_020", True,  0.20),
+                ("conv_030", True,  0.30),
+                ("conv_040", True,  0.40),
+                ("conv_050", True,  0.50),
+                ("conv_055", True,  0.55),
+                ("conv_060", True,  0.60),
+                ("conv_062", True,  0.62),
+                ("conv_064", True,  0.64),
+                ("conv_066", True,  0.66),
+                ("conv_068", True,  0.68),
+                ("conv_070", True,  0.70),
+                ("conv_072", True,  0.72),
+                ("conv_074", True,  0.74),
+                ("conv_076", True,  0.76),
+                ("conv_078", True,  0.78),
+                ("conv_080", True,  0.80),
+                ("conv_082", True,  0.82),
+                ("conv_084", True,  0.84),
+                ("conv_085", True,  0.85),
+                ("conv_086", True,  0.86),
+                ("conv_087", True,  0.87),
+                ("conv_088", True,  0.88),
+                ("conv_089", True,  0.89),
+                ("conv_090", True,  0.90),
+                ("conv_091", True,  0.91),
+                ("conv_092", True,  0.92),
+                ("conv_093", True,  0.93),
+                ("conv_094", True,  0.94),
+                ("conv_095", True,  0.95),
+                ("conv_096", True,  0.96),
+                ("conv_097", True,  0.97),
+                ("conv_098", True,  0.98),
+                ("conv_099", True,  0.99),
+                ("full",     True,  1.00),
+            ]
+
+        for stage_name, include_convection, conv_scale in stage_attempts:
+            print(f"  --- stage: {stage_name} ---")
+            stage_success = False
+            last_error = None
+
+            F, JF = build_nonlinear_ABE_problem(
+                W=W, w=w,
+                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                mu=mu, Pr=Pr, f_b=f_b,
+                sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+                buoyancy_scale=lam,
+                qn_scale=lam,
+                include_convection=include_convection,
+                convection_scale=conv_scale,
+                fEc=fenics.Constant(scales.fEc)
+            )
+            relax = relaxation_schedule[:]
+            if conv_scale > 0.6 :
+                relax = relax[:]
+                # relax[0] = 0.7
+            for relaxation in relax:
+                print(f"  attempt={stage_name}, relaxation={relaxation:.3f}")
+                
+                # restart from last accepted continuation state
+                w.vector()[:] = w_n.vector()
+                w.vector().apply("insert")
+
+                try:
+                    w = base_solver(
+                        F, w, boundary_conditions, JF,
+                        relaxation=relaxation,
+                        maxit=60,
+                        atol=1e-9,
+                        rtol=1e-8,
+                    )
+
+                    # accept stage result
+                    w_n.vector()[:] = w.vector()
+                    w_n.vector().apply("insert")
+
+                    print(
+                        f"  converged at lambda={lam:.2f} "
+                        f"with relaxation={relaxation:.3f} ({stage_name})"
+                    )
+                    stage_success = True
+                    break
+
+                except RuntimeError as err:
+                    last_error = err
+                    print(
+                        f"  failed at lambda={lam:.2f} "
+                        f"with relaxation={relaxation:.3f} ({stage_name})"
+                    )
+
+            if not stage_success:
+                raise RuntimeError(
+                    f"Continuation Newton failed at lambda={lam:.2f} "
+                    f"during stage '{stage_name}'. Last error: {last_error}"
+                )
+
+    return w
