@@ -676,16 +676,6 @@ def abs_version(experiment: Experiment):
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print("Checks complete")
 
-    # F, w, boundary_conditions, JF, w_n = nonlinear_solver_ABE(
-    #     experiment, u_n, u, T_n, T, p, W, w,
-    #     psi_p, psi_u, psi_T,
-    #     mu, Pr, f_b, T_c, T_air_bc,
-    #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air,
-    #     w_n,
-    #     fenics.Constant(scales.fEc)
-    # )
-
-    # w = base_solver(F, w, boundary_conditions, JF)
     w = solve_ABE_newton_continuation(
         experiment=experiment,
         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
@@ -695,7 +685,7 @@ def abs_version(experiment: Experiment):
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
         lambdas=[0.01, 0.02, 0.03, 0.4, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-        relaxation_schedule=(0.9, 0.5, 0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
+        relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
         stokes_startup=False,
         sub_mesh_star=sub_mesh_star,
         sub_mesh_dim=sub_mesh_dim,
@@ -781,8 +771,8 @@ def main():
     print(f"Running experiment: {experiment.name}")
 
     base_version(experiment)
-    # temperature_dependent_version(experiment)
-    # abs_version(experiment)
+    temperature_dependent_version(experiment)
+    abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 
 
