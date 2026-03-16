@@ -492,55 +492,32 @@ def _clone_state(src: fenics.Function) -> fenics.Function:
 
 
 def _try_newton_stage(
-    *,
-    W,
+    F,
+    JF,
     w: fenics.Function,
-    w_init: fenics.Function,
-    psi_p, psi_u, psi_T,
-    mu, Pr, f_b,
-    sub_dx, sub_ds, qn_air,
-    lam: float,
-    include_convection: bool,
-    conv_scale: float,
+    w_n: fenics.Function,
     boundary_conditions,
-    relaxation_schedule,
-    maxit: int = 60,
-    atol: float = 1e-9,
-    rtol: float = 1e-8,
-    stage_name: str = "",
+    relaxation_schedule=(0.9, 0.7, 0.5),
+    maxit=60,
+    atol=1e-9,
+    rtol=1e-8,
+    stage_name="",
 ):
     """
-    Try one Newton stage.
-
-    Returns
-    -------
-    success : bool
-    accepted_state : fenics.Function | None
-    last_trial_state : fenics.Function
-    used_relaxation : float | None
-    last_error : Exception | None
+    Try one Newton solve from the last accepted state w_n.
+    Returns:
+        success: bool
+        used_relaxation: float | None
+        last_error: Exception | None
     """
-    F, JF = build_nonlinear_problem(
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
-        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-        buoyancy_scale=lam,
-        qn_scale=lam,
-        include_convection=include_convection,
-        convection_scale=conv_scale,
-    )
-
-    best_seed = _clone_state(w_init)
     last_error = None
 
     for relaxation in relaxation_schedule:
-        print(
-            f"    Newton try: stage={stage_name}, "
-            f"conv_scale={conv_scale:.6f}, relaxation={relaxation:.3f}"
-        )
+        print(f"    Newton attempt [{stage_name}] with relaxation={relaxation:.3f}")
 
-        _copy_state(w, best_seed)
+        # always restart from last accepted state
+        w.vector()[:] = w_n.vector()
+        w.vector().apply("insert")
 
         try:
             base_solver(
@@ -550,153 +527,257 @@ def _try_newton_stage(
                 atol=atol,
                 rtol=rtol,
             )
-            accepted = _clone_state(w)
-            return True, accepted, accepted, relaxation, None
+            return True, relaxation, None
 
         except RuntimeError as err:
             last_error = err
-            print(
-                f"    Newton failed: stage={stage_name}, "
-                f"conv_scale={conv_scale:.6f}, relaxation={relaxation:.3f}"
-            )
+            print(f"    failed [{stage_name}] with relaxation={relaxation:.3f}")
 
-            # Crucial improvement:
-            # do NOT throw away the failed Newton iterate.
-            best_seed = _clone_state(w)
+    return False, None, last_error
 
-    return False, None, best_seed, None, last_error
+def _accept_current_state(w: fenics.Function, w_n: fenics.Function):
+    """
+    Promote current iterate to last accepted state.
+    """
+    w_n.vector()[:] = w.vector()
+    w_n.vector().apply("insert")
 
-def _adaptive_convection_path(
-    *,
-    experiment: Experiment,
-    W,
-    w: fenics.Function,
-    w_start: fenics.Function,
+def _conv_stage_sequence():
+    """
+    Coarse monotone convection ladder.
+    Adjust this if needed, but keep it increasing.
+    """
+    return [0.20, 0.40, 0.60, 0.70, 0.80, 0.90, 1.00]
+
+def _refine_conv_interval(left, right, min_interval=0.01):
+    """
+    Return midpoint if interval is still worth refining, else None.
+    """
+    mid = 0.5 * (left + right)
+    if (right - left) < min_interval:
+        return None
+    return mid
+
+def _advance_convection_monotone(
+    W, w,
     psi_p, psi_u, psi_T,
-    mu, Pr, f_b, T_c, T_air_bc,
-    sub_dx, sub_ds, sub_ft, qn_air,
-    lam: float,
+    mu, Pr, f_b,
+    sub_dx, sub_ds, qn_air,
     boundary_conditions,
-    relaxation_schedule=(0.2, 0.1, 0.05),
-    maxit: int = 60,
-    atol: float = 1e-9,
-    rtol: float = 1e-8,
-    start_conv: float = 0.0,
-    target_conv: float = 1.0,
-    initial_step: float = 0.2,
-    max_step: float = 0.2,
-    min_step: float = 0.005,
+    w_n: fenics.Function,
+    buoyancy_scale: float,
+    start_conv: float,
+    target_conv: float,
+    relaxation_schedule=(0.9, 0.7, 0.5),
+    min_interval=0.01,
+    max_local_bisections=20,
 ):
     """
-    Adaptive local continuation in convection_scale from start_conv to target_conv.
+    Advance monotonically from start_conv to target_conv.
+    If target fails, bisect only that interval until either:
+      - target is reached
+      - interval becomes too small
+      - local bisection limit is reached
 
-    Strategy:
-      - try a jump current -> current + step
-      - if it converges, accept and maybe enlarge the next step
-      - if it fails, try PTC from the failed iterate
-      - if still not enough, cut the step in half
+    Returns:
+        accepted_conv: float
     """
-    current_conv = float(start_conv)
-    step = float(initial_step)
-    current_state = _clone_state(w_start)
+    accepted_conv = float(start_conv)
+    pending_targets = [float(target_conv)]
+    n_bisect = 0
 
-    while current_conv < target_conv - 1e-14:
-        trial_conv = min(target_conv, current_conv + step)
+    while pending_targets:
+        trial_conv = pending_targets.pop(0)
 
-        ok, accepted_state, failed_state, used_relax, err = _try_newton_stage(
-            W=W,
-            w=w,
-            w_init=current_state,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b,
-            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-            lam=lam,
-            include_convection=(trial_conv > 0.0),
-            conv_scale=trial_conv,
-            boundary_conditions=boundary_conditions,
-            relaxation_schedule=relaxation_schedule,
-            maxit=maxit,
-            atol=atol,
-            rtol=rtol,
-            stage_name=f"adaptive_conv_{trial_conv:.6f}",
-        )
-
-        if ok:
-            current_conv = trial_conv
-            current_state = accepted_state
-            step = min(max_step, 1.35 * step)
-            print(
-                f"  accepted adaptive step to conv_scale={current_conv:.6f} "
-                f"with relaxation={used_relax:.3f}"
-            )
+        if trial_conv <= accepted_conv + 1e-14:
             continue
 
         print(
-            f"  Newton stalled between conv_scale={current_conv:.6f} "
-            f"and {trial_conv:.6f}; trying PTC rescue from failed iterate"
+            f"  -> convection advance: accepted={accepted_conv:.4f} "
+            f"target={trial_conv:.4f}"
         )
 
-        ptc_success = pseudo_transient_rescue(
-            experiment=experiment,
-            W=W,
-            w=w,
-            w_n=failed_state,   # important: rescue from failed iterate, not old accepted state
+        F, JF = build_nonlinear_problem(
+            W=W, w=w,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-            sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
-            lam=lam,
-            conv_scale=trial_conv,
-            dtau_schedule=(1e-3, 3e-3, 1e-2, 3e-2, 1e-1),
-            steps_per_dtau=6,
-            update_tol=1e-8,
-            retry_newton_every=3,
-            relaxation=1.0,
+            mu=mu, Pr=Pr, f_b=f_b,
+            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+            buoyancy_scale=buoyancy_scale,
+            qn_scale=buoyancy_scale,
+            include_convection=True,
+            convection_scale=trial_conv,
         )
 
-        if ptc_success:
-            rescued_seed = _clone_state(failed_state)
+        ok, used_relax, last_error = _try_newton_stage(
+            F=F,
+            JF=JF,
+            w=w,
+            w_n=w_n,
+            boundary_conditions=boundary_conditions,
+            relaxation_schedule=relaxation_schedule,
+            stage_name=f"conv_{trial_conv:.4f}",
+        )
 
-            ok2, accepted_state2, failed_state2, used_relax2, err2 = _try_newton_stage(
-                W=W,
-                w=w,
-                w_init=rescued_seed,
-                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-                mu=mu, Pr=Pr, f_b=f_b,
-                sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-                lam=lam,
-                include_convection=(trial_conv > 0.0),
-                conv_scale=trial_conv,
-                boundary_conditions=boundary_conditions,
-                relaxation_schedule=relaxation_schedule,
-                maxit=maxit,
-                atol=atol,
-                rtol=rtol,
-                stage_name=f"adaptive_conv_{trial_conv:.6f}_after_ptc",
+        if ok:
+            _accept_current_state(w, w_n)
+            accepted_conv = trial_conv
+            print(
+                f"    accepted convection scale {accepted_conv:.4f} "
+                f"(relaxation={used_relax:.3f})"
             )
+            continue
 
-            if ok2:
-                current_conv = trial_conv
-                current_state = accepted_state2
-                step = min(max_step, 1.25 * step)
-                print(
-                    f"  accepted adaptive step after PTC to conv_scale={current_conv:.6f} "
-                    f"with relaxation={used_relax2:.3f}"
-                )
-                continue
+        midpoint = _refine_conv_interval(accepted_conv, trial_conv, min_interval=min_interval)
 
-        step *= 0.5
-        print(
-            f"  shrinking continuation step; current={current_conv:.6f}, "
-            f"trial={trial_conv:.6f}, new_step={step:.6f}"
-        )
-
-        if step < min_step:
+        if midpoint is None or n_bisect >= max_local_bisections:
             raise RuntimeError(
-                f"Adaptive continuation failed at lambda={lam:.2f} "
-                f"near conv_scale={current_conv:.6f}."
+                f"Could not advance convection beyond {accepted_conv:.4f}; "
+                f"failed target={trial_conv:.4f}. Last error: {last_error}"
             )
 
-    return current_state
+        n_bisect += 1
+        print(
+            f"    target {trial_conv:.4f} failed; "
+            f"bisecting interval [{accepted_conv:.4f}, {trial_conv:.4f}] "
+            f"-> {midpoint:.4f}"
+        )
+
+        # try midpoint first, then come back to original target later
+        pending_targets = [midpoint, trial_conv] + pending_targets
+
+    return accepted_conv
+
+# def _adaptive_convection_path(
+#     *,
+#     experiment: Experiment,
+#     W,
+#     w: fenics.Function,
+#     w_start: fenics.Function,
+#     psi_p, psi_u, psi_T,
+#     mu, Pr, f_b, T_c, T_air_bc,
+#     sub_dx, sub_ds, sub_ft, qn_air,
+#     lam: float,
+#     boundary_conditions,
+#     relaxation_schedule=(0.2, 0.1, 0.05),
+#     maxit: int = 40,
+#     atol: float = 1e-9,
+#     rtol: float = 1e-8,
+#     start_conv: float = 0.0,
+#     target_conv: float = 1.0,
+#     initial_step: float = 0.2,
+#     max_step: float = 0.2,
+#     min_step: float = 0.005,
+# ):
+#     """
+#     Adaptive local continuation in convection_scale from start_conv to target_conv.
+
+#     Strategy:
+#       - try a jump current -> current + step
+#       - if it converges, accept and maybe enlarge the next step
+#       - if it fails, try PTC from the failed iterate
+#       - if still not enough, cut the step in half
+#     """
+#     current_conv = float(start_conv)
+#     step = float(initial_step)
+#     current_state = _clone_state(w_start)
+
+#     while current_conv < target_conv - 1e-14:
+#         trial_conv = min(target_conv, current_conv + step)
+
+#         ok, accepted_state, failed_state, used_relax, err = _try_newton_stage(
+#             W=W,
+#             w=w,
+#             w_init=current_state,
+#             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#             mu=mu, Pr=Pr, f_b=f_b,
+#             sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+#             lam=lam,
+#             include_convection=(trial_conv > 0.0),
+#             conv_scale=trial_conv,
+#             boundary_conditions=boundary_conditions,
+#             relaxation_schedule=relaxation_schedule,
+#             maxit=maxit,
+#             atol=atol,
+#             rtol=rtol,
+#             stage_name=f"adaptive_conv_{trial_conv:.6f}",
+#         )
+
+#         if ok:
+#             current_conv = trial_conv
+#             current_state = accepted_state
+#             step = min(max_step, 1.35 * step)
+#             print(
+#                 f"  accepted adaptive step to conv_scale={current_conv:.6f} "
+#                 f"with relaxation={used_relax:.3f}"
+#             )
+#             continue
+
+#         print(
+#             f"  Newton stalled between conv_scale={current_conv:.6f} "
+#             f"and {trial_conv:.6f}; trying PTC rescue from failed iterate"
+#         )
+
+#         ptc_success = pseudo_transient_rescue(
+#             experiment=experiment,
+#             W=W,
+#             w=w,
+#             w_n=failed_state,   # important: rescue from failed iterate, not old accepted state
+#             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#             mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+#             sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
+#             lam=lam,
+#             conv_scale=trial_conv,
+#             dtau_schedule=(1e-6, 1e-5, 1e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1),
+#             steps_per_dtau=6,
+#             update_tol=1e-8,
+#             retry_newton_every=3,
+#             relaxation=1.0,
+#         )
+
+#         if ptc_success:
+#             rescued_seed = _clone_state(failed_state)
+
+#             ok2, accepted_state2, failed_state2, used_relax2, err2 = _try_newton_stage(
+#                 W=W,
+#                 w=w,
+#                 w_init=rescued_seed,
+#                 psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#                 mu=mu, Pr=Pr, f_b=f_b,
+#                 sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+#                 lam=lam,
+#                 include_convection=(trial_conv > 0.0),
+#                 conv_scale=trial_conv,
+#                 boundary_conditions=boundary_conditions,
+#                 relaxation_schedule=relaxation_schedule,
+#                 maxit=maxit,
+#                 atol=atol,
+#                 rtol=rtol,
+#                 stage_name=f"adaptive_conv_{trial_conv:.6f}_after_ptc",
+#             )
+
+#             if ok2:
+#                 current_conv = trial_conv
+#                 current_state = accepted_state2
+#                 step = min(max_step, 1.25 * step)
+#                 print(
+#                     f"  accepted adaptive step after PTC to conv_scale={current_conv:.6f} "
+#                     f"with relaxation={used_relax2:.3f}"
+#                 )
+#                 continue
+
+#         step *= 0.5
+#         print(
+#             f"  shrinking continuation step; current={current_conv:.6f}, "
+#             f"trial={trial_conv:.6f}, new_step={step:.6f}"
+#         )
+
+#         if step < min_step:
+#             raise RuntimeError(
+#                 f"Adaptive continuation failed at lambda={lam:.2f} "
+#                 f"near conv_scale={current_conv:.6f}."
+#             )
+
+#     return current_state
 
 def build_ptc_problem(
     W, w, w_prev,
@@ -760,7 +841,7 @@ def pseudo_transient_rescue(
     sub_dx, sub_ds, sub_ft, qn_air,
     lam: float,
     conv_scale: float,
-    dtau_schedule=(1e-3, 3e-3, 1e-2, 3e-2, 1e-1),
+    dtau_schedule=(1e-6, 1e-5, 1e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1),
     steps_per_dtau: int = 6,
     update_tol: float = 1e-8,
     retry_newton_every: int = 3,
@@ -836,122 +917,245 @@ def solve_steady_newton_continuation(
     sub_dx, sub_ds, sub_ft, qn_air,
     w_n: fenics.Function,
     lambdas=None,
-    relaxation_schedule=(0.2, 0.1, 0.05),
+    relaxation_schedule=(0.9, 0.7, 0.5),
     stokes_startup=True,
     sub_mesh_star=None,
     sub_mesh_dim=None,
     p_path: str = "",
     u_path: str = "",
     T_path: str = "",
-    initial_conv_step: float = 0.2,
-    max_conv_step: float = 0.2,
-    min_conv_step: float = 0.005,
 ):
     """
-    Adaptive steady continuation:
+    Steady continuation solve with monotone convection ramping.
 
     For each lambda:
-      1) try the full stage directly
-      2) if that fails, solve a zero-convection stage
-      3) continue convection adaptively from 0 -> 1
-      4) if a local stage stalls, use PTC only as a rescue device
+      1) solve Stokes / no-momentum-convection stage
+      2) ramp convection monotonically with a coarse ladder
+      3) if a target convection scale fails, bisect only that interval
+
+    This avoids the wasteful pattern:
+      direct full solve -> many failed relaxations -> fallback continuation
     """
     if lambdas is None:
         lambdas = [0.05, 0.10, 0.20, 0.40, 0.70, 1.00]
 
-    _copy_state(w, w_n)
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
+
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
-    p_base = p_path.split(".xdmf")[0] if p_path else ""
-    u_base = u_path.split(".xdmf")[0] if u_path else ""
-    T_base = T_path.split(".xdmf")[0] if T_path else ""
+    conv_targets = _conv_stage_sequence()
 
     for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
 
-        accepted_lambda_state = _clone_state(w_n)
+        # optional output of current accepted state before advancing lambda
+        if sub_mesh_star is not None and sub_mesh_dim is not None:
+            p_star, u_star, theta = w_n.split(deepcopy=True)
 
-        if sub_mesh_star is not None and sub_mesh_dim is not None and p_base and u_base and T_base:
-            p_star, u_star, theta = accepted_lambda_state.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
                 scales.Uref, scales.dTref, T_ambient,
-                experiment.fluid.properties["rho"],
+                experiment.fluid.properties["rho"]
             )
-            tag = int(round(100.0 * lam))
-            save_experiment(f"{p_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [p_dim])
-            save_experiment(f"{u_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [u_dim])
-            save_experiment(f"{T_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [T_dim])
 
-        # 1) Try the full stage immediately
-        print("  -> direct full-stage attempt")
-        ok_full, full_state, failed_state, used_relax, err = _try_newton_stage(
-            W=W,
-            w=w,
-            w_init=accepted_lambda_state,
+            p_out = p_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+            u_out = u_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+            t_out = T_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
+
+            save_experiment(p_out, sub_mesh_dim, [p_dim])
+            save_experiment(u_out, sub_mesh_dim, [u_dim])
+            save_experiment(t_out, sub_mesh_dim, [T_dim])
+
+        # ------------------------------------------------------------
+        # Stage 1: Stokes / zero momentum convection
+        # ------------------------------------------------------------
+        print("  --- stage: stokes ---")
+
+        F_stokes, JF_stokes = build_nonlinear_problem(
+            W=W, w=w,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
             mu=mu, Pr=Pr, f_b=f_b,
             sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-            lam=lam,
-            include_convection=True,
-            conv_scale=1.0,
-            boundary_conditions=boundary_conditions,
-            relaxation_schedule=relaxation_schedule,
-            stage_name=f"lambda_{lam:.2f}_full_direct",
+            buoyancy_scale=lam,
+            qn_scale=lam,
+            include_convection=False,
+            convection_scale=0.0,
         )
 
-        if ok_full:
-            _copy_state(w_n, full_state)
-            print(f"  accepted lambda={lam:.2f} directly")
-            continue
-
-        # 2) Fallback: robust Stokes / zero-convection stage
-        print("  -> direct full stage failed; solving zero-convection stage")
-        ok_stokes, stokes_state, failed_state, used_relax_s, err_s = _try_newton_stage(
-            W=W,
+        ok, used_relax, last_error = _try_newton_stage(
+            F=F_stokes,
+            JF=JF_stokes,
             w=w,
-            w_init=accepted_lambda_state,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b,
-            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-            lam=lam,
-            include_convection=False,
-            conv_scale=0.0,
+            w_n=w_n,
             boundary_conditions=boundary_conditions,
             relaxation_schedule=relaxation_schedule,
             stage_name=f"lambda_{lam:.2f}_stokes",
         )
 
-        if not ok_stokes:
+        if not ok:
             raise RuntimeError(
-                f"Continuation failed already at zero-convection stage for lambda={lam:.2f}."
+                f"Continuation Newton failed at lambda={lam:.2f} during stokes stage. "
+                f"Last error: {last_error}"
             )
 
-        # 3) Adaptive local continuation only where needed
-        final_state = _adaptive_convection_path(
-            experiment=experiment,
-            W=W,
-            w=w,
-            w_start=stokes_state,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-            sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
-            lam=lam,
-            boundary_conditions=boundary_conditions,
-            relaxation_schedule=relaxation_schedule,
-            start_conv=0.0,
-            target_conv=1.0,
-            initial_step=initial_conv_step,
-            max_step=max_conv_step,
-            min_step=min_conv_step,
-        )
+        _accept_current_state(w, w_n)
+        print(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
 
-        _copy_state(w_n, final_state)
-        print(f"  accepted lambda={lam:.2f} after adaptive fallback")
+        # ------------------------------------------------------------
+        # Stage 2: monotone convection advance
+        # ------------------------------------------------------------
+        accepted_conv = 0.0
+        for target_conv in conv_targets:
+            accepted_conv = _advance_convection_monotone(
+                W=W, w=w,
+                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                mu=mu, Pr=Pr, f_b=f_b,
+                sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+                boundary_conditions=boundary_conditions,
+                w_n=w_n,
+                buoyancy_scale=lam,
+                start_conv=accepted_conv,
+                target_conv=target_conv,
+                relaxation_schedule=relaxation_schedule,
+                min_interval=0.005,          # tighten/loosen as needed
+                max_local_bisections=25,
+            )
 
-    _copy_state(w, w_n)
+        print(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
+
+        # keep working function synchronized with accepted state
+        w.vector()[:] = w_n.vector()
+        w.vector().apply("insert")
+
     return w
+
+# def solve_steady_newton_continuation(
+#     experiment: Experiment,
+#     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+#     W: fenics.FunctionSpace, w: fenics.Function,
+#     psi_p, psi_u, psi_T,
+#     mu, Pr, f_b, T_c, T_air_bc,
+#     sub_dx, sub_ds, sub_ft, qn_air,
+#     w_n: fenics.Function,
+#     lambdas=None,
+#     relaxation_schedule=(0.9, 0.7, 0.5),
+#     stokes_startup=True,
+#     sub_mesh_star=None,
+#     sub_mesh_dim=None,
+#     p_path: str = "",
+#     u_path: str = "",
+#     T_path: str = "",
+#     initial_conv_step: float = 0.2,
+#     max_conv_step: float = 0.2,
+#     min_conv_step: float = 0.005,
+# ):
+#     """
+#     Adaptive steady continuation:
+
+#     For each lambda:
+#       1) try the full stage directly
+#       2) if that fails, solve a zero-convection stage
+#       3) continue convection adaptively from 0 -> 1
+#       4) if a local stage stalls, use PTC only as a rescue device
+#     """
+#     if lambdas is None:
+#         lambdas = [0.05, 0.10, 0.20, 0.40, 0.70, 1.00]
+
+#     _copy_state(w, w_n)
+#     scales = compute_nondimensional_scales(experiment)
+#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+#     p_base = p_path.split(".xdmf")[0] if p_path else ""
+#     u_base = u_path.split(".xdmf")[0] if u_path else ""
+#     T_base = T_path.split(".xdmf")[0] if T_path else ""
+
+#     for lam in lambdas:
+#         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+
+#         accepted_lambda_state = _clone_state(w_n)
+
+#         if sub_mesh_star is not None and sub_mesh_dim is not None and p_base and u_base and T_base:
+#             p_star, u_star, theta = accepted_lambda_state.split(deepcopy=True)
+#             u_dim, p_dim, T_dim = dimensionalize_fields(
+#                 sub_mesh_star, u_star, p_star, theta,
+#                 scales.Uref, scales.dTref, T_ambient,
+#                 experiment.fluid.properties["rho"],
+#             )
+#             tag = int(round(100.0 * lam))
+#             save_experiment(f"{p_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [p_dim])
+#             save_experiment(f"{u_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [u_dim])
+#             save_experiment(f"{T_base}_lambda_{tag:03d}.xdmf", sub_mesh_dim, [T_dim])
+
+#         # 1) Try the full stage immediately
+#         print("  -> direct full-stage attempt")
+#         ok_full, full_state, failed_state, used_relax, err = _try_newton_stage(
+#             W=W,
+#             w=w,
+#             w_init=accepted_lambda_state,
+#             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#             mu=mu, Pr=Pr, f_b=f_b,
+#             sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+#             lam=lam,
+#             include_convection=True,
+#             conv_scale=1.0,
+#             boundary_conditions=boundary_conditions,
+#             relaxation_schedule=relaxation_schedule,
+#             stage_name=f"lambda_{lam:.2f}_full_direct",
+#         )
+
+#         if ok_full:
+#             _copy_state(w_n, full_state)
+#             print(f"  accepted lambda={lam:.2f} directly")
+#             continue
+
+#         # 2) Fallback: robust Stokes / zero-convection stage
+#         print("  -> direct full stage failed; solving zero-convection stage")
+#         ok_stokes, stokes_state, failed_state, used_relax_s, err_s = _try_newton_stage(
+#             W=W,
+#             w=w,
+#             w_init=accepted_lambda_state,
+#             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#             mu=mu, Pr=Pr, f_b=f_b,
+#             sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+#             lam=lam,
+#             include_convection=False,
+#             conv_scale=0.0,
+#             boundary_conditions=boundary_conditions,
+#             relaxation_schedule=relaxation_schedule,
+#             stage_name=f"lambda_{lam:.2f}_stokes",
+#         )
+
+#         if not ok_stokes:
+#             raise RuntimeError(
+#                 f"Continuation failed already at zero-convection stage for lambda={lam:.2f}."
+#             )
+
+#         # 3) Adaptive local continuation only where needed
+#         final_state = _adaptive_convection_path(
+#             experiment=experiment,
+#             W=W,
+#             w=w,
+#             w_start=stokes_state,
+#             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+#             mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+#             sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
+#             lam=lam,
+#             boundary_conditions=boundary_conditions,
+#             relaxation_schedule=relaxation_schedule,
+#             start_conv=0.0,
+#             target_conv=1.0,
+#             initial_step=initial_conv_step,
+#             max_step=max_conv_step,
+#             min_step=min_conv_step,
+#         )
+
+#         _copy_state(w_n, final_state)
+#         print(f"  accepted lambda={lam:.2f} after adaptive fallback")
+
+#     _copy_state(w, w_n)
+#     return w
 
 # def solve_steady_newton_continuation(
 #     experiment: Experiment,
