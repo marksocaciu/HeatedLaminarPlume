@@ -10,6 +10,9 @@ from solver.params_bcs import *
 from solver.scales import *
 from utils.results import *
 from utils.transfer import *
+from solver.base_solver import *
+from solver.abe_solver import *
+from solver.temp_solver import *
 
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
     # 1) dimensionalize qn_air: qn_dim [W/m^2]
@@ -171,7 +174,7 @@ def base_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=(0.01, 0.03, 0.05)
+        lambdas=(0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
     )
 
     # Solve the full nonlinear problem with previous initial guess
@@ -210,24 +213,38 @@ def base_version(experiment: Experiment):
     # save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
     # return 0
 
-    w = solve_steady_newton_continuation_with_pts(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        w_n=w_n,
-        lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-        relaxation_schedule=(0.9, 0.7, 0.5),# 0.4, 0.35, 0.30, 0.27, 0.25, 0.22, 0.20, 0.15, 0.10),
-        stokes_startup=False,
-        sub_mesh_star=sub_mesh_star,
-        sub_mesh_dim=sub_mesh_dim,
-        p_path=OUTPUT_XDMF_PATH_AIR_P,
-        u_path=OUTPUT_XDMF_PATH_AIR_V,
-        T_path=OUTPUT_XDMF_PATH_AIR_T
+    # w = solve_steady_newton_continuation(
+    #     experiment=experiment,
+    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+    #     W=W, w=w,
+    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+    #     w_n=w_n,
+    #     lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+    #     relaxation_schedule=(0.9, 0.7, 0.5),# 0.4, 0.35, 0.30, 0.27, 0.25, 0.22, 0.20, 0.15, 0.10),
+    #     stokes_startup=False,
+    #     sub_mesh_star=sub_mesh_star,
+    #     sub_mesh_dim=sub_mesh_dim,
+    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
+    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
+    #     T_path=OUTPUT_XDMF_PATH_AIR_T
+    # )
+
+    w, info = solve_pseudo_transient_continuation_problem(
+        experiment,
+        W, w, w_n,
+        psi_p, psi_u, psi_T,
+        mu, Pr, f_b, T_c, T_air_bc,
+        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+        dtau_init=1e-4,
+        dtau_min=1e-8,
+        dtau_max=1e-1,
+        max_steps=500,
+        update_tol=1e-8,
+        residual_tol=1e-8,
     )
-    
+    print("Solver finished with info:", info)
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
 
