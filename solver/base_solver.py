@@ -469,6 +469,11 @@ def _history_window_nondecreasing(values, window=5):
     tail = values[-window:]
     return all(tail[i] >= tail[i - 1] for i in range(1, len(tail)))
 
+def _assembled_residual_norm(F_form, boundary_conditions):
+    r = fenics.assemble(F_form)
+    for bc in boundary_conditions:
+        bc.apply(r)
+    return r.norm("l2")
 
 def solve_pseudo_transient_continuation_problem(
     experiment: Experiment,
@@ -536,20 +541,40 @@ def solve_pseudo_transient_continuation_problem(
 
     prev_steady_res = None
     prev_rel_update = None
-    dtau_c = fenics.Constant(dtau_init)
 
+    dtau = float(dtau_init)
+    dtau_c = fenics.Constant(dtau)
+
+    buoyancy_scale_c = fenics.Constant(1.0)
+    qn_scale_c = fenics.Constant(1.0)
+    convection_scale_c = fenics.Constant(1.0)
+
+    copy_state(w, w_n)
     copy_state(w_prev, w_n)
+
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
         mu=mu, Pr=Pr, f_b=f_b,
         sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
         dtau=dtau_c,
-        buoyancy_scale=1.0,
-        qn_scale=1.0,
+        buoyancy_scale=buoyancy_scale_c,
+        qn_scale=qn_scale_c,
         include_convection=True,
-        convection_scale=1.0,
+        convection_scale=convection_scale_c,
     )
+
+    F_steady, JF_steady = build_nonlinear_problem(
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b,
+        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        buoyancy_scale=buoyancy_scale_c,
+        qn_scale=qn_scale_c,
+        include_convection=True,
+        convection_scale=convection_scale_c,
+    )
+
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
         copy_state(w, w_n)
@@ -568,6 +593,7 @@ def solve_pseudo_transient_continuation_problem(
         except RuntimeError as err:
             rejected_steps += 1
             dtau = max(dtau_min, shrink_factor * dtau)
+            dtau_c.assign(dtau)
             print(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
             print(f"Failure reason: {err}")
 
@@ -582,17 +608,18 @@ def solve_pseudo_transient_continuation_problem(
             continue
 
         rel_update = _vector_relative_update(w, w_prev)
-        steady_res = _steady_residual_norm(
-            W=W, w=w,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b,
-            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-            boundary_conditions=boundary_conditions,
-            buoyancy_scale=1.0,
-            qn_scale=1.0,
-            include_convection=True,
-            convection_scale=1.0,
-        )
+        # steady_res = _steady_residual_norm(
+        #     W=W, w=w,
+        #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        #     mu=mu, Pr=Pr, f_b=f_b,
+        #     sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        #     boundary_conditions=boundary_conditions,
+        #     buoyancy_scale=1.0,
+        #     qn_scale=1.0,
+        #     include_convection=True,
+        #     convection_scale=1.0,
+        # )
+        steady_res = _assembled_residual_norm(F_steady, boundary_conditions)
         obs = _collect_observables(w)
 
         history.append({

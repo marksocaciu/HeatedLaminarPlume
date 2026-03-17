@@ -608,24 +608,29 @@ def build_ptc_problem(
     Backward-Euler pseudo-transient problem for the mixed steady system.
 
     The pseudo-time mass is added only to velocity and temperature.
-    Pressure remains algebraic, which is appropriate for incompressible flow.
+    Pressure remains algebraic.
     """
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
     p, u, T = fenics.split(w)
     _, u_prev, T_prev = fenics.split(w_prev)
 
-    buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
-    convection_scale_c = fenics.Constant(float(convection_scale))
-    qn_scale_c = fenics.Constant(float(qn_scale))
-    dtau_c = fenics.Constant(float(dtau))
+    # IMPORTANT:
+    # dtau, buoyancy_scale, qn_scale, convection_scale are assumed to be
+    # either plain scalars or already-created FEniCS Constants/UFL objects.
+    # Do NOT wrap them again in fenics.Constant(...) here.
+    dtau_c = dtau
+    buoyancy_scale_c = buoyancy_scale
+    qn_scale_c = qn_scale
+    convection_scale_c = convection_scale
 
+    zero_vec = fenics.Constant((0.0, 0.0))
     convection_term = (
         convection_scale_c * dot(grad(u), u)
-        if include_convection else fenics.Constant((0.0, 0.0))
+        if include_convection else zero_vec
     )
 
-    mass = -psi_p * div(u)
+    continuity = -psi_p * div(u)
 
     pseudo_velocity = (1.0 / dtau_c) * inner(psi_u, u - u_prev)
     pseudo_temperature = (1.0 / dtau_c) * psi_T * (T - T_prev)
@@ -636,14 +641,13 @@ def build_ptc_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - convection_scale_c * T * u)
 
-    F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
+    F = (continuity + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
-
 def vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
     dw = w_new.vector().copy()
     dw.axpy(-1.0, w_old.vector())

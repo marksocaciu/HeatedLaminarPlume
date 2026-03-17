@@ -240,7 +240,7 @@ def base_version(experiment: Experiment):
         dtau_init=1e-6,
         dtau_min=1e-8,
         dtau_max=1e-4,
-        max_steps=80,
+        max_steps=800,
         update_tol=1e-8,
         residual_tol=1e-8,
     )
