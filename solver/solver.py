@@ -930,7 +930,7 @@ def solve_steady_newton_continuation_with_pts(
                 convection_scale=accepted_conv_scale,
             )
 
-            ok, err, used_relax = _try_newton_stage_FJF_outside(
+            ok, used_relax, err = _try_newton_stage_FJF_outside(
                 F=F, JF =JF, w=w, w_n=stage_seed,
                 boundary_conditions=boundary_conditions,
                 relaxation_schedule=relaxation_schedule,
@@ -962,7 +962,7 @@ def solve_steady_newton_continuation_with_pts(
                 mid = 0.5 * (left + right)
                 print(f"  trying adaptive midpoint conv_scale={mid:.6f}")
 
-                ok_mid, err_mid, used_relax_mid = _try_newton_stage_FJF_outside(
+                ok_mid, used_relax_mid, err_mid = _try_newton_stage_FJF_outside(
                     F=F, JF =JF, w=w, w_n=stage_seed,
                     boundary_conditions=boundary_conditions,
                     relaxation_schedule=relaxation_schedule,
@@ -1013,7 +1013,7 @@ def solve_steady_newton_continuation_with_pts(
 
             rescue_seed = fenics.Function(W)
             _copy_state(rescue_seed, w_n)
-            ok_retry, err_retry, used_relax_retry = _try_newton_stage_FJF_outside(
+            ok_retry, used_relax_retry, err_retry = _try_newton_stage_FJF_outside(
                 F=F, JF =JF, w=w, w_n=stage_seed,
                 boundary_conditions=boundary_conditions,
                 relaxation_schedule=relaxation_schedule,

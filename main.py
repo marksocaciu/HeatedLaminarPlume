@@ -58,12 +58,12 @@ def base_version(experiment: Experiment):
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
     FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/base/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/base/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/base/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/base/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/base/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/base/air_pvt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/base_t/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/base_t/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/base_t/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/base_t/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/base_t/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/base_t/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
@@ -210,7 +210,7 @@ def base_version(experiment: Experiment):
     # save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
     # return 0
 
-    w = solve_steady_newton_continuation(
+    w = solve_steady_newton_continuation_with_pts(
         experiment=experiment,
         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
         W=W, w=w,
@@ -771,8 +771,8 @@ def main():
     print(f"Running experiment: {experiment.name}")
 
     base_version(experiment)
-    temperature_dependent_version(experiment)
-    abs_version(experiment)
+    # temperature_dependent_version(experiment)
+    # abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 
 
