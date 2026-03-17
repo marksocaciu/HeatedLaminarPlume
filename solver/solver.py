@@ -640,3 +640,50 @@ def build_ptc_problem(
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
+
+def vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
+    dw = w_new.vector().copy()
+    dw.axpy(-1.0, w_old.vector())
+    return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
+
+
+def steady_residual_norm(
+    W,
+    w,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b,
+    sub_dx, sub_ds, qn_air,
+    boundary_conditions,
+    buoyancy_scale=1.0,
+    qn_scale=1.0,
+    include_convection=True,
+    convection_scale=1.0,
+) -> float:
+    F_steady, _ = build_nonlinear_problem(
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b,
+        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        buoyancy_scale=buoyancy_scale,
+        qn_scale=qn_scale,
+        include_convection=include_convection,
+        convection_scale=convection_scale,
+    )
+
+    r = fenics.assemble(F_steady)
+    for bc in boundary_conditions:
+        bc.apply(r)
+
+    return r.norm("l2")
+
+
+def collect_observables(w: fenics.Function):
+    p_f, u_f, T_f = w.split(deepcopy=True)
+    return {
+        "u_l2": u_f.vector().norm("l2"),
+        "T_l2": T_f.vector().norm("l2"),
+        "p_l2": p_f.vector().norm("l2"),
+        "u_max_abs": np.max(np.abs(u_f.vector().get_local())) if u_f.vector().local_size() > 0 else 0.0,
+        "T_max": T_f.vector().max(),
+        "T_min": T_f.vector().min(),
+    }

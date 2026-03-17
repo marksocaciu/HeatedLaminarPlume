@@ -286,7 +286,7 @@ def solve_steady_newton_continuation_with_pts(
                 buoyancy_scale=lam,
                 qn_scale=lam,
                 include_convection=include_convection,
-                convection_scale=accepted_conv_scale,
+                convection_scale=target_conv_scale,
             )
 
             ok, used_relax, err = try_newton_stage_FJF_outside(
@@ -397,3 +397,324 @@ def solve_steady_newton_continuation_with_pts(
             )
         
     return w
+
+from utils.imports import *
+from solver.solver import *
+from solver.params_bcs import *
+
+
+def _vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
+    dw = w_new.vector().copy()
+    dw.axpy(-1.0, w_old.vector())
+    return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
+
+
+def _steady_residual_norm(
+    W,
+    w,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b,
+    sub_dx, sub_ds, qn_air,
+    boundary_conditions,
+    buoyancy_scale=1.0,
+    qn_scale=1.0,
+    include_convection=True,
+    convection_scale=1.0,
+) -> float:
+    F_steady, _ = build_nonlinear_problem(
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b,
+        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        buoyancy_scale=buoyancy_scale,
+        qn_scale=qn_scale,
+        include_convection=include_convection,
+        convection_scale=convection_scale,
+    )
+
+    r = fenics.assemble(F_steady)
+    for bc in boundary_conditions:
+        bc.apply(r)
+
+    return r.norm("l2")
+
+
+def _collect_observables(w: fenics.Function) -> dict:
+    p_f, u_f, T_f = w.split(deepcopy=True)
+    u_vec = u_f.vector().get_local()
+    T_vec = T_f.vector().get_local()
+    p_vec = p_f.vector().get_local()
+
+    return {
+        "u_l2": u_f.vector().norm("l2"),
+        "T_l2": T_f.vector().norm("l2"),
+        "p_l2": p_f.vector().norm("l2"),
+        "u_max_abs": float(np.max(np.abs(u_vec))) if u_vec.size else 0.0,
+        "T_max": float(np.max(T_vec)) if T_vec.size else 0.0,
+        "T_min": float(np.min(T_vec)) if T_vec.size else 0.0,
+        "p_max_abs": float(np.max(np.abs(p_vec))) if p_vec.size else 0.0,
+    }
+
+
+def _history_window_increasing(values, window=5):
+    if len(values) < window:
+        return False
+    tail = values[-window:]
+    return all(tail[i] > tail[i - 1] for i in range(1, len(tail)))
+
+
+def _history_window_nondecreasing(values, window=5):
+    if len(values) < window:
+        return False
+    tail = values[-window:]
+    return all(tail[i] >= tail[i - 1] for i in range(1, len(tail)))
+
+
+def solve_pseudo_transient_continuation_problem(
+    experiment: Experiment,
+    W: fenics.FunctionSpace,
+    w: fenics.Function,
+    w_n: fenics.Function,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b, T_c, T_air_bc,
+    sub_dx, sub_ds, sub_ft, qn_air,
+    dtau_init=1e-6,
+    dtau_min=1e-8,
+    dtau_max=1e-4,
+    max_steps=300,
+    update_tol=1e-8,
+    residual_tol=1e-8,
+    warmup_steps=20,
+    ptc_relaxation=1.0,
+    ptc_max_newton_it=20,
+    ptc_atol=1e-9,
+    ptc_rtol=1e-8,
+    steady_polish=True,
+    steady_relaxation_schedule=(1.0, 0.7, 0.5),
+    polish_maxit=20,
+    growth_factor=1.20,
+    shrink_factor=0.50,
+    drift_window=5,
+    residual_improve_factor=0.95,
+    residual_worsen_factor=1.02,
+):
+    """
+    Conservative pseudo-transient march for the full coupled target problem.
+
+    Intended usage:
+      - startup state w_n already comes from your linear Stokes / thermal continuation
+      - this routine then marches the *full* nonlinear problem at lambda = 1
+      - dtau adaptation is based mainly on the steady-residual trend
+    """
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    # Accepted state is always stored in w_n
+    copy_state(w, w_n)
+
+    w_prev = fenics.Function(W)
+    accepted_steps = 0
+    rejected_steps = 0
+    dtau = float(dtau_init)
+
+    history = []
+    rel_hist = []
+    res_hist = []
+    T_hist = []
+
+    info = {
+        "status": "not_converged",
+        "n_steps": 0,
+        "accepted_steps": 0,
+        "rejected_steps": 0,
+        "final_dtau": dtau,
+        "final_rel_update": None,
+        "final_steady_residual": None,
+        "steady_polished": False,
+        "history": history,
+    }
+
+    prev_steady_res = None
+    prev_rel_update = None
+
+    for step in range(1, max_steps + 1):
+        copy_state(w_prev, w_n)
+        copy_state(w, w_n)
+
+        print(f"\n=== PTC step {step:04d} | dtau={dtau:.3e} ===")
+
+        F_ptc, JF_ptc = build_ptc_problem(
+            W=W, w=w, w_prev=w_prev,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b,
+            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+            dtau=dtau,
+            buoyancy_scale=1.0,
+            qn_scale=1.0,
+            include_convection=True,
+            convection_scale=1.0,
+        )
+
+        try:
+            base_solver(
+                F_ptc, w, boundary_conditions, JF_ptc,
+                relaxation=ptc_relaxation,
+                maxit=ptc_max_newton_it,
+                atol=ptc_atol,
+                rtol=ptc_rtol,
+            )
+        except RuntimeError as err:
+            rejected_steps += 1
+            dtau = max(dtau_min, shrink_factor * dtau)
+            print(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
+            print(f"Failure reason: {err}")
+
+            if dtau <= dtau_min * (1.0 + 1e-12):
+                info["status"] = "failed_dtau_min"
+                info["n_steps"] = step
+                info["accepted_steps"] = accepted_steps
+                info["rejected_steps"] = rejected_steps
+                info["final_dtau"] = dtau
+                return w_n, info
+
+            continue
+
+        rel_update = _vector_relative_update(w, w_prev)
+        steady_res = _steady_residual_norm(
+            W=W, w=w,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b,
+            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+            boundary_conditions=boundary_conditions,
+            buoyancy_scale=1.0,
+            qn_scale=1.0,
+            include_convection=True,
+            convection_scale=1.0,
+        )
+        obs = _collect_observables(w)
+
+        history.append({
+            "step": step,
+            "dtau": dtau,
+            "rel_update": rel_update,
+            "steady_residual": steady_res,
+            **obs,
+        })
+        rel_hist.append(rel_update)
+        res_hist.append(steady_res)
+        T_hist.append(obs["T_l2"])
+
+        print(
+            f"Accepted PTC step {step:04d}: "
+            f"rel_update={rel_update:.3e}, "
+            f"steady_residual={steady_res:.3e}, "
+            f"||u||={obs['u_l2']:.3e}, "
+            f"||T||={obs['T_l2']:.3e}"
+        )
+
+        # Accept step
+        copy_state(w_n, w)
+        accepted_steps += 1
+
+        # Main steady-state criterion
+        if rel_update < update_tol and steady_res < residual_tol:
+            print("PTC reached steady-state tolerances.")
+
+            if steady_polish:
+                F_steady, JF_steady = build_nonlinear_problem(
+                    W=W, w=w,
+                    psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                    mu=mu, Pr=Pr, f_b=f_b,
+                    sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+                    buoyancy_scale=1.0,
+                    qn_scale=1.0,
+                    include_convection=True,
+                    convection_scale=1.0,
+                )
+
+                ok, used_relax, last_error = try_newton_stage_FJF_outside(
+                    F=F_steady,
+                    JF=JF_steady,
+                    w=w,
+                    w_n=w_n,
+                    boundary_conditions=boundary_conditions,
+                    relaxation_schedule=steady_relaxation_schedule,
+                    maxit=polish_maxit,
+                    atol=1e-10,
+                    rtol=1e-9,
+                    stage_name="final_steady_polish",
+                )
+
+                if ok:
+                    copy_state(w_n, w)
+                    info["steady_polished"] = True
+                    print(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
+                else:
+                    print(f"Final steady polish failed: {last_error}")
+
+            info["status"] = "steady"
+            info["n_steps"] = step
+            info["accepted_steps"] = accepted_steps
+            info["rejected_steps"] = rejected_steps
+            info["final_dtau"] = dtau
+            info["final_rel_update"] = rel_update
+            info["final_steady_residual"] = steady_res
+            copy_state(w, w_n)
+            return w, info
+
+        # Drift / non-steady detector
+        if step >= max(warmup_steps, drift_window + 2):
+            initial_res = res_hist[0]
+            no_real_residual_drop = steady_res > 0.95 * initial_res
+            rel_is_rising = _history_window_increasing(rel_hist, window=drift_window)
+            T_is_rising = _history_window_nondecreasing(T_hist, window=drift_window)
+
+            if no_real_residual_drop and rel_is_rising and T_is_rising:
+                print("PTC appears to be drifting instead of relaxing to a steady state.")
+                info["status"] = "drifting_or_not_steady"
+                info["n_steps"] = step
+                info["accepted_steps"] = accepted_steps
+                info["rejected_steps"] = rejected_steps
+                info["final_dtau"] = dtau
+                info["final_rel_update"] = rel_update
+                info["final_steady_residual"] = steady_res
+                copy_state(w, w_n)
+                return w, info
+
+        # Conservative dtau controller
+        if step < warmup_steps:
+            # fixed dtau warmup
+            pass
+        else:
+            if prev_steady_res is not None and prev_rel_update is not None:
+                improved = (
+                    steady_res < residual_improve_factor * prev_steady_res
+                    and rel_update <= prev_rel_update
+                )
+                worsened = steady_res > residual_worsen_factor * prev_steady_res
+
+                if worsened:
+                    dtau = max(dtau_min, shrink_factor * dtau)
+                    print(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
+                elif improved:
+                    dtau = min(dtau_max, growth_factor * dtau)
+                    print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
+                else:
+                    print("Keeping dtau unchanged.")
+            else:
+                print("Keeping dtau unchanged.")
+
+        prev_steady_res = steady_res
+        prev_rel_update = rel_update
+
+    copy_state(w, w_n)
+
+    info["status"] = "max_steps_reached"
+    info["n_steps"] = max_steps
+    info["accepted_steps"] = accepted_steps
+    info["rejected_steps"] = rejected_steps
+    info["final_dtau"] = dtau
+    info["final_rel_update"] = rel_hist[-1] if rel_hist else None
+    info["final_steady_residual"] = res_hist[-1] if res_hist else None
+
+    return w, info

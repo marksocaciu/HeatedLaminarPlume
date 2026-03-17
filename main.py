@@ -61,12 +61,12 @@ def base_version(experiment: Experiment):
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
     FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/base_t/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/base_t/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/base_t/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/base_t/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/base_t/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/base_t/air_pvt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/time_step/base/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/time_step/base/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/time_step/base/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/time_step/base/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/time_step/base/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/time_step/base/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
@@ -244,7 +244,14 @@ def base_version(experiment: Experiment):
         update_tol=1e-8,
         residual_tol=1e-8,
     )
-    print("Solver finished with info:", info)
+    print("Solver finished")
+    print("status:", info["status"])
+    print("accepted_steps:", info["accepted_steps"])
+    print("rejected_steps:", info["rejected_steps"])
+    print("final_dtau:", info["final_dtau"])
+    print("final_rel_update:", info["final_rel_update"])
+    print("final_steady_residual:", info["final_steady_residual"])
+
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
 
