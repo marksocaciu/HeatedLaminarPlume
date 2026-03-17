@@ -536,24 +536,26 @@ def solve_pseudo_transient_continuation_problem(
 
     prev_steady_res = None
     prev_rel_update = None
+    dtau_c = fenics.Constant(dtau_init)
 
+    copy_state(w_prev, w_n)
+    F_ptc, JF_ptc = build_ptc_problem(
+        W=W, w=w, w_prev=w_prev,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b,
+        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        dtau=dtau_c,
+        buoyancy_scale=1.0,
+        qn_scale=1.0,
+        include_convection=True,
+        convection_scale=1.0,
+    )
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
         copy_state(w, w_n)
 
         print(f"\n=== PTC step {step:04d} | dtau={dtau:.3e} ===")
 
-        F_ptc, JF_ptc = build_ptc_problem(
-            W=W, w=w, w_prev=w_prev,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b,
-            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-            dtau=dtau,
-            buoyancy_scale=1.0,
-            qn_scale=1.0,
-            include_convection=True,
-            convection_scale=1.0,
-        )
 
         try:
             base_solver(
@@ -695,9 +697,11 @@ def solve_pseudo_transient_continuation_problem(
 
                 if worsened:
                     dtau = max(dtau_min, shrink_factor * dtau)
+                    dtau_c.assign(dtau)
                     print(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
                 elif improved:
                     dtau = min(dtau_max, growth_factor * dtau)
+                    dtau_c.assign(dtau)
                     print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
                 else:
                     print("Keeping dtau unchanged.")

@@ -161,6 +161,9 @@ def base_solver(F, w: fenics.Function, boundary_conditions, JF,
     nprm["report"] = True
     nprm["error_on_nonconvergence"] = True
     nprm["relaxation_parameter"] = relaxation
+    fenics.parameters["form_compiler"]["cpp_optimize"] = True
+    fenics.parameters["form_compiler"]["optimize"] = True
+    fenics.parameters["form_compiler"]["representation"] = "uflacs"
 
     solver.solve()
     return w
