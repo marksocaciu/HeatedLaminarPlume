@@ -1,3 +1,4 @@
+from solver import scales
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
@@ -1199,6 +1200,7 @@ def solve_ptc_continuation(
     mu, Pr, f_b, T_c, T_air_bc,
     sub_dx, sub_ds, sub_ft, qn_air,
     stages=None,
+    save_obj = None,
     dtau_init=1e-5,
     dtau_min=1e-8,
     dtau_max=1e-4,
@@ -1265,8 +1267,8 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=1e-6,
-            ptc_rtol=1e-6,
+            ptc_atol=5e-7,
+            ptc_rtol=5e-7,
             ptc_max_newton_it=20,
         )
 
@@ -1300,6 +1302,24 @@ def solve_ptc_continuation(
             }
 
         copy_state(w_n, w)
+
+        # save state
+        if save_obj is not None:
+            p_star, u_star, theta = w_n.split(deepcopy=True)
+
+            u_dim, p_dim, T_dim = dimensionalize_fields(
+                save_obj[1], u_star, p_star, theta,
+                save_obj[3].Uref, save_obj[3].dTref, T_ambient,
+                experiment.fluid.properties["rho"]
+            )
+
+            p_out = save_obj[4].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+            u_out = save_obj[5].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+            t_out = save_obj[6].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+
+            save_experiment(p_out, save_obj[1], [p_dim])
+            save_experiment(u_out, save_obj[1], [u_dim])
+            save_experiment(t_out, save_obj[1], [T_dim])
 
     return w, {
         "status": "continuation_complete",
