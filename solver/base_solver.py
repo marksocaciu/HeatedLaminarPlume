@@ -1274,8 +1274,8 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=1e-8,
-            ptc_rtol=1e-8,
+            ptc_atol=5e-8,
+            ptc_rtol=1e-7,
             ptc_max_newton_it=20,
         )
 
