@@ -491,7 +491,27 @@ def conv_stage_sequence():
     Coarse monotone convection ladder.
     Adjust this if needed, but keep it increasing.
     """
-    return [0.20, 0.40, 0.60, 0.65, 0.70, 0.80, 0.90, 1.00]
+    return [
+        (0.00, 0.10),
+        (0.00, 0.20),
+        (0.10, 0.30),
+        (0.10, 0.50),
+        (0.20, 0.70),
+        (0.20, 0.90),
+        (0.20, 1.00),
+        (0.30, 1.00),
+        (0.40, 1.00),
+        (0.50, 1.00),
+        (0.60, 1.00),
+        (0.65, 1.00),
+        (0.70, 1.00),
+        (0.75, 1.00),
+        (0.80, 1.00),
+        (0.85, 1.00),
+        (0.90, 1.00),
+        (0.95, 1.00),
+        (1.00, 1.00),
+        ]
 
 def refine_conv_interval(left, right, min_interval=0.01):
     """
@@ -553,7 +573,7 @@ def advance_convection_monotone(
             convection_scale=trial_conv,
         )
 
-        ok, used_relax, last_error = _try_newton_stage_FJF_outside(
+        ok, used_relax, last_error = try_newton_stage_FJF_outside(
             F=F,
             JF=JF,
             w=w,
@@ -564,7 +584,7 @@ def advance_convection_monotone(
         )
 
         if ok:
-            _accept_current_state(w, w_n)
+            accept_current_state(w, w_n)
             accepted_conv = trial_conv
             F_accepted,JF_accepted = F, JF
             print(
@@ -573,7 +593,7 @@ def advance_convection_monotone(
             )
             continue
 
-        midpoint = _refine_conv_interval(accepted_conv, trial_conv, min_interval=min_interval)
+        midpoint = refine_conv_interval(accepted_conv, trial_conv, min_interval=min_interval)
 
         if midpoint is None or n_bisect >= max_local_bisections:
             raise RuntimeError(

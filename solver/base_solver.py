@@ -119,7 +119,7 @@ def solve_steady_newton_continuation(
 
     conv_targets = conv_stage_sequence()
 
-    for lam in lambdas:
+    for lam in lambdas[:1]:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
 
         # optional output of current accepted state before advancing lambda
@@ -179,7 +179,7 @@ def solve_steady_newton_continuation(
         # Stage 2: monotone convection advance
         # ------------------------------------------------------------
         accepted_conv = 0.0
-        for target_conv in conv_targets:
+        for target_conv,lamda in conv_targets:
             accepted_conv, _, _ = advance_convection_monotone(
                 W=W, w=w,
                 psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
@@ -187,7 +187,7 @@ def solve_steady_newton_continuation(
                 sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
                 boundary_conditions=boundary_conditions,
                 w_n=w_n,
-                buoyancy_scale=lam,
+                buoyancy_scale=lamda,
                 start_conv=accepted_conv,
                 target_conv=target_conv,
                 relaxation_schedule=relaxation_schedule,
@@ -1220,6 +1220,8 @@ def solve_ptc_continuation(
             {"name": "L1.00_C0.50", "lambda": 1.00, "conv": 0.50, "strict": False},
             {"name": "L1.00_C0.70", "lambda": 1.00, "conv": 0.70, "strict": False},
             {"name": "L1.00_C0.85", "lambda": 1.00, "conv": 0.85, "strict": False},
+            {"name": "L1.00_C0.90", "lambda": 1.00, "conv": 0.90, "strict": False},
+            {"name": "L1.00_C0.95", "lambda": 1.00, "conv": 0.95, "strict": False},
             {"name": "L1.00_C1.00", "lambda": 1.00, "conv": 1.00, "strict": True},
         ]
 
@@ -1263,9 +1265,9 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=5e-6,
-            ptc_rtol=5e-6,
-            ptc_max_newton_it=10,
+            ptc_atol=1e-6,
+            ptc_rtol=1e-6,
+            ptc_max_newton_it=20,
         )
 
         continuation_history.append({
