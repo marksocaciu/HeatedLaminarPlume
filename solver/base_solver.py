@@ -905,6 +905,7 @@ def solve_ptc_stage(
     """
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+    probe_ys = (2.0/scales.Lref, 5.0/scales.Lref, 10.0/scales.Lref, 15.0/scales.Lref)
 
     # Accepted state lives in w_n
     copy_state(w, w_n)
@@ -988,7 +989,7 @@ def solve_ptc_stage(
     print(f"  strict_steady    = {strict_steady}")
     print("-" * 72)
     
-    probe_ys = probe_ys / scales.Lref
+    # probe_ys = probe_ys / scales.Lref
 
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
