@@ -1309,13 +1309,13 @@ def solve_ptc_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 save_obj[1], u_star, p_star, theta,
-                save_obj[3].Uref, save_obj[3].dTref, T_ambient,
+                save_obj[2].Uref, save_obj[2].dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
-            p_out = save_obj[4].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
-            u_out = save_obj[5].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
-            t_out = save_obj[6].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+            p_out = save_obj[3].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+            u_out = save_obj[4].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
+            t_out = save_obj[5].split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}" + f"_conv_{int(conv*100):03d}.xdmf"
 
             save_experiment(p_out, save_obj[1], [p_dim])
             save_experiment(u_out, save_obj[1], [u_dim])
