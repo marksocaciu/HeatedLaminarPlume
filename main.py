@@ -260,11 +260,11 @@ def base_version(experiment: Experiment):
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        dtau_init=1e-4,
+        dtau_init=1e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
         stage_max_steps=40,
-        final_stage_max_steps=200,
+        final_stage_max_steps=2000,
         update_tol=1e-8,
         residual_tol=1e-8,
         save_obj=save_obj

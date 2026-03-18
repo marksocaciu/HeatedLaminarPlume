@@ -905,7 +905,7 @@ def solve_ptc_stage(
     """
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    probe_ys = (2.0/scales.Lref, 5.0/scales.Lref, 10.0/scales.Lref, 15.0/scales.Lref)
+    # probe_ys = (2.0/scales.Lref, 5.0/scales.Lref, 10.0/scales.Lref, 15.0/scales.Lref)
 
     # Accepted state lives in w_n
     copy_state(w, w_n)
