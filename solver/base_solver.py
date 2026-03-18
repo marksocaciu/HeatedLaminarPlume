@@ -512,8 +512,8 @@ def _collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
 
     for y in probe_ys:
         tag = str(y).replace(".", "p")
-        data[f"uy_y{tag}"] = _safe_eval_vector_component(u_f, x_probe, y, comp=1)
-        data[f"T_y{tag}"] = _safe_eval_scalar(T_f, x_probe, y)
+        data[f"uy_y{tag}"] = _safe_eval_vector_component(u_f, 1e-4, y, comp=1)
+        data[f"T_y{tag}"] = _safe_eval_scalar(T_f, 1e-4, y)
 
     return data
 
@@ -880,7 +880,7 @@ def solve_ptc_stage(
     steady_polish=False,
     steady_relaxation_schedule=(1.0, 0.7, 0.5),
     polish_maxit=20,
-    growth_factor=1.20,
+    growth_factor=1.50,
     shrink_factor=0.50,
     drift_window=5,
     residual_improve_factor=0.95,
@@ -1274,8 +1274,8 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=5e-7,
-            ptc_rtol=5e-7,
+            ptc_atol=1e-8,
+            ptc_rtol=1e-8,
             ptc_max_newton_it=20,
         )
 
