@@ -536,7 +536,7 @@ def _init_ptc_csv(log_path, probe_ys):
         tag = str(y).replace(".", "p")
         fieldnames.append(f"T_y{tag}")
 
-    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    # os.makedirs(os.path.dirname(log_path), exist_ok=True)
 
     with open(log_path, "w", newline="") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
@@ -620,7 +620,7 @@ def solve_pseudo_transient_continuation_problem(
 
     pseudo_time = 0.0
 
-    log_path = "/time_step/base/ptc_history.csv"
+    log_path = "ptc_history.csv"
     csv_fieldnames = _init_ptc_csv(log_path, probe_ys)
 
     prev_steady_res = None
