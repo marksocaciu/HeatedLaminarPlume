@@ -880,7 +880,7 @@ def solve_ptc_stage(
     steady_polish=False,
     steady_relaxation_schedule=(1.0, 0.7, 0.5),
     polish_maxit=20,
-    growth_factor=1.50,
+    growth_factor=1.20,
     shrink_factor=0.50,
     drift_window=5,
     residual_improve_factor=0.95,
@@ -905,7 +905,6 @@ def solve_ptc_stage(
     """
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    # probe_ys = (2.0/scales.Lref, 5.0/scales.Lref, 10.0/scales.Lref, 15.0/scales.Lref)
 
     # Accepted state lives in w_n
     copy_state(w, w_n)
@@ -988,8 +987,6 @@ def solve_ptc_stage(
     print(f"  convection_scale = {float(convection_scale):.3f}")
     print(f"  strict_steady    = {strict_steady}")
     print("-" * 72)
-    
-    # probe_ys = probe_ys / scales.Lref
 
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
@@ -1084,6 +1081,18 @@ def solve_ptc_stage(
             _append_ptc_csv(log_path, csv_fieldnames, row)
 
         # stage acceptance
+        # For intermediate continuation stages, do not accept merely because the
+        # pseudo-time update is small. Also require either a meaningful drop in
+        # the steady residual relative to the start of the stage, or an absolute
+        # residual small enough to be a credible seed for the next stage.
+        finite_res = [v for v in res_hist if np.isfinite(v)]
+        initial_stage_res = finite_res[0] if finite_res else np.nan
+        stage_residual_ratio = (
+            steady_res / initial_stage_res
+            if np.isfinite(steady_res) and np.isfinite(initial_stage_res) and initial_stage_res > 0.0
+            else np.nan
+        )
+
         if strict_steady:
             stage_converged = (
                 rel_update < update_tol and
@@ -1091,9 +1100,20 @@ def solve_ptc_stage(
                 steady_res < residual_tol
             )
         else:
-            # looser acceptance for intermediate continuation stages
+            intermediate_update_tol = max(update_tol, 1e-4)
+            intermediate_abs_residual_tol = max(1e-2, 100.0 * residual_tol)
+            intermediate_required_drop = 0.80  # require at least 20% drop
+
             stage_converged = (
-                rel_update < max(update_tol, 1e-4)
+                rel_update < intermediate_update_tol and
+                np.isfinite(steady_res) and
+                (
+                    steady_res < intermediate_abs_residual_tol or
+                    (
+                        np.isfinite(stage_residual_ratio) and
+                        stage_residual_ratio < intermediate_required_drop
+                    )
+                )
             )
 
         if stage_converged:
@@ -1130,7 +1150,7 @@ def solve_ptc_stage(
             copy_state(w, w_n)
             return w, info
 
-        # drift detector
+        # drift / plateau detector
         if step >= max(warmup_steps, drift_window + 2):
             finite_res = [v for v in res_hist if np.isfinite(v)]
             finite_T = [v for v in T_hist if np.isfinite(v)]
@@ -1153,7 +1173,28 @@ def solve_ptc_stage(
                     copy_state(w, w_n)
                     return w, info
 
-        # conservative dtau controller
+            # Stronger plateau detector for the final strict-steady stage:
+            # if the steady residual stays nearly flat for a sustained window,
+            # abort instead of marching indefinitely with tiny pseudo-time updates.
+            if strict_steady and len(finite_res) >= 10:
+                recent_res = finite_res[-10:]
+                rmin = min(recent_res)
+                rmax = max(recent_res)
+                if initial_res > 0.0:
+                    plateau_band = (rmax - rmin) / initial_res
+                    if rmin > 0.95 * initial_res and plateau_band < 0.02:
+                        print(f"{stage_name}: steady residual plateau detected; aborting final stage.")
+                        info["status"] = "steady_residual_plateau"
+                        info["n_steps"] = step
+                        info["accepted_steps"] = accepted_steps
+                        info["rejected_steps"] = rejected_steps
+                        info["final_dtau"] = dtau
+                        info["final_rel_update"] = rel_update
+                        info["final_steady_residual"] = steady_res
+                        copy_state(w, w_n)
+                        return w, info
+
+        # dtau controller
         if step < warmup_steps:
             pass
         else:
@@ -1163,6 +1204,10 @@ def solve_ptc_stage(
                     rel_update <= prev_rel_update
                 )
                 worsened = steady_res > residual_worsen_factor * prev_steady_res
+                plateauing = (
+                    abs(steady_res - prev_steady_res) <= 0.01 * max(abs(prev_steady_res), 1.0)
+                    and rel_update < prev_rel_update
+                )
 
                 if worsened:
                     dtau = max(dtau_min, shrink_factor * dtau)
@@ -1172,6 +1217,10 @@ def solve_ptc_stage(
                     dtau = min(dtau_max, growth_factor * dtau)
                     dtau_c.assign(dtau)
                     print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
+                elif strict_steady and plateauing:
+                    dtau = min(dtau_max, growth_factor * dtau)
+                    dtau_c.assign(dtau)
+                    print(f"Steady residual plateau with shrinking updates -> grow dtau to {dtau:.3e}")
                 else:
                     print("Keeping dtau unchanged.")
             else:
@@ -1227,10 +1276,6 @@ def solve_ptc_continuation(
             {"name": "L1.00_C0.85", "lambda": 1.00, "conv": 0.85, "strict": False},
             {"name": "L1.00_C0.90", "lambda": 1.00, "conv": 0.90, "strict": False},
             {"name": "L1.00_C0.95", "lambda": 1.00, "conv": 0.95, "strict": False},
-            {"name": "L1.00_C0.96", "lambda": 1.00, "conv": 0.96, "strict": False},
-            {"name": "L1.00_C0.97", "lambda": 1.00, "conv": 0.97, "strict": False},
-            {"name": "L1.00_C0.98", "lambda": 1.00, "conv": 0.98, "strict": False},
-            {"name": "L1.00_C0.99", "lambda": 1.00, "conv": 0.99, "strict": False},
             {"name": "L1.00_C1.00", "lambda": 1.00, "conv": 1.00, "strict": True},
         ]
 
@@ -1274,8 +1319,8 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=5e-8,
-            ptc_rtol=1e-7,
+            ptc_atol=5e-7,
+            ptc_rtol=5e-7,
             ptc_max_newton_it=20,
         )
 
