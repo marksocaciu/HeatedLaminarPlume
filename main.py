@@ -231,19 +231,33 @@ def base_version(experiment: Experiment):
     #     T_path=OUTPUT_XDMF_PATH_AIR_T
     # )
 
-    w, info = solve_pseudo_transient_continuation_problem(
+    # w, info = solve_pseudo_transient_continuation_problem(
+    #     experiment,
+    #     W, w, w_n,
+    #     psi_p, psi_u, psi_T,
+    #     mu, Pr, f_b, T_c, T_air_bc,
+    #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+    #     dtau_init=1e-4,
+    #     dtau_min=1e-8,
+    #     dtau_max=1e-3,
+    #     max_steps=800,
+    #     update_tol=1e-8,
+    #     residual_tol=1e-8,   
+    # )
+
+    w, info = solve_ptc_continuation(
         experiment,
         W, w, w_n,
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        dtau_init=1e-4,
+        dtau_init=1e-5,
         dtau_min=1e-8,
-        dtau_max=1e-3,
-        max_steps=800,
+        dtau_max=1e-4,
+        stage_max_steps=40,
+        final_stage_max_steps=120,
         update_tol=1e-8,
         residual_tol=1e-8,
-        
     )
     print("Solver finished")
     print("status:", info["status"])
