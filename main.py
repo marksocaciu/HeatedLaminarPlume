@@ -174,7 +174,7 @@ def base_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=(0.1, 0.3, 0.5, 0.7, 0.9, 1.0)
+        lambdas=(0.1)#, 0.3, 0.5, 0.7, 0.9, 1.0)
     )
 
     # Solve the full nonlinear problem with previous initial guess
@@ -259,13 +259,30 @@ def base_version(experiment: Experiment):
         update_tol=1e-8,
         residual_tol=1e-8,
     )
-    print("Solver finished")
-    print("status:", info["status"])
-    print("accepted_steps:", info["accepted_steps"])
-    print("rejected_steps:", info["rejected_steps"])
-    print("final_dtau:", info["final_dtau"])
-    print("final_rel_update:", info["final_rel_update"])
-    print("final_steady_residual:", info["final_steady_residual"])
+    # print("Solver finished")
+    # print("status:", info["status"])
+    # print("accepted_steps:", info["accepted_steps"])
+    # print("rejected_steps:", info["rejected_steps"])
+    # print("final_dtau:", info["final_dtau"])
+    # print("final_rel_update:", info["final_rel_update"])
+    # print("final_steady_residual:", info["final_steady_residual"])
+    print("status:", info.get("status"))
+
+    if info.get("status") == "continuation_failed":
+        print("failed_stage:", info.get("failed_stage"))
+        last = info.get("last_stage_info", {})
+        print("last_stage_status:", last.get("status"))
+        print("accepted_steps:", last.get("accepted_steps"))
+        print("rejected_steps:", last.get("rejected_steps"))
+        print("final_dtau:", last.get("final_dtau"))
+        print("final_rel_update:", last.get("final_rel_update"))
+        print("final_steady_residual:", last.get("final_steady_residual"))
+    else:
+        print("accepted_steps:", info.get("accepted_steps"))
+        print("rejected_steps:", info.get("rejected_steps"))
+        print("final_dtau:", info.get("final_dtau"))
+        print("final_rel_update:", info.get("final_rel_update"))
+        print("final_steady_residual:", info.get("final_steady_residual"))
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
