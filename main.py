@@ -237,12 +237,13 @@ def base_version(experiment: Experiment):
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        dtau_init=1e-5,
+        dtau_init=1e-4,
         dtau_min=1e-8,
-        dtau_max=1e-4,
+        dtau_max=1e-3,
         max_steps=800,
         update_tol=1e-8,
         residual_tol=1e-8,
+        
     )
     print("Solver finished")
     print("status:", info["status"])

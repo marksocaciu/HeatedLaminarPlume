@@ -475,6 +475,81 @@ def _assembled_residual_norm(F_form, boundary_conditions):
         bc.apply(r)
     return r.norm("l2")
 
+def _safe_eval_scalar(f, x, y):
+    try:
+        val = f(x, y)
+        if isinstance(val, (tuple, list)):
+            return float(val[0])
+        return float(val)
+    except Exception:
+        return float("nan")
+
+
+def _safe_eval_vector_component(f, x, y, comp=1):
+    try:
+        val = f(x, y)
+        return float(val[comp])
+    except Exception:
+        return float("nan")
+
+
+def _collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
+    """
+    Collect a compact set of scalar diagnostics for PTC monitoring.
+    """
+    p_f, u_f, T_f = w.split(deepcopy=True)
+
+    u_l2 = float(u_f.vector().norm("l2"))
+    T_l2 = float(T_f.vector().norm("l2"))
+    kinetic_energy = float(fenics.assemble(0.5 * fenics.inner(u_f, u_f) * sub_dx))
+
+    data = {
+        "u_l2": u_l2,
+        "T_l2": T_l2,
+        "kinetic_energy": kinetic_energy,
+    }
+
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        data[f"uy_y{tag}"] = _safe_eval_vector_component(u_f, x_probe, y, comp=1)
+        data[f"T_y{tag}"] = _safe_eval_scalar(T_f, x_probe, y)
+
+    return data
+
+
+def _init_ptc_csv(log_path, probe_ys):
+    fieldnames = [
+        "step",
+        "pseudo_time",
+        "dtau",
+        "rel_update",
+        "steady_residual",
+        "u_l2",
+        "T_l2",
+        "kinetic_energy",
+    ]
+
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        fieldnames.append(f"uy_y{tag}")
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        fieldnames.append(f"T_y{tag}")
+
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    with open(log_path, "w", newline="") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
+        writer.writeheader()
+
+    return fieldnames
+
+
+def _append_ptc_csv(log_path, fieldnames, row):
+    with open(log_path, "a", newline="") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
+        writer.writerow(row)
+
 def solve_pseudo_transient_continuation_problem(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -502,6 +577,10 @@ def solve_pseudo_transient_continuation_problem(
     drift_window=5,
     residual_improve_factor=0.95,
     residual_worsen_factor=1.02,
+    residual_check_every=5,
+    log_every=5,
+    probe_ys=(2.0, 5.0, 10.0, 15.0),
+    x_probe=0.0,
 ):
     """
     Conservative pseudo-transient march for the full coupled target problem.
@@ -538,6 +617,11 @@ def solve_pseudo_transient_continuation_problem(
         "steady_polished": False,
         "history": history,
     }
+
+    pseudo_time = 0.0
+
+    log_path = "/time_step/base/ptc_history.csv"
+    csv_fieldnames = _init_ptc_csv(log_path, probe_ys)
 
     prev_steady_res = None
     prev_rel_update = None
@@ -644,6 +728,23 @@ def solve_pseudo_transient_continuation_problem(
         # Accept step
         copy_state(w_n, w)
         accepted_steps += 1
+        pseudo_time += dtau
+        diag = _collect_ptc_probe_diagnostics(
+                w=w,
+                sub_dx=sub_dx,
+                probe_ys=probe_ys,
+                x_probe=x_probe,
+            )
+
+        row = {
+            "step": step,
+            "pseudo_time": pseudo_time,
+            "dtau": dtau,
+            "rel_update": rel_update,
+            "steady_residual": steady_res,
+            **diag,
+        }
+        _append_ptc_csv(log_path, csv_fieldnames, row)
 
         # Main steady-state criterion
         if rel_update < update_tol and steady_res < residual_tol:
@@ -737,6 +838,8 @@ def solve_pseudo_transient_continuation_problem(
 
         prev_steady_res = steady_res
         prev_rel_update = rel_update
+
+        
 
     copy_state(w, w_n)
 
