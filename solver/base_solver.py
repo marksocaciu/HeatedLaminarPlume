@@ -987,6 +987,8 @@ def solve_ptc_stage(
     print(f"  convection_scale = {float(convection_scale):.3f}")
     print(f"  strict_steady    = {strict_steady}")
     print("-" * 72)
+    
+    probe_ys = probe_ys / scales.Lref
 
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
@@ -1224,6 +1226,10 @@ def solve_ptc_continuation(
             {"name": "L1.00_C0.85", "lambda": 1.00, "conv": 0.85, "strict": False},
             {"name": "L1.00_C0.90", "lambda": 1.00, "conv": 0.90, "strict": False},
             {"name": "L1.00_C0.95", "lambda": 1.00, "conv": 0.95, "strict": False},
+            {"name": "L1.00_C0.96", "lambda": 1.00, "conv": 0.96, "strict": False},
+            {"name": "L1.00_C0.97", "lambda": 1.00, "conv": 0.97, "strict": False},
+            {"name": "L1.00_C0.98", "lambda": 1.00, "conv": 0.98, "strict": False},
+            {"name": "L1.00_C0.99", "lambda": 1.00, "conv": 0.99, "strict": False},
             {"name": "L1.00_C1.00", "lambda": 1.00, "conv": 1.00, "strict": True},
         ]
 
