@@ -855,6 +855,7 @@ def solve_pseudo_transient_continuation_problem(
     return w, info
 
 
+
 def solve_ptc_stage(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -1101,8 +1102,13 @@ def solve_ptc_stage(
             )
         else:
             intermediate_update_tol = max(update_tol, 1e-4)
-            intermediate_abs_residual_tol = max(1e-2, 100.0 * residual_tol)
-            intermediate_required_drop = 0.80  # require at least 20% drop
+            # Early relaxed stages can be acceptable seeds even when the strict
+            # steady residual is not tiny, but the allowed absolute residual must
+            # stay modest and scale with the amount of convection turned on.
+            intermediate_abs_residual_tol = 0.5 + 5.0 * float(convection_scale)
+            # If the residual is not already below the absolute cap, still demand
+            # at least a small but meaningful reduction over the stage.
+            intermediate_required_drop = 0.95  # require at least 5% drop
 
             stage_converged = (
                 rel_update < intermediate_update_tol and
@@ -1149,6 +1155,35 @@ def solve_ptc_stage(
             info["final_steady_residual"] = steady_res
             copy_state(w, w_n)
             return w, info
+
+        # Relaxed-stage plateau acceptor:
+        # if updates are already tiny, the residual is modest for the current
+        # continuation level, and the residual has flattened out across the most
+        # recent accepted steps, accept this stage as a usable seed instead of
+        # forcing it to march until max_steps.
+        if not strict_steady and step >= max(warmup_steps, 6):
+            finite_recent = [v for v in res_hist[-5:] if np.isfinite(v)]
+            relaxed_abs_cap = 0.5 + 5.0 * float(convection_scale)
+            if len(finite_recent) >= 4 and np.isfinite(steady_res):
+                rmin_recent = min(finite_recent)
+                rmax_recent = max(finite_recent)
+                plateau_ref = max(abs(initial_stage_res), 1.0) if np.isfinite(initial_stage_res) else 1.0
+                residual_plateaued = (rmax_recent - rmin_recent) <= 0.02 * plateau_ref
+                if (
+                    rel_update < max(update_tol, 1e-4) and
+                    steady_res < relaxed_abs_cap and
+                    residual_plateaued
+                ):
+                    print(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
+                    info["status"] = "stage_relaxed"
+                    info["n_steps"] = step
+                    info["accepted_steps"] = accepted_steps
+                    info["rejected_steps"] = rejected_steps
+                    info["final_dtau"] = dtau
+                    info["final_rel_update"] = rel_update
+                    info["final_steady_residual"] = steady_res
+                    copy_state(w, w_n)
+                    return w, info
 
         # drift / plateau detector
         if step >= max(warmup_steps, drift_window + 2):
