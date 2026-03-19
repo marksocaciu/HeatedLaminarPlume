@@ -1221,6 +1221,7 @@ def solve_ptc_stage(
             # if the steady residual stays nearly flat for a sustained window,
             # abort instead of marching indefinitely with tiny pseudo-time updates.
             if strict_steady and len(finite_res) >= 10:
+                initial_res = finite_res[0]
                 recent_res = finite_res[-10:]
                 rmin = min(recent_res)
                 rmax = max(recent_res)
