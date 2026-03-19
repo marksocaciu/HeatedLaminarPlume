@@ -2,6 +2,7 @@ from solver import scales
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
+from solver.biot import *
 
 
 def pseudo_transient_rescue(
@@ -1419,6 +1420,7 @@ def run_post_continuation_transient(
     sub_dx, sub_ds, sub_ft, qn_air,
     sub_mesh_star=None,
     sub_mesh_dim=None,
+    sub_ft_dim=None,
     scales=None,
     p_path: str = "",
     u_path: str = "",
@@ -1581,6 +1583,13 @@ def run_post_continuation_transient(
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
+
+            # Optional diagnostic: Biot numbers should use dimensional geometry/fields
+            biot_air_h_eff, biot_air_Bi = biot(
+                sub_mesh_dim, sub_ft_dim, T_dim, qn_air,
+                T_ambient, experiment.wire.properties["k"],
+                experiment.dimensions.wire.diameter
+            )
 
         dt = min(float(dt_max), float(dt) * float(dt_growth))
 

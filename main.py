@@ -250,6 +250,14 @@ def base_version(experiment: Experiment):
         print("final_rel_update:", info.get("final_rel_update"))
         print("final_steady_residual:", info.get("final_steady_residual"))
     
+    # Optional diagnostic: Biot numbers should use dimensional geometry/fields
+    biot_air_h_eff, biot_air_Bi = biot(
+        sub_mesh_dim, sub_ft_dim, T_full, qn_air,
+        T_ambient, experiment.wire.properties["k"],
+        experiment.dimensions.wire.diameter
+    )
+    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+    
     w, transient_info = run_post_continuation_transient(
             experiment=experiment,
             W=W,
@@ -260,6 +268,7 @@ def base_version(experiment: Experiment):
             sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
             sub_mesh_star=sub_mesh_star,
             sub_mesh_dim=sub_mesh_dim,
+            sub_ft_dim=sub_ft_dim,
             scales=scales,
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
