@@ -80,7 +80,7 @@ def base_version(experiment: Experiment):
 
     # --- 2) create submesh (dim)
     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
-
+    
     scales = compute_nondimensional_scales(experiment)
     print(scales)
 
@@ -264,11 +264,11 @@ def base_version(experiment: Experiment):
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-3,
+            dt_start=1.0e-2,
             dt_growth=1.0,
-            dt_max=1.0e-2,
-            n_steps=100,
-            save_every=10,
+            dt_max=1.0e1,
+            n_steps=500,
+            save_every=20,
         )
 
     print("transient status:", transient_info["status"])

@@ -16,7 +16,7 @@ General.NumThreads = 0; // Use all threads
 // Setting up the parameters for the geometry to be modelled for multiple 
 // experimental setups
 R_placeholder = 3.75e-05;
-resolution_placeholder = 80;
+resolution_placeholder = 100;
 
 R = R_placeholder;
 w = 0.02;
@@ -81,8 +81,8 @@ Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
 Transfinite Line{4} = resolution * 20;
 Transfinite Line{5} = resolution ;
-Transfinite Line{8} = resolution * 3;
-Transfinite Line{9} = resolution * 6;
+Transfinite Line{8} = resolution * 8;
+Transfinite Line{9} = resolution * 4;
 Transfinite Line{10}= resolution * 10;
 
 // Meshing the geometry
