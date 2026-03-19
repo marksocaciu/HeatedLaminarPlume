@@ -1163,15 +1163,24 @@ def solve_ptc_stage(
         # forcing it to march until max_steps.
         if not strict_steady and step >= max(warmup_steps, 6):
             finite_recent = [v for v in res_hist[-5:] if np.isfinite(v)]
-            relaxed_abs_cap = 0.5 + 5.0 * float(convection_scale)
             if len(finite_recent) >= 4 and np.isfinite(steady_res):
                 rmin_recent = min(finite_recent)
                 rmax_recent = max(finite_recent)
                 plateau_ref = max(abs(initial_stage_res), 1.0) if np.isfinite(initial_stage_res) else 1.0
                 residual_plateaued = (rmax_recent - rmin_recent) <= 0.02 * plateau_ref
+
+                # For intermediate continuation stages, the absolute steady residual
+                # can legitimately sit well above O(1) while still providing a very
+                # good seed for the next stage. Use a cap tied to the stage-entry
+                # residual instead of a hard small absolute threshold.
+                relaxed_abs_cap = max(
+                    0.5 + 5.0 * float(convection_scale),
+                    1.05 * plateau_ref + 1e-12,
+                )
+
                 if (
                     rel_update < max(update_tol, 1e-4) and
-                    steady_res < relaxed_abs_cap and
+                    steady_res <= relaxed_abs_cap and
                     residual_plateaued
                 ):
                     print(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
