@@ -191,28 +191,6 @@ def base_version(experiment: Experiment):
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print("Checks complete")
 
-    # # Split nondimensional solution
-    # p_star, u_star, theta = w.split(deepcopy=True)
-
-    # # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
-    # u_dim, p_dim, T_dim = dimensionalize_fields(
-    #     sub_mesh_star, u_star, p_star, theta,
-    #     scales.Uref, scales.dTref, T_ambient,
-    #     experiment.fluid.properties["rho"]
-    # )
-    # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-    #             cmap="coolwarm", colorbar=True)
-    # plot_mesh(theta, title="Temperature field nondimensional", label="Temperature (nondim)",
-    #             cmap="coolwarm", colorbar=True)
-    # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-    #             cmap="coolwarm", colorbar=True, mode="glyphs")
-    # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-    #             cmap="coolwarm", colorbar=True)
-    # save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
-    # save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])
-    # save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
-    # return 0
-
     # w = solve_steady_newton_continuation(
     #     experiment=experiment,
     #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
@@ -229,20 +207,6 @@ def base_version(experiment: Experiment):
     #     p_path=OUTPUT_XDMF_PATH_AIR_P,
     #     u_path=OUTPUT_XDMF_PATH_AIR_V,
     #     T_path=OUTPUT_XDMF_PATH_AIR_T
-    # )
-
-    # w, info = solve_pseudo_transient_continuation_problem(
-    #     experiment,
-    #     W, w, w_n,
-    #     psi_p, psi_u, psi_T,
-    #     mu, Pr, f_b, T_c, T_air_bc,
-    #     sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-    #     dtau_init=1e-4,
-    #     dtau_min=1e-8,
-    #     dtau_max=1e-3,
-    #     max_steps=800,
-    #     update_tol=1e-8,
-    #     residual_tol=1e-8,   
     # )
 
     save_obj = (
@@ -269,14 +233,6 @@ def base_version(experiment: Experiment):
         residual_tol=1e-8,
         save_obj=save_obj
     )
-    # print("Solver finished")
-    # print("status:", info["status"])
-    # print("accepted_steps:", info["accepted_steps"])
-    # print("rejected_steps:", info["rejected_steps"])
-    # print("final_dtau:", info["final_dtau"])
-    # print("final_rel_update:", info["final_rel_update"])
-    # print("final_steady_residual:", info["final_steady_residual"])
-    # print("status:", info.get("status"))
 
     if info.get("status") == "continuation_failed":
         print("failed_stage:", info.get("failed_stage"))
@@ -293,6 +249,30 @@ def base_version(experiment: Experiment):
         print("final_dtau:", info.get("final_dtau"))
         print("final_rel_update:", info.get("final_rel_update"))
         print("final_steady_residual:", info.get("final_steady_residual"))
+    
+    w, transient_info = run_post_continuation_transient(
+            experiment=experiment,
+            W=W,
+            w=w,
+            w_n=w_n,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            sub_mesh_star=sub_mesh_star,
+            sub_mesh_dim=sub_mesh_dim,
+            scales=scales,
+            p_path=OUTPUT_XDMF_PATH_AIR_P,
+            u_path=OUTPUT_XDMF_PATH_AIR_V,
+            T_path=OUTPUT_XDMF_PATH_AIR_T,
+            dt_start=1.0e-3,
+            dt_growth=1.0,
+            dt_max=1.0e-2,
+            n_steps=100,
+            save_every=10,
+        )
+
+    print("transient status:", transient_info["status"])
+    print("transient steps:", transient_info["n_steps"])
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)

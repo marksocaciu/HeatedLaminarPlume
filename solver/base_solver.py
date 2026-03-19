@@ -399,16 +399,10 @@ def solve_steady_newton_continuation_with_pts(
         
     return w
 
-from utils.imports import *
-from solver.solver import *
-from solver.params_bcs import *
-
-
 def _vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
     dw = w_new.vector().copy()
     dw.axpy(-1.0, w_old.vector())
     return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
-
 
 def _steady_residual_norm(
     W,
@@ -439,7 +433,6 @@ def _steady_residual_norm(
 
     return r.norm("l2")
 
-
 def _collect_observables(w: fenics.Function) -> dict:
     p_f, u_f, T_f = w.split(deepcopy=True)
     u_vec = u_f.vector().get_local()
@@ -456,13 +449,11 @@ def _collect_observables(w: fenics.Function) -> dict:
         "p_max_abs": float(np.max(np.abs(p_vec))) if p_vec.size else 0.0,
     }
 
-
 def _history_window_increasing(values, window=5):
     if len(values) < window:
         return False
     tail = values[-window:]
     return all(tail[i] > tail[i - 1] for i in range(1, len(tail)))
-
 
 def _history_window_nondecreasing(values, window=5):
     if len(values) < window:
@@ -485,14 +476,12 @@ def _safe_eval_scalar(f, x, y):
     except Exception:
         return float("nan")
 
-
 def _safe_eval_vector_component(f, x, y, comp=1):
     try:
         val = f(x, y)
         return float(val[comp])
     except Exception:
         return float("nan")
-
 
 def _collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
     """
@@ -516,7 +505,6 @@ def _collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
         data[f"T_y{tag}"] = _safe_eval_scalar(T_f, 1e-4, y)
 
     return data
-
 
 def _init_ptc_csv(log_path, probe_ys):
     fieldnames = [
@@ -544,7 +532,6 @@ def _init_ptc_csv(log_path, probe_ys):
         writer.writeheader()
 
     return fieldnames
-
 
 def _append_ptc_csv(log_path, fieldnames, row):
     with open(log_path, "a", newline="") as fcsv:
@@ -853,8 +840,6 @@ def solve_pseudo_transient_continuation_problem(
     info["final_steady_residual"] = res_hist[-1] if res_hist else None
 
     return w, info
-
-
 
 def solve_ptc_stage(
     experiment: Experiment,
@@ -1364,8 +1349,8 @@ def solve_ptc_continuation(
             stage_name=stage_name,
             strict_steady=strict,
             steady_polish=strict,
-            ptc_atol=5e-7,
-            ptc_rtol=5e-7,
+            ptc_atol=1e-7,
+            ptc_rtol=1e-7,
             ptc_max_newton_it=20,
         )
 
@@ -1421,4 +1406,187 @@ def solve_ptc_continuation(
     return w, {
         "status": "continuation_complete",
         "history": continuation_history,
+    }
+
+
+def run_post_continuation_transient(
+    experiment: Experiment,
+    W: fenics.FunctionSpace,
+    w: fenics.Function,
+    w_n: fenics.Function,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b, T_c, T_air_bc,
+    sub_dx, sub_ds, sub_ft, qn_air,
+    sub_mesh_star=None,
+    sub_mesh_dim=None,
+    scales=None,
+    p_path: str = "",
+    u_path: str = "",
+    T_path: str = "",
+    probe_heights_m=(0.01, 0.04, 0.08),
+    dt_start: float = 1.0e-3,
+    dt_growth: float = 1.0,
+    dt_max: float = 1.0e-2,
+    n_steps: int = 100,
+    save_every: int = 10,
+    relaxation: float = 1.0,
+    max_newton_it: int = 20,
+    atol: float = 5.0e-7,
+    rtol: float = 5.0e-7,
+):
+    """
+    Run a genuine backward-Euler transient branch after the continuation loop exits.
+
+    This method is intentionally separate from solve_ptc_continuation(). The expected
+    workflow is:
+      1) use continuation/PTC to obtain a good seed in w_n
+      2) call this method once the continuation loop has finished
+      3) march the full target problem in time with lambda=1 and convection_scale=1
+
+    Notes
+    -----
+    - The algebraic/variational form is identical to the pseudo-transient form, but
+      here dtau is interpreted as a physical timestep for the post-continuation
+      transient branch.
+    - Pressure remains algebraic, while velocity and temperature are stepped with
+      backward Euler.
+    - The method writes dimensional snapshots if output paths and meshes are given,
+      and it returns probe histories that are useful for detecting whether the
+      solution relaxes, oscillates, or drifts.
+    """
+    if scales is None:
+        scales = compute_nondimensional_scales(experiment)
+
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    copy_state(w, w_n)
+    w_prev = fenics.Function(W)
+
+    dt = float(dt_start)
+    history = []
+
+    x_probe = max(1.0e-8, 2.0 * float(sub_mesh_star.hmin())) if sub_mesh_star is not None else 1.0e-8
+    if sub_mesh_star is not None:
+        for comp in w_n.split(deepcopy=False):
+            try:
+                comp.set_allow_extrapolation(True)
+            except Exception:
+                pass
+
+    def _sample_probes(sol_w):
+        probes = {}
+        try:
+            p_star, u_star, theta_star = sol_w.split(deepcopy=True)
+            u_star.set_allow_extrapolation(True)
+            theta_star.set_allow_extrapolation(True)
+
+            for y_m in probe_heights_m:
+                if sub_mesh_star is None or scales is None:
+                    probes[f"uy_{y_m:.3f}m"] = float("nan")
+                    probes[f"theta_{y_m:.3f}m"] = float("nan")
+                    continue
+
+                y_star = float(y_m) / float(scales.Lref)
+                try:
+                    u_val = u_star(x_probe, y_star)
+                    theta_val = theta_star(x_probe, y_star)
+                    probes[f"uy_{y_m:.3f}m"] = float(u_val[1])
+                    probes[f"theta_{y_m:.3f}m"] = float(theta_val)
+                except Exception:
+                    probes[f"uy_{y_m:.3f}m"] = float("nan")
+                    probes[f"theta_{y_m:.3f}m"] = float("nan")
+        except Exception:
+            for y_m in probe_heights_m:
+                probes[f"uy_{y_m:.3f}m"] = float("nan")
+                probes[f"theta_{y_m:.3f}m"] = float("nan")
+        return probes
+
+    print("\n" + "=" * 72)
+    print("Starting post-continuation transient branch")
+    print(f"  dt_start   = {dt_start:.3e}")
+    print(f"  dt_growth  = {dt_growth:.3e}")
+    print(f"  dt_max     = {dt_max:.3e}")
+    print(f"  n_steps    = {n_steps}")
+    print(f"  save_every = {save_every}")
+    print("  target     = full coupled transient (lambda=1, convection=1)")
+    print("=" * 72)
+
+    for step in range(1, n_steps + 1):
+        copy_state(w_prev, w_n)
+        copy_state(w, w_n)
+
+        print(f"\n=== transient step {step:04d} | dt={dt:.3e} ===")
+
+        F_tr, JF_tr = build_ptc_problem(
+            W=W,
+            w=w,
+            w_prev=w_prev,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b,
+            sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+            dtau=dt,
+            buoyancy_scale=1.0,
+            qn_scale=1.0,
+            include_convection=True,
+            convection_scale=1.0,
+        )
+
+        base_solver(
+            F_tr, w, boundary_conditions, JF_tr,
+            relaxation=relaxation,
+            maxit=max_newton_it,
+            atol=atol,
+            rtol=rtol,
+        )
+
+        delta = w.vector().copy()
+        delta.axpy(-1.0, w_n.vector())
+        rel_update = delta.norm("l2") / (w.vector().norm("l2") + 1.0e-14)
+
+        copy_state(w_n, w)
+
+        row = {
+            "step": step,
+            "time": step * dt,
+            "dt": dt,
+            "rel_update": rel_update,
+        }
+        row.update(_sample_probes(w_n))
+        history.append(row)
+
+        probe_str = ", ".join(
+            f"{k}={v:.3e}" for k, v in row.items()
+            if k.startswith("uy_") or k.startswith("theta_")
+        )
+        print(f"Accepted transient step {step:04d}: rel_update={rel_update:.3e}")
+        if probe_str:
+            print(f"  probes: {probe_str}")
+
+        if (
+            save_every > 0 and step % save_every == 0 and
+            sub_mesh_star is not None and sub_mesh_dim is not None and
+            p_path and u_path and T_path
+        ):
+            p_star, u_star, theta = w_n.split(deepcopy=True)
+            u_dim, p_dim, T_dim = dimensionalize_fields(
+                sub_mesh_star, u_star, p_star, theta,
+                scales.Uref, scales.dTref, T_ambient,
+                experiment.fluid.properties["rho"],
+            )
+
+            p_out = p_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+            u_out = u_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+            t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+
+            save_experiment(p_out, sub_mesh_dim, [p_dim])
+            save_experiment(u_out, sub_mesh_dim, [u_dim])
+            save_experiment(t_out, sub_mesh_dim, [T_dim])
+
+        dt = min(float(dt_max), float(dt) * float(dt_growth))
+
+    return w, {
+        "status": "transient_complete",
+        "n_steps": n_steps,
+        "final_dt": dt,
+        "history": history,
     }
