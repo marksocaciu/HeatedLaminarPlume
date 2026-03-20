@@ -250,9 +250,19 @@ def base_version(experiment: Experiment):
         print("final_rel_update:", info.get("final_rel_update"))
         print("final_steady_residual:", info.get("final_steady_residual"))
     
+    # Split nondimensional solution
+    p_star, u_star, theta = w.split(deepcopy=True)
+
+    # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+    u_dim, p_dim, T_dim = dimensionalize_fields(
+        sub_mesh_star, u_star, p_star, theta,
+        scales.Uref, scales.dTref, T_ambient,
+        experiment.fluid.properties["rho"]
+    )
+
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
     biot_air_h_eff, biot_air_Bi = biot(
-        sub_mesh_dim, sub_ft_dim, T_full, qn_air,
+        sub_mesh_dim, sub_ft_dim, T_dim, qn_air,
         T_ambient, experiment.wire.properties["k"],
         experiment.dimensions.wire.diameter
     )
@@ -274,10 +284,10 @@ def base_version(experiment: Experiment):
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
             dt_start=1.0e-2,
-            dt_growth=1.0,
-            dt_max=1.0e1,
-            n_steps=500,
-            save_every=20,
+            dt_growth=1.2,
+            dt_max=1.0e3,
+            n_steps=1000,
+            save_every=50,
         )
 
     print("transient status:", transient_info["status"])
