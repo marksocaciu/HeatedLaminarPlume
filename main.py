@@ -295,7 +295,7 @@ def base_version(experiment: Experiment):
             dt_growth=1.2,
             dt_max=1.0e0,
             n_steps=1000,
-            save_every=50,
+            save_every=20,
         )
 
     print("transient status:", transient_info["status"])
