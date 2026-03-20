@@ -291,9 +291,9 @@ def base_version(experiment: Experiment):
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-2,
+            dt_start=1.0e-3,
             dt_growth=1.2,
-            dt_max=1.0e3,
+            dt_max=1.0e0,
             n_steps=1000,
             save_every=50,
         )

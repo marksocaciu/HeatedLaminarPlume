@@ -218,16 +218,6 @@ def biot_wrap(
         interface_tag=interface_tag,
     )
 
-    print("=== Biot diagnostic on air submesh ===")
-    print(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
-    print(f"Interface length         = {Lint:.6e} m")
-    print(f"Effective h              = {h_eff:.6e} W/m^2/K")
-    print(f"Average Biot number      = {Bi_avg:.6e}")
-    print("=====================================")
-
-    if not return_local_field:
-        return h_eff, Bi_avg
-
     Bi_local = compute_local_biot_on_air_submesh(
         sub_mesh=sub_mesh,
         sub_ft=sub_ft,
@@ -239,4 +229,16 @@ def biot_wrap(
         Lc=Lc,
         interface_tag=interface_tag,
     )
+
+    print("=== Biot diagnostic on air submesh ===")
+    print(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
+    print(f"Interface length         = {Lint:.6e} m")
+    print(f"Effective h              = {h_eff:.6e} W/m^2/K")
+    print(f"Average Biot number      = {Bi_avg:.6e}")
+    print("Biot number between air and solid: ", Bi_local.vector().min(), " to ", Bi_local.vector().max())
+    print("=====================================")
+
+    if not return_local_field:
+        return h_eff, Bi_avg
+
     return h_eff, Bi_avg, Bi_local
