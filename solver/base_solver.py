@@ -1434,8 +1434,8 @@ def run_post_continuation_transient(
     save_every: int = 10,
     relaxation: float = 1.0,
     max_newton_it: int = 20,
-    atol: float = 1.0e-7,
-    rtol: float = 1.0e-7,
+    atol: float = 1.0e-9,
+    rtol: float = 1.0e-9,
 ):
     """
     Run a genuine backward-Euler transient branch after the continuation loop exits.
