@@ -1421,6 +1421,7 @@ def run_post_continuation_transient(
     sub_mesh_star=None,
     sub_mesh_dim=None,
     sub_ft_dim=None,
+    sub_ds_dim=None,
     scales=None,
     p_path: str = "",
     u_path: str = "",
@@ -1585,10 +1586,18 @@ def run_post_continuation_transient(
             save_experiment(t_out, sub_mesh_dim, [T_dim])
 
             # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-            biot_air_h_eff, biot_air_Bi = biot(
-                sub_mesh_dim, sub_ft_dim, T_dim, qn_air,
-                T_ambient, experiment.wire.properties["k"],
-                experiment.dimensions.wire.diameter
+            # Optional diagnostic: Biot numbers should use dimensional geometry/fields
+            biot_wrap(
+                sub_mesh=sub_mesh_dim,
+                sub_ft=sub_ft_dim,
+                sub_ds=sub_ds_dim,
+                T_air_dim=T_dim,
+                qn_air=qn_air,
+                scales=scales,
+                T_ref=T_ambient,
+                k_wire=experiment.wire.properties["k"],
+                wire_diameter=experiment.dimensions.wire.diameter,
+                characteristic_length="radius",
             )
 
         dt = min(float(dt_max), float(dt) * float(dt_growth))

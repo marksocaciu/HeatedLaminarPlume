@@ -261,10 +261,17 @@ def base_version(experiment: Experiment):
     )
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-    biot_air_h_eff, biot_air_Bi = biot(
-        sub_mesh_dim, sub_ft_dim, T_dim, qn_air,
-        T_ambient, experiment.wire.properties["k"],
-        experiment.dimensions.wire.diameter
+    biot_wrap(
+        sub_mesh=sub_mesh_dim,
+        sub_ft=sub_ft_dim,
+        sub_ds=sub_ds_dim,
+        T_air_dim=T_air_dim,
+        qn_air=qn_air,
+        scales=scales,
+        T_ref=T_ambient,
+        k_wire=experiment.wire.properties["k"],
+        wire_diameter=experiment.dimensions.wire.diameter,
+        characteristic_length="radius",
     )
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
     
@@ -279,6 +286,7 @@ def base_version(experiment: Experiment):
             sub_mesh_star=sub_mesh_star,
             sub_mesh_dim=sub_mesh_dim,
             sub_ft_dim=sub_ft_dim,
+            sub_ds_dim=sub_ds_dim,
             scales=scales,
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
