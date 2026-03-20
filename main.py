@@ -231,7 +231,8 @@ def base_version(experiment: Experiment):
         final_stage_max_steps=2000,
         update_tol=1e-8,
         residual_tol=1e-8,
-        save_obj=save_obj
+        # save_obj=save_obj
+        save_obj=None
     )
 
     if info.get("status") == "continuation_failed":
@@ -291,11 +292,11 @@ def base_version(experiment: Experiment):
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-3,
-            dt_growth=1.2,
-            dt_max=1.0e0,
+            dt_start=1.0e-2,
+            dt_growth=1.15,
+            dt_max=5.0e0,
             n_steps=1000,
-            save_every=20,
+            save_every=10,
         )
 
     print("transient status:", transient_info["status"])
