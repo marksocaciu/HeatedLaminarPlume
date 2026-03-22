@@ -262,18 +262,21 @@ def base_version(experiment: Experiment):
     )
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-    biot_wrap(
-        sub_mesh=sub_mesh_dim,
-        sub_ft=sub_ft_dim,
-        sub_ds=sub_ds_dim,
-        T_air_dim=T_air_dim,
-        qn_air=qn_air,
-        scales=scales,
-        T_ref=T_ambient,
-        k_wire=experiment.wire.properties["k"],
-        wire_diameter=experiment.dimensions.wire.diameter,
-        characteristic_length="radius",
-    )
+    try:
+        biot_wrap(
+            sub_mesh=sub_mesh_dim,
+            sub_ft=sub_ft_dim,
+            sub_ds=sub_ds_dim,
+            T_air_dim=T_air_dim,
+            qn_air=qn_air,
+            scales=scales,
+            T_ref=T_ambient,
+            k_wire=experiment.wire.properties["k"],
+            wire_diameter=experiment.dimensions.wire.diameter,
+            characteristic_length="radius",
+        )
+    except Exception:
+        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
     
     w, transient_info = run_post_continuation_transient(

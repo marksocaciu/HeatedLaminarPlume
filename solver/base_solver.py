@@ -1587,18 +1587,21 @@ def run_post_continuation_transient(
 
             # Optional diagnostic: Biot numbers should use dimensional geometry/fields
             # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-            biot_wrap(
-                sub_mesh=sub_mesh_dim,
-                sub_ft=sub_ft_dim,
-                sub_ds=sub_ds_dim,
-                T_air_dim=T_dim,
-                qn_air=qn_air,
-                scales=scales,
-                T_ref=T_ambient,
-                k_wire=experiment.wire.properties["k"],
-                wire_diameter=experiment.dimensions.wire.diameter,
-                characteristic_length="radius",
-            )
+            try:
+                biot_wrap(
+                    sub_mesh=sub_mesh_dim,
+                    sub_ft=sub_ft_dim,
+                    sub_ds=sub_ds_dim,
+                    T_air_dim=T_dim,
+                    qn_air=qn_air,
+                    scales=scales,
+                    T_ref=T_ambient,
+                    k_wire=experiment.wire.properties["k"],
+                    wire_diameter=experiment.dimensions.wire.diameter,
+                    characteristic_length="radius",
+                )
+            except Exception:
+                print("Warning: Biot number diagnostic failed.")
 
         dt = min(float(dt_max), float(dt) * float(dt_growth))
 
