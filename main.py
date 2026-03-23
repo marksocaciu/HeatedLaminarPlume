@@ -987,7 +987,7 @@ def abs_version(experiment: Experiment):
             dt_hard_cut=0.8,
             dt_min=1.0e-5,
             dt_max=1.0,
-            t_end=100.0,
+            t_end=15000.0,
             step_max=20000,
             save_every=20,
             max_retries_per_step=8,
