@@ -274,6 +274,7 @@ def base_version(experiment: Experiment):
             k_wire=experiment.wire.properties["k"],
             wire_diameter=experiment.dimensions.wire.diameter,
             characteristic_length="radius",
+            return_local_field=True
         )
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
@@ -522,7 +523,7 @@ def temperature_dependent_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=(0.01, 0.03, 0.05)
+        lambdas=(0.05, 0.1)
     )
 
     print("Starting checks")
@@ -539,24 +540,135 @@ def temperature_dependent_version(experiment: Experiment):
     print("Checks complete")
 
     # w = temp_dep_solver(F,w, boundary_conditions, JF, w_n, fluid_material)
-    w = solve_temp_newton_continuation(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        w_n=w_n,
-        lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-        relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
-        stokes_startup=False,
-        sub_mesh_star=sub_mesh_star,
-        sub_mesh_dim=sub_mesh_dim,
-        p_path=OUTPUT_XDMF_PATH_AIR_P,
-        u_path=OUTPUT_XDMF_PATH_AIR_V,
-        T_path=OUTPUT_XDMF_PATH_AIR_T,
-        fluid_material=fluid_material,
+    # w = solve_temp_newton_continuation(
+    #     experiment=experiment,
+    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+    #     W=W, w=w,
+    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+    #     w_n=w_n,
+    #     lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+    #     relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
+    #     stokes_startup=False,
+    #     sub_mesh_star=sub_mesh_star,
+    #     sub_mesh_dim=sub_mesh_dim,
+    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
+    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
+    #     T_path=OUTPUT_XDMF_PATH_AIR_T,
+    #     fluid_material=fluid_material,
+    # )
+
+    save_obj = (
+        sub_ds_star,
+        sub_mesh_dim,
+        scales,
+        OUTPUT_XDMF_PATH_AIR_P,
+        OUTPUT_XDMF_PATH_AIR_V,
+        OUTPUT_XDMF_PATH_AIR_T
     )
+
+    w, info = solve_temp_ptc_continuation(
+        experiment,
+        W, w, w_n,
+        psi_p, psi_u, psi_T,
+        mu, Pr, f_b, T_c, T_air_bc,
+        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+        dtau_init=1e-3,
+        dtau_min=1e-8,
+        dtau_max=1e-2,
+        stage_max_steps=40,
+        final_stage_max_steps=2000,
+        update_tol=1e-8,
+        residual_tol=1e-8,
+        # save_obj=save_obj
+        save_obj=None
+    )
+
+    if info.get("status") == "continuation_failed":
+        print("failed_stage:", info.get("failed_stage"))
+        last = info.get("last_stage_info", {})
+        print("last_stage_status:", last.get("status"))
+        print("accepted_steps:", last.get("accepted_steps"))
+        print("rejected_steps:", last.get("rejected_steps"))
+        print("final_dtau:", last.get("final_dtau"))
+        print("final_rel_update:", last.get("final_rel_update"))
+        print("final_steady_residual:", last.get("final_steady_residual"))
+    else:
+        print("accepted_steps:", info.get("accepted_steps"))
+        print("rejected_steps:", info.get("rejected_steps"))
+        print("final_dtau:", info.get("final_dtau"))
+        print("final_rel_update:", info.get("final_rel_update"))
+        print("final_steady_residual:", info.get("final_steady_residual"))
+    
+    # Split nondimensional solution
+    p_star, u_star, theta = w.split(deepcopy=True)
+
+    # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+    u_dim, p_dim, T_dim = dimensionalize_fields(
+        sub_mesh_star, u_star, p_star, theta,
+        scales.Uref, scales.dTref, T_ambient,
+        experiment.fluid.properties["rho"]
+    )
+
+    # Optional diagnostic: Biot numbers should use dimensional geometry/fields
+    try:
+        biot_wrap(
+            sub_mesh=sub_mesh_dim,
+            sub_ft=sub_ft_dim,
+            sub_ds=sub_ds_dim,
+            T_air_dim=T_air_dim,
+            qn_air=qn_air,
+            scales=scales,
+            T_ref=T_ambient,
+            k_wire=experiment.wire.properties["k"],
+            wire_diameter=experiment.dimensions.wire.diameter,
+            characteristic_length="radius",
+            return_local_field=True
+        )
+    except Exception:
+        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
+    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+    
+    w, transient_info = run_post_temp_continuation_transient(
+            experiment=experiment,
+            W=W,
+            w=w,
+            w_n=w_n,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            sub_mesh_star=sub_mesh_star,
+            sub_mesh_dim=sub_mesh_dim,
+            sub_ft_dim=sub_ft_dim,
+            sub_ds_dim=sub_ds_dim,
+            scales=scales,
+            p_path=OUTPUT_XDMF_PATH_AIR_P,
+            u_path=OUTPUT_XDMF_PATH_AIR_V,
+            T_path=OUTPUT_XDMF_PATH_AIR_T,
+            dt_start=1.0e-2,
+            dt_growth=1.2,
+            dt_cut=0.5,
+            dt_hard_cut=0.8,
+            dt_min=1.0e-5,
+            dt_max=1.0,
+            t_end=100.0,
+            step_max=20000,
+            save_every=20,
+            max_retries_per_step=8,
+            rel_update_easy=1.0e-3,
+            rel_update_hard=5.0e-3,
+            rel_update_reject=2.0e-2,
+            steady_window=25,
+            steady_rel_tol=5.0e-3,
+            steady_update_tol=1.0e-4,
+            history_csv_path=experiment.name + "/time_step/temp/transient_history.csv",
+        )
+
+    print("transient status:", transient_info["status"])
+    print("transient steps:", transient_info["n_steps"])
+
+
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
 
@@ -765,23 +877,132 @@ def abs_version(experiment: Experiment):
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print("Checks complete")
 
-    w = solve_ABE_newton_continuation(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        w_n=w_n,
-        lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-        relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
-        stokes_startup=False,
-        sub_mesh_star=sub_mesh_star,
-        sub_mesh_dim=sub_mesh_dim,
-        p_path=OUTPUT_XDMF_PATH_AIR_P,
-        u_path=OUTPUT_XDMF_PATH_AIR_V,
-        T_path=OUTPUT_XDMF_PATH_AIR_T
+    # w = solve_ABE_newton_continuation(
+    #     experiment=experiment,
+    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+    #     W=W, w=w,
+    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+    #     w_n=w_n,
+    #     lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
+    #     relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
+    #     stokes_startup=False,
+    #     sub_mesh_star=sub_mesh_star,
+    #     sub_mesh_dim=sub_mesh_dim,
+    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
+    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
+    #     T_path=OUTPUT_XDMF_PATH_AIR_T
+    # )
+
+    save_obj = (
+        sub_ds_star,
+        sub_mesh_dim,
+        scales,
+        OUTPUT_XDMF_PATH_AIR_P,
+        OUTPUT_XDMF_PATH_AIR_V,
+        OUTPUT_XDMF_PATH_AIR_T
     )
+
+    w, info = solve_ptc_abe_continuation(
+        experiment,
+        W, w, w_n,
+        psi_p, psi_u, psi_T,
+        mu, Pr, f_b, T_c, T_air_bc,
+        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+        dtau_init=1e-3,
+        dtau_min=1e-8,
+        dtau_max=1e-2,
+        stage_max_steps=40,
+        final_stage_max_steps=2000,
+        update_tol=1e-8,
+        residual_tol=1e-8,
+        # save_obj=save_obj
+        save_obj=None
+    )
+
+    if info.get("status") == "continuation_failed":
+        print("failed_stage:", info.get("failed_stage"))
+        last = info.get("last_stage_info", {})
+        print("last_stage_status:", last.get("status"))
+        print("accepted_steps:", last.get("accepted_steps"))
+        print("rejected_steps:", last.get("rejected_steps"))
+        print("final_dtau:", last.get("final_dtau"))
+        print("final_rel_update:", last.get("final_rel_update"))
+        print("final_steady_residual:", last.get("final_steady_residual"))
+    else:
+        print("accepted_steps:", info.get("accepted_steps"))
+        print("rejected_steps:", info.get("rejected_steps"))
+        print("final_dtau:", info.get("final_dtau"))
+        print("final_rel_update:", info.get("final_rel_update"))
+        print("final_steady_residual:", info.get("final_steady_residual"))
+    
+    # Split nondimensional solution
+    p_star, u_star, theta = w.split(deepcopy=True)
+
+    # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
+    u_dim, p_dim, T_dim = dimensionalize_fields(
+        sub_mesh_star, u_star, p_star, theta,
+        scales.Uref, scales.dTref, T_ambient,
+        experiment.fluid.properties["rho"]
+    )
+
+    # Optional diagnostic: Biot numbers should use dimensional geometry/fields
+    try:
+        biot_wrap(
+            sub_mesh=sub_mesh_dim,
+            sub_ft=sub_ft_dim,
+            sub_ds=sub_ds_dim,
+            T_air_dim=T_air_dim,
+            qn_air=qn_air,
+            scales=scales,
+            T_ref=T_ambient,
+            k_wire=experiment.wire.properties["k"],
+            wire_diameter=experiment.dimensions.wire.diameter,
+            characteristic_length="radius",
+            return_local_field=True
+        )
+    except Exception:
+        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
+    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+    
+    w, transient_info = run_post_abe_continuation_transient(
+            experiment=experiment,
+            W=W,
+            w=w,
+            w_n=w_n,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            sub_mesh_star=sub_mesh_star,
+            sub_mesh_dim=sub_mesh_dim,
+            sub_ft_dim=sub_ft_dim,
+            sub_ds_dim=sub_ds_dim,
+            scales=scales,
+            p_path=OUTPUT_XDMF_PATH_AIR_P,
+            u_path=OUTPUT_XDMF_PATH_AIR_V,
+            T_path=OUTPUT_XDMF_PATH_AIR_T,
+            dt_start=1.0e-2,
+            dt_growth=1.2,
+            dt_cut=0.5,
+            dt_hard_cut=0.8,
+            dt_min=1.0e-5,
+            dt_max=1.0,
+            t_end=100.0,
+            step_max=20000,
+            save_every=20,
+            max_retries_per_step=8,
+            rel_update_easy=1.0e-3,
+            rel_update_hard=5.0e-3,
+            rel_update_reject=2.0e-2,
+            steady_window=25,
+            steady_rel_tol=5.0e-3,
+            steady_update_tol=1.0e-4,
+            history_csv_path=experiment.name + "/time_step/abs/transient_history.csv",
+        )
+
+    print("transient status:", transient_info["status"])
+    print("transient steps:", transient_info["n_steps"])
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)

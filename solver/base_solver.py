@@ -400,145 +400,6 @@ def solve_steady_newton_continuation_with_pts(
         
     return w
 
-def _vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
-    dw = w_new.vector().copy()
-    dw.axpy(-1.0, w_old.vector())
-    return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
-
-def _steady_residual_norm(
-    W,
-    w,
-    psi_p, psi_u, psi_T,
-    mu, Pr, f_b,
-    sub_dx, sub_ds, qn_air,
-    boundary_conditions,
-    buoyancy_scale=1.0,
-    qn_scale=1.0,
-    include_convection=True,
-    convection_scale=1.0,
-) -> float:
-    F_steady, _ = build_nonlinear_problem(
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
-        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-        buoyancy_scale=buoyancy_scale,
-        qn_scale=qn_scale,
-        include_convection=include_convection,
-        convection_scale=convection_scale,
-    )
-
-    r = fenics.assemble(F_steady)
-    for bc in boundary_conditions:
-        bc.apply(r)
-
-    return r.norm("l2")
-
-def _collect_observables(w: fenics.Function) -> dict:
-    p_f, u_f, T_f = w.split(deepcopy=True)
-    u_vec = u_f.vector().get_local()
-    T_vec = T_f.vector().get_local()
-    p_vec = p_f.vector().get_local()
-
-    return {
-        "u_l2": u_f.vector().norm("l2"),
-        "T_l2": T_f.vector().norm("l2"),
-        "p_l2": p_f.vector().norm("l2"),
-        "u_max_abs": float(np.max(np.abs(u_vec))) if u_vec.size else 0.0,
-        "T_max": float(np.max(T_vec)) if T_vec.size else 0.0,
-        "T_min": float(np.min(T_vec)) if T_vec.size else 0.0,
-        "p_max_abs": float(np.max(np.abs(p_vec))) if p_vec.size else 0.0,
-    }
-
-def _history_window_increasing(values, window=5):
-    if len(values) < window:
-        return False
-    tail = values[-window:]
-    return all(tail[i] > tail[i - 1] for i in range(1, len(tail)))
-
-def _history_window_nondecreasing(values, window=5):
-    if len(values) < window:
-        return False
-    tail = values[-window:]
-    return all(tail[i] >= tail[i - 1] for i in range(1, len(tail)))
-
-def _assembled_residual_norm(F_form, boundary_conditions):
-    r = fenics.assemble(F_form)
-    for bc in boundary_conditions:
-        bc.apply(r)
-    return r.norm("l2")
-
-def _safe_eval_scalar(f, x, y):
-    try:
-        val = f(x, y)
-        if isinstance(val, (tuple, list)):
-            return float(val[0])
-        return float(val)
-    except Exception:
-        return float("nan")
-
-def _safe_eval_vector_component(f, x, y, comp=1):
-    try:
-        val = f(x, y)
-        return float(val[comp])
-    except Exception:
-        return float("nan")
-
-def _collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
-    """
-    Collect a compact set of scalar diagnostics for PTC monitoring.
-    """
-    p_f, u_f, T_f = w.split(deepcopy=True)
-
-    u_l2 = float(u_f.vector().norm("l2"))
-    T_l2 = float(T_f.vector().norm("l2"))
-    kinetic_energy = float(fenics.assemble(0.5 * fenics.inner(u_f, u_f) * sub_dx))
-
-    data = {
-        "u_l2": u_l2,
-        "T_l2": T_l2,
-        "kinetic_energy": kinetic_energy,
-    }
-
-    for y in probe_ys:
-        tag = str(y).replace(".", "p")
-        data[f"uy_y{tag}"] = _safe_eval_vector_component(u_f, 1e-4, y, comp=1)
-        data[f"T_y{tag}"] = _safe_eval_scalar(T_f, 1e-4, y)
-
-    return data
-
-def _init_ptc_csv(log_path, probe_ys):
-    fieldnames = [
-        "step",
-        "pseudo_time",
-        "dtau",
-        "rel_update",
-        "steady_residual",
-        "u_l2",
-        "T_l2",
-        "kinetic_energy",
-    ]
-
-    for y in probe_ys:
-        tag = str(y).replace(".", "p")
-        fieldnames.append(f"uy_y{tag}")
-    for y in probe_ys:
-        tag = str(y).replace(".", "p")
-        fieldnames.append(f"T_y{tag}")
-
-    # os.makedirs(os.path.dirname(log_path), exist_ok=True)
-
-    with open(log_path, "w", newline="") as fcsv:
-        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
-        writer.writeheader()
-
-    return fieldnames
-
-def _append_ptc_csv(log_path, fieldnames, row):
-    with open(log_path, "a", newline="") as fcsv:
-        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
-        writer.writerow(row)
-
 def solve_pseudo_transient_continuation_problem(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -610,7 +471,7 @@ def solve_pseudo_transient_continuation_problem(
     pseudo_time = 0.0
 
     log_path = "ptc_history.csv"
-    csv_fieldnames = _init_ptc_csv(log_path, probe_ys)
+    csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
     prev_steady_res = None
     prev_rel_update = None
@@ -680,7 +541,7 @@ def solve_pseudo_transient_continuation_problem(
 
             continue
 
-        rel_update = _vector_relative_update(w, w_prev)
+        rel_update = vector_relative_update(w, w_prev)
         # steady_res = _steady_residual_norm(
         #     W=W, w=w,
         #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
@@ -692,8 +553,8 @@ def solve_pseudo_transient_continuation_problem(
         #     include_convection=True,
         #     convection_scale=1.0,
         # )
-        steady_res = _assembled_residual_norm(F_steady, boundary_conditions)
-        obs = _collect_observables(w)
+        steady_res = assembled_residual_norm(F_steady, boundary_conditions)
+        obs = collect_observables(w)
 
         history.append({
             "step": step,
@@ -718,7 +579,7 @@ def solve_pseudo_transient_continuation_problem(
         copy_state(w_n, w)
         accepted_steps += 1
         pseudo_time += dtau
-        diag = _collect_ptc_probe_diagnostics(
+        diag = collect_ptc_probe_diagnostics(
                 w=w,
                 sub_dx=sub_dx,
                 probe_ys=probe_ys,
@@ -733,7 +594,7 @@ def solve_pseudo_transient_continuation_problem(
             "steady_residual": steady_res,
             **diag,
         }
-        _append_ptc_csv(log_path, csv_fieldnames, row)
+        append_ptc_csv(log_path, csv_fieldnames, row)
 
         # Main steady-state criterion
         if rel_update < update_tol and steady_res < residual_tol:
@@ -785,8 +646,8 @@ def solve_pseudo_transient_continuation_problem(
         if step >= max(warmup_steps, drift_window + 2):
             initial_res = res_hist[0]
             no_real_residual_drop = steady_res > 0.95 * initial_res
-            rel_is_rising = _history_window_increasing(rel_hist, window=drift_window)
-            T_is_rising = _history_window_nondecreasing(T_hist, window=drift_window)
+            rel_is_rising = history_window_increasing(rel_hist, window=drift_window)
+            T_is_rising = history_window_nondecreasing(T_hist, window=drift_window)
 
             if no_real_residual_drop and rel_is_rising and T_is_rising:
                 print("PTC appears to be drifting instead of relaxing to a steady state.")
@@ -965,7 +826,7 @@ def solve_ptc_stage(
         "base",
         f"ptc_history_{safe_stage_name}.csv",
     )
-    csv_fieldnames = _init_ptc_csv(log_path, probe_ys)
+    csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
     print("\n" + "-" * 72)
     print(f"Starting PTC stage: {stage_name}")
@@ -1007,15 +868,15 @@ def solve_ptc_stage(
 
             continue
 
-        rel_update = _vector_relative_update(w, w_prev)
+        rel_update = vector_relative_update(w, w_prev)
 
         if step == 1 or step % residual_check_every == 0:
-            steady_res = _assembled_residual_norm(F_steady, boundary_conditions)
+            steady_res = assembled_residual_norm(F_steady, boundary_conditions)
         else:
             steady_res = prev_steady_res if prev_steady_res is not None else float("nan")
 
         if step == 1 or step % log_every == 0:
-            diag = _collect_ptc_probe_diagnostics(
+            diag = collect_ptc_probe_diagnostics(
                 w=w,
                 sub_dx=sub_dx,
                 probe_ys=probe_ys,
@@ -1065,7 +926,7 @@ def solve_ptc_stage(
                 "steady_residual": steady_res,
                 **diag,
             }
-            _append_ptc_csv(log_path, csv_fieldnames, row)
+            append_ptc_csv(log_path, csv_fieldnames, row)
 
         # stage acceptance
         # For intermediate continuation stages, do not accept merely because the
@@ -1188,8 +1049,8 @@ def solve_ptc_stage(
             if len(finite_res) >= 1 and len(finite_T) >= drift_window:
                 initial_res = finite_res[0]
                 no_real_residual_drop = steady_res > 0.98 * initial_res
-                rel_is_rising = _history_window_increasing(rel_hist, window=drift_window)
-                T_is_rising = _history_window_nondecreasing(finite_T, window=drift_window)
+                rel_is_rising = history_window_increasing(rel_hist, window=drift_window)
+                T_is_rising = history_window_nondecreasing(finite_T, window=drift_window)
 
                 if no_real_residual_drop and rel_is_rising and T_is_rising:
                     print(f"{stage_name}: drifting instead of relaxing to steady state.")
@@ -1409,7 +1270,6 @@ def solve_ptc_continuation(
         "history": continuation_history,
     }
 
-
 def run_post_continuation_transient(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -1435,7 +1295,7 @@ def run_post_continuation_transient(
     dt_max: float = 1.0,
     t_end: float = 100.0,
     step_max: int = 20000,
-    n_steps: int = None,
+    n_steps: int = 10000,
     save_every: int = 50,
     relaxation: float = 1.0,
     max_newton_it: int = 20,
@@ -1749,7 +1609,7 @@ def run_post_continuation_transient(
                         k_wire=experiment.wire.properties["k"],
                         wire_diameter=experiment.dimensions.wire.diameter,
                         characteristic_length="radius",
-                        return_local_field=False,
+                        return_local_field=True,
                     )
                 except Exception as err:
                     print(f"Biot diagnostic skipped at step {step:04d}: {err}")

@@ -654,3 +654,142 @@ def build_ptc_problem(
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
+
+def vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
+    dw = w_new.vector().copy()
+    dw.axpy(-1.0, w_old.vector())
+    return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
+
+def steady_residual_norm(
+    W,
+    w,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b,
+    sub_dx, sub_ds, qn_air,
+    boundary_conditions,
+    buoyancy_scale=1.0,
+    qn_scale=1.0,
+    include_convection=True,
+    convection_scale=1.0,
+) -> float:
+    F_steady, _ = build_nonlinear_problem(
+        W=W, w=w,
+        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        mu=mu, Pr=Pr, f_b=f_b,
+        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+        buoyancy_scale=buoyancy_scale,
+        qn_scale=qn_scale,
+        include_convection=include_convection,
+        convection_scale=convection_scale,
+    )
+
+    r = fenics.assemble(F_steady)
+    for bc in boundary_conditions:
+        bc.apply(r)
+
+    return r.norm("l2")
+
+def collect_observables(w: fenics.Function) -> dict:
+    p_f, u_f, T_f = w.split(deepcopy=True)
+    u_vec = u_f.vector().get_local()
+    T_vec = T_f.vector().get_local()
+    p_vec = p_f.vector().get_local()
+
+    return {
+        "u_l2": u_f.vector().norm("l2"),
+        "T_l2": T_f.vector().norm("l2"),
+        "p_l2": p_f.vector().norm("l2"),
+        "u_max_abs": float(np.max(np.abs(u_vec))) if u_vec.size else 0.0,
+        "T_max": float(np.max(T_vec)) if T_vec.size else 0.0,
+        "T_min": float(np.min(T_vec)) if T_vec.size else 0.0,
+        "p_max_abs": float(np.max(np.abs(p_vec))) if p_vec.size else 0.0,
+    }
+
+def history_window_increasing(values, window=5):
+    if len(values) < window:
+        return False
+    tail = values[-window:]
+    return all(tail[i] > tail[i - 1] for i in range(1, len(tail)))
+
+def history_window_nondecreasing(values, window=5):
+    if len(values) < window:
+        return False
+    tail = values[-window:]
+    return all(tail[i] >= tail[i - 1] for i in range(1, len(tail)))
+
+def assembled_residual_norm(F_form, boundary_conditions):
+    r = fenics.assemble(F_form)
+    for bc in boundary_conditions:
+        bc.apply(r)
+    return r.norm("l2")
+
+def safe_eval_scalar(f, x, y):
+    try:
+        val = f(x, y)
+        if isinstance(val, (tuple, list)):
+            return float(val[0])
+        return float(val)
+    except Exception:
+        return float("nan")
+
+def safe_eval_vector_component(f, x, y, comp=1):
+    try:
+        val = f(x, y)
+        return float(val[comp])
+    except Exception:
+        return float("nan")
+
+def collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
+    """
+    Collect a compact set of scalar diagnostics for PTC monitoring.
+    """
+    p_f, u_f, T_f = w.split(deepcopy=True)
+
+    u_l2 = float(u_f.vector().norm("l2"))
+    T_l2 = float(T_f.vector().norm("l2"))
+    kinetic_energy = float(fenics.assemble(0.5 * fenics.inner(u_f, u_f) * sub_dx))
+
+    data = {
+        "u_l2": u_l2,
+        "T_l2": T_l2,
+        "kinetic_energy": kinetic_energy,
+    }
+
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        data[f"uy_y{tag}"] = safe_eval_vector_component(u_f, 1e-4, y, comp=1)
+        data[f"T_y{tag}"] = safe_eval_scalar(T_f, 1e-4, y)
+
+    return data
+
+def init_ptc_csv(log_path, probe_ys):
+    fieldnames = [
+        "step",
+        "pseudo_time",
+        "dtau",
+        "rel_update",
+        "steady_residual",
+        "u_l2",
+        "T_l2",
+        "kinetic_energy",
+    ]
+
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        fieldnames.append(f"uy_y{tag}")
+    for y in probe_ys:
+        tag = str(y).replace(".", "p")
+        fieldnames.append(f"T_y{tag}")
+
+    # os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
+    with open(log_path, "w", newline="") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
+        writer.writeheader()
+
+    return fieldnames
+
+def append_ptc_csv(log_path, fieldnames, row):
+    with open(log_path, "a", newline="") as fcsv:
+        writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
+        writer.writerow(row)
