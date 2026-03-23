@@ -82,9 +82,24 @@ def _biot_length_from_wire_diameter(wire_diameter, mode="radius"):
 
 
 def compute_local_biot_on_air_submesh(
-    sub_mesh, sub_ft, T_air_dim, qn_air, scales, T_ref, k_wire, Lc,
+    sub_mesh,
+    sub_ft,
+    T_air_dim,
+    qn_air,
+    scales,
+    T_ref,
+    k_wire,
+    Lc,
     interface_tag=INTERFACE_TAG,
 ):
+    """
+    Build a DG0 field with local Biot numbers on air cells touching the interface.
+
+    This version avoids fragile point evaluation at facet midpoints. Instead it uses a
+    DG0 projection of the dimensional air temperature and assigns one representative
+    value per adjacent air cell. That is much more robust on submeshes and during long
+    transient runs.
+    """
     V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
     Bi = fenics.Function(V0, name="Bi_local")
     Bi.vector().zero()
@@ -92,19 +107,24 @@ def compute_local_biot_on_air_submesh(
     counts = Bi.vector().copy()
     counts.zero()
 
-    # robust cellwise temperature representation
+    # Robust cellwise temperature representative on the air mesh.
     T0 = fenics.project(T_air_dim, V0)
 
-    qscale = float(scales.qsurf)
+    qscale = float(scales.qsurf)  # = k_inf * dTref / Lref
     T_ref = float(T_ref)
     k_wire = float(k_wire)
     Lc = float(Lc)
 
+    if k_wire <= 0.0:
+        raise ValueError("k_wire must be positive.")
+    if Lc <= 0.0:
+        raise ValueError("Lc must be positive.")
+
     tdim = sub_mesh.topology().dim()
     sub_mesh.init(tdim - 1, tdim)
 
-    T0_vals = T0.vector().get_local()
     qn_vals = qn_air.vector().get_local()
+    T0_vals = T0.vector().get_local()
     Bi_vals = Bi.vector().get_local()
     cnt_vals = counts.get_local()
 
@@ -112,13 +132,15 @@ def compute_local_biot_on_air_submesh(
         if sub_ft[f] != interface_tag:
             continue
 
-        cells_adj = list(fenics.cells(f))
-        if not cells_adj:
+        adjacent_cells = list(fenics.cells(f))
+        if not adjacent_cells:
             continue
 
-        ci = cells_adj[0].index()
-        qn_dim = qscale * qn_vals[ci]
-        Ts = T0_vals[ci]
+        c = adjacent_cells[0]
+        ci = c.index()
+
+        qn_dim = qscale * qn_vals[ci]   # [W/m^2]
+        Ts = T0_vals[ci]                # [K]
         dT = Ts - T_ref
 
         if abs(dT) > 1.0e-14:
@@ -130,7 +152,7 @@ def compute_local_biot_on_air_submesh(
     Bi.vector().apply("insert")
     return Bi
 
-    
+
 def compute_average_biot(
     sub_ds,
     qn_air,
@@ -198,6 +220,16 @@ def biot_wrap(
         interface_tag=interface_tag,
     )
 
+    print("=== Biot diagnostic on air submesh ===")
+    print(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
+    print(f"Interface length         = {Lint:.6e} m")
+    print(f"Effective h              = {h_eff:.6e} W/m^2/K")
+    print(f"Average Biot number      = {Bi_avg:.6e}")
+    print("=====================================")
+
+    if not return_local_field:
+        return h_eff, Bi_avg
+
     Bi_local = compute_local_biot_on_air_submesh(
         sub_mesh=sub_mesh,
         sub_ft=sub_ft,
@@ -209,16 +241,4 @@ def biot_wrap(
         Lc=Lc,
         interface_tag=interface_tag,
     )
-
-    print("=== Biot diagnostic on air submesh ===")
-    print(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
-    print(f"Interface length         = {Lint:.6e} m")
-    print(f"Effective h              = {h_eff:.6e} W/m^2/K")
-    print(f"Average Biot number      = {Bi_avg:.6e}")
-    print("Biot number between air and solid: ", Bi_local.vector().min(), " to ", Bi_local.vector().max())
-    print("=====================================")
-
-    if not return_local_field:
-        return h_eff, Bi_avg
-
     return h_eff, Bi_avg, Bi_local

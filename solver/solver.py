@@ -147,7 +147,8 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
 def base_solver(F, w: fenics.Function, boundary_conditions, JF,
-                relaxation=0.5, maxit=20, atol=1e-9, rtol=1e-8):
+                relaxation=0.5, maxit=20, atol=1e-9, rtol=1e-8,
+                return_meta: bool = False):
     problem = fenics.NonlinearVariationalProblem(F, w, boundary_conditions, JF)
     solver = fenics.NonlinearVariationalSolver(problem)
     prm = solver.parameters
@@ -161,11 +162,21 @@ def base_solver(F, w: fenics.Function, boundary_conditions, JF,
     nprm["report"] = True
     nprm["error_on_nonconvergence"] = True
     nprm["relaxation_parameter"] = relaxation
-    fenics.parameters["form_compiler"]["cpp_optimize"] = True
-    fenics.parameters["form_compiler"]["optimize"] = True
-    fenics.parameters["form_compiler"]["representation"] = "uflacs"
 
-    solver.solve()
+    result = solver.solve()
+
+    n_iter = None
+    converged = True
+    if isinstance(result, tuple):
+        if len(result) >= 1:
+            n_iter = result[0]
+        if len(result) >= 2:
+            converged = bool(result[1])
+    elif isinstance(result, (int, float)):
+        n_iter = int(result)
+
+    if return_meta:
+        return w, n_iter, converged
     return w
 
 def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
@@ -491,27 +502,7 @@ def conv_stage_sequence():
     Coarse monotone convection ladder.
     Adjust this if needed, but keep it increasing.
     """
-    return [
-        (0.00, 0.10),
-        (0.00, 0.20),
-        (0.10, 0.30),
-        (0.10, 0.50),
-        (0.20, 0.70),
-        (0.20, 0.90),
-        (0.20, 1.00),
-        (0.30, 1.00),
-        (0.40, 1.00),
-        (0.50, 1.00),
-        (0.60, 1.00),
-        (0.65, 1.00),
-        (0.70, 1.00),
-        (0.75, 1.00),
-        (0.80, 1.00),
-        (0.85, 1.00),
-        (0.90, 1.00),
-        (0.95, 1.00),
-        (1.00, 1.00),
-        ]
+    return [0.20, 0.40, 0.60, 0.65, 0.70, 0.80, 0.90, 1.00]
 
 def refine_conv_interval(left, right, min_interval=0.01):
     """
@@ -628,29 +619,24 @@ def build_ptc_problem(
     Backward-Euler pseudo-transient problem for the mixed steady system.
 
     The pseudo-time mass is added only to velocity and temperature.
-    Pressure remains algebraic.
+    Pressure remains algebraic, which is appropriate for incompressible flow.
     """
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
     p, u, T = fenics.split(w)
     _, u_prev, T_prev = fenics.split(w_prev)
 
-    # IMPORTANT:
-    # dtau, buoyancy_scale, qn_scale, convection_scale are assumed to be
-    # either plain scalars or already-created FEniCS Constants/UFL objects.
-    # Do NOT wrap them again in fenics.Constant(...) here.
-    dtau_c = dtau
-    buoyancy_scale_c = buoyancy_scale
-    qn_scale_c = qn_scale
-    convection_scale_c = convection_scale
+    buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
+    convection_scale_c = fenics.Constant(float(convection_scale))
+    qn_scale_c = fenics.Constant(float(qn_scale))
+    dtau_c = fenics.Constant(float(dtau))
 
-    zero_vec = fenics.Constant((0.0, 0.0))
     convection_term = (
         convection_scale_c * dot(grad(u), u)
-        if include_convection else zero_vec
+        if include_convection else fenics.Constant((0.0, 0.0))
     )
 
-    continuity = -psi_p * div(u)
+    mass = -psi_p * div(u)
 
     pseudo_velocity = (1.0 / dtau_c) * inner(psi_u, u - u_prev)
     pseudo_temperature = (1.0 / dtau_c) * psi_T * (T - T_prev)
@@ -661,56 +647,10 @@ def build_ptc_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - convection_scale_c * T * u)
+    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
 
-    F = (continuity + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
+    F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
-def vector_relative_update(w_new: fenics.Function, w_old: fenics.Function) -> float:
-    dw = w_new.vector().copy()
-    dw.axpy(-1.0, w_old.vector())
-    return dw.norm("l2") / (w_new.vector().norm("l2") + 1e-14)
-
-
-def steady_residual_norm(
-    W,
-    w,
-    psi_p, psi_u, psi_T,
-    mu, Pr, f_b,
-    sub_dx, sub_ds, qn_air,
-    boundary_conditions,
-    buoyancy_scale=1.0,
-    qn_scale=1.0,
-    include_convection=True,
-    convection_scale=1.0,
-) -> float:
-    F_steady, _ = build_nonlinear_problem(
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
-        sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-        buoyancy_scale=buoyancy_scale,
-        qn_scale=qn_scale,
-        include_convection=include_convection,
-        convection_scale=convection_scale,
-    )
-
-    r = fenics.assemble(F_steady)
-    for bc in boundary_conditions:
-        bc.apply(r)
-
-    return r.norm("l2")
-
-
-def collect_observables(w: fenics.Function):
-    p_f, u_f, T_f = w.split(deepcopy=True)
-    return {
-        "u_l2": u_f.vector().norm("l2"),
-        "T_l2": T_f.vector().norm("l2"),
-        "p_l2": p_f.vector().norm("l2"),
-        "u_max_abs": np.max(np.abs(u_f.vector().get_local())) if u_f.vector().local_size() > 0 else 0.0,
-        "T_max": T_f.vector().max(),
-        "T_min": T_f.vector().min(),
-    }
