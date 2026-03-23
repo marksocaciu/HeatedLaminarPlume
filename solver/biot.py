@@ -82,28 +82,9 @@ def _biot_length_from_wire_diameter(wire_diameter, mode="radius"):
 
 
 def compute_local_biot_on_air_submesh(
-    sub_mesh,
-    sub_ft,
-    T_air_dim,
-    qn_air,
-    scales,
-    T_ref,
-    k_wire,
-    Lc,
+    sub_mesh, sub_ft, T_air_dim, qn_air, scales, T_ref, k_wire, Lc,
     interface_tag=INTERFACE_TAG,
 ):
-    """
-    Build a DG0 field with local Biot numbers on air cells touching the interface.
-
-    Parameters
-    ----------
-    T_air_dim : scalar Function on the air submesh [K]
-    qn_air    : DG0 scalar Function on the air submesh [nondim heat flux]
-    scales    : NondimScales, used to dimensionalize qn_air
-    T_ref     : reference temperature [K], usually ambient T_infty
-    k_wire    : wire conductivity [W/m/K]
-    Lc        : characteristic length [m]
-    """
     V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
     Bi = fenics.Function(V0, name="Bi_local")
     Bi.vector().zero()
@@ -111,46 +92,45 @@ def compute_local_biot_on_air_submesh(
     counts = Bi.vector().copy()
     counts.zero()
 
-    qscale = float(scales.qsurf)  # = k_inf * dTref / Lref
+    # robust cellwise temperature representation
+    T0 = fenics.project(T_air_dim, V0)
+
+    qscale = float(scales.qsurf)
     T_ref = float(T_ref)
     k_wire = float(k_wire)
     Lc = float(Lc)
 
-    if k_wire <= 0.0:
-        raise ValueError("k_wire must be positive.")
-    if Lc <= 0.0:
-        raise ValueError("Lc must be positive.")
-
     tdim = sub_mesh.topology().dim()
     sub_mesh.init(tdim - 1, tdim)
+
+    T0_vals = T0.vector().get_local()
+    qn_vals = qn_air.vector().get_local()
+    Bi_vals = Bi.vector().get_local()
+    cnt_vals = counts.get_local()
 
     for f in fenics.facets(sub_mesh):
         if sub_ft[f] != interface_tag:
             continue
 
-        adjacent_cells = list(fenics.cells(f))
-        if not adjacent_cells:
+        cells_adj = list(fenics.cells(f))
+        if not cells_adj:
             continue
-        c = adjacent_cells[0]
-        ci = c.index()
 
-        x = f.midpoint()
-        qn_dim = qscale * qn_air.vector()[ci]   # [W/m^2]
-        Ts = float(T_air_dim(x))                # [K]
+        ci = cells_adj[0].index()
+        qn_dim = qscale * qn_vals[ci]
+        Ts = T0_vals[ci]
         dT = Ts - T_ref
 
         if abs(dT) > 1.0e-14:
-            Bi.vector()[ci] += qn_dim * Lc / (k_wire * dT)
-            counts[ci] += 1.0
+            Bi_vals[ci] += qn_dim * Lc / (k_wire * dT)
+            cnt_vals[ci] += 1.0
 
-    vals = Bi.vector().get_local()
-    cnts = counts.get_local()
-    vals = vals / np.maximum(cnts, 1.0)
-    Bi.vector()[:] = vals
+    Bi_vals = Bi_vals / np.maximum(cnt_vals, 1.0)
+    Bi.vector()[:] = Bi_vals
     Bi.vector().apply("insert")
     return Bi
 
-
+    
 def compute_average_biot(
     sub_ds,
     qn_air,
