@@ -49,8 +49,6 @@ def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_
     print(f"Recovered mean q'' (half)= {qsurf_avg:.6e} W/m^2  (QL_half/L_half)")
     print("===================================")
 
-
-
 def base_version(experiment: Experiment):
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
@@ -568,12 +566,13 @@ def temperature_dependent_version(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_T
     )
 
-    w, info = solve_temp_ptc_continuation(
+    w, info = solve_ptc_temp_continuation(
         experiment,
         W, w, w_n,
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+        fluid_material=fluid_material,
         dtau_init=1e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
@@ -632,6 +631,7 @@ def temperature_dependent_version(experiment: Experiment):
     
     w, transient_info = run_post_temp_continuation_transient(
             experiment=experiment,
+            fluid_material=fluid_material,
             W=W,
             w=w,
             w_n=w_n,
@@ -735,7 +735,6 @@ def temperature_dependent_version(experiment: Experiment):
         t=0
         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
-
 
 def abs_version(experiment: Experiment):
     GEOM_FILE = geometry_template(
@@ -1061,9 +1060,6 @@ def abs_version(experiment: Experiment):
         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
-
-def abs_temperature_dependent_version(experiment: Experiment):
-    pass
 
 def main():
     # Parse command line arguments
