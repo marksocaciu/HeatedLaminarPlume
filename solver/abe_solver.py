@@ -1114,7 +1114,7 @@ def run_post_abe_continuation_transient(
 
             if sub_ft_dim is not None and sub_ds_dim is not None:
                 try:
-                    biot_wrap(
+                    _,_, biots = biot_wrap(
                         sub_mesh=sub_mesh_dim,
                         sub_ft=sub_ft_dim,
                         sub_ds=sub_ds_dim,
@@ -1125,8 +1125,9 @@ def run_post_abe_continuation_transient(
                         k_wire=experiment.wire.properties["k"],
                         wire_diameter=experiment.dimensions.wire.diameter,
                         characteristic_length="radius",
-                        return_local_field=True,
+                        return_local_field=True
                     )
+                    print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
                 except Exception as err:
                     print(f"Biot diagnostic skipped at step {step:04d}: {err}")
 

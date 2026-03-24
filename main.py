@@ -261,7 +261,7 @@ def base_version(experiment: Experiment):
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
     try:
-        biot_wrap(
+        _,_, biots = biot_wrap(
             sub_mesh=sub_mesh_dim,
             sub_ft=sub_ft_dim,
             sub_ds=sub_ds_dim,
@@ -274,6 +274,7 @@ def base_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
@@ -612,7 +613,7 @@ def temperature_dependent_version(experiment: Experiment):
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
     try:
-        biot_wrap(
+        _,_, biots = biot_wrap(
             sub_mesh=sub_mesh_dim,
             sub_ft=sub_ft_dim,
             sub_ds=sub_ds_dim,
@@ -625,6 +626,7 @@ def temperature_dependent_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
@@ -948,7 +950,7 @@ def abs_version(experiment: Experiment):
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
     try:
-        biot_wrap(
+        _,_, biots = biot_wrap(
             sub_mesh=sub_mesh_dim,
             sub_ft=sub_ft_dim,
             sub_ds=sub_ds_dim,
@@ -961,6 +963,7 @@ def abs_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
