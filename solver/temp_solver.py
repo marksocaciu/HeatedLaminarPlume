@@ -1142,7 +1142,7 @@ def run_post_temp_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
+                    print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
                 except Exception as err:
                     print(f"Biot diagnostic skipped at step {step:04d}: {err}")
 

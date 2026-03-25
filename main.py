@@ -963,7 +963,7 @@ def abs_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
