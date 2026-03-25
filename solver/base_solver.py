@@ -949,13 +949,13 @@ def solve_ptc_stage(
             )
         else:
             intermediate_update_tol = max(update_tol, 1e-4)
-            # Early relaxed stages can be acceptable seeds even when the strict
-            # steady residual is not tiny, but the allowed absolute residual must
-            # stay modest and scale with the amount of convection turned on.
-            intermediate_abs_residual_tol = 0.5 + 5.0 * float(convection_scale)
-            # If the residual is not already below the absolute cap, still demand
-            # at least a small but meaningful reduction over the stage.
-            intermediate_required_drop = 0.95  # require at least 5% drop
+            late_stage = float(convection_scale) >= 0.30
+            # Keep intermediate seeds modest. Once convection is appreciable,
+            # demand a genuinely useful residual level instead of allowing large
+            # O(1-10) plateaus to pass through continuation.
+            intermediate_abs_residual_tol = min(0.5, 0.2 + 1.0 * float(convection_scale))
+            # Require a meaningful drop if the residual is not already below the cap.
+            intermediate_required_drop = 0.80  # require at least 20% drop
 
             stage_converged = (
                 rel_update < intermediate_update_tol and
@@ -963,6 +963,7 @@ def solve_ptc_stage(
                 (
                     steady_res < intermediate_abs_residual_tol or
                     (
+                        (not late_stage) and
                         np.isfinite(stage_residual_ratio) and
                         stage_residual_ratio < intermediate_required_drop
                     )
@@ -1008,22 +1009,16 @@ def solve_ptc_stage(
         # continuation level, and the residual has flattened out across the most
         # recent accepted steps, accept this stage as a usable seed instead of
         # forcing it to march until max_steps.
-        if not strict_steady and step >= max(warmup_steps, 6):
+        late_stage = float(convection_scale) >= 0.30
+        if not strict_steady and (not late_stage) and step >= max(warmup_steps, 6):
             finite_recent = [v for v in res_hist[-5:] if np.isfinite(v)]
             if len(finite_recent) >= 4 and np.isfinite(steady_res):
                 rmin_recent = min(finite_recent)
                 rmax_recent = max(finite_recent)
                 plateau_ref = max(abs(initial_stage_res), 1.0) if np.isfinite(initial_stage_res) else 1.0
-                residual_plateaued = (rmax_recent - rmin_recent) <= 0.02 * plateau_ref
+                residual_plateaued = (rmax_recent - rmin_recent) <= 0.01 * plateau_ref
 
-                # For intermediate continuation stages, the absolute steady residual
-                # can legitimately sit well above O(1) while still providing a very
-                # good seed for the next stage. Use a cap tied to the stage-entry
-                # residual instead of a hard small absolute threshold.
-                relaxed_abs_cap = max(
-                    0.5 + 5.0 * float(convection_scale),
-                    1.05 * plateau_ref + 1e-12,
-                )
+                relaxed_abs_cap = min(0.5, 0.2 + 1.0 * float(convection_scale))
 
                 if (
                     rel_update < max(update_tol, 1e-4) and
@@ -1067,24 +1062,23 @@ def solve_ptc_stage(
             # Stronger plateau detector for the final strict-steady stage:
             # if the steady residual stays nearly flat for a sustained window,
             # abort instead of marching indefinitely with tiny pseudo-time updates.
-            if strict_steady and len(finite_res) >= 10:
-                initial_res = finite_res[0]
-                recent_res = finite_res[-10:]
+            if strict_steady and len(finite_res) >= 6 and np.isfinite(steady_res):
+                recent_res = finite_res[-6:]
                 rmin = min(recent_res)
                 rmax = max(recent_res)
-                if initial_res > 0.0:
-                    plateau_band = (rmax - rmin) / initial_res
-                    if rmin > 0.95 * initial_res and plateau_band < 0.02:
-                        print(f"{stage_name}: steady residual plateau detected; aborting final stage.")
-                        info["status"] = "steady_residual_plateau"
-                        info["n_steps"] = step
-                        info["accepted_steps"] = accepted_steps
-                        info["rejected_steps"] = rejected_steps
-                        info["final_dtau"] = dtau
-                        info["final_rel_update"] = rel_update
-                        info["final_steady_residual"] = steady_res
-                        copy_state(w, w_n)
-                        return w, info
+                plateau_band_abs = rmax - rmin
+                plateau_ref = max(abs(steady_res), 1.0)
+                if steady_res > 1.0 and plateau_band_abs <= 0.01 * plateau_ref:
+                    print(f"{stage_name}: large steady residual plateau detected; aborting final stage.")
+                    info["status"] = "steady_residual_plateau"
+                    info["n_steps"] = step
+                    info["accepted_steps"] = accepted_steps
+                    info["rejected_steps"] = rejected_steps
+                    info["final_dtau"] = dtau
+                    info["final_rel_update"] = rel_update
+                    info["final_steady_residual"] = steady_res
+                    copy_state(w, w_n)
+                    return w, info
 
         # dtau controller
         if step < warmup_steps:
@@ -1110,9 +1104,9 @@ def solve_ptc_stage(
                     dtau_c.assign(dtau)
                     print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
                 elif strict_steady and plateauing:
-                    dtau = min(dtau_max, growth_factor * dtau)
+                    dtau = max(dtau_min, shrink_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual plateau with shrinking updates -> grow dtau to {dtau:.3e}")
+                    print(f"Steady residual plateau with shrinking updates -> shrink dtau to {dtau:.3e}")
                 else:
                     print("Keeping dtau unchanged.")
             else:
@@ -1300,8 +1294,8 @@ def run_post_continuation_transient(
     relaxation: float = 1.0,
     max_newton_it: int = 20,
     max_retries_per_step: int = 8,
-    atol: float = 5.0e-7,
-    rtol: float = 5.0e-7,
+    atol: float = 1.0e-9,
+    rtol: float = 1.0e-8,
     rel_update_easy: float = 1.0e-3,
     rel_update_hard: float = 5.0e-3,
     rel_update_reject: float = 2.0e-2,
