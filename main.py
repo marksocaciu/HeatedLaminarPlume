@@ -59,12 +59,12 @@ def base_version(experiment: Experiment):
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
     FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/time_step/base/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/time_step/base/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/time_step/base/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/time_step/base/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/time_step/base/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/time_step/base/air_pvt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/base/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/base/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/base/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/base/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/base/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/base/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
@@ -222,7 +222,7 @@ def base_version(experiment: Experiment):
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        dtau_init=1e-3,
+        dtau_init=5e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
         stage_max_steps=40,
@@ -274,7 +274,7 @@ def base_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
@@ -626,7 +626,7 @@ def temperature_dependent_version(experiment: Experiment):
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}, mean={biots.vector().mean():.6e}")
+        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
         print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
