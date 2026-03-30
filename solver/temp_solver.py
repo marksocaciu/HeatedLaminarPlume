@@ -244,6 +244,7 @@ def material_outer_picard(
 def solve_ptc_temp_stage(
     experiment: Experiment,
     fluid_material: TemperatureDependentMaterial,
+    run_root,
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
@@ -365,9 +366,8 @@ def solve_ptc_temp_stage(
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
     log_path = os.path.join(
-        experiment.name,
-        "time_step",
-        "base",
+        run_root,
+        "temp",
         f"ptc_history_{safe_stage_name}.csv",
     )
     csv_fieldnames = init_ptc_csv(log_path, probe_ys)
@@ -703,6 +703,7 @@ def solve_ptc_temp_continuation(
     mu, Pr, f_b, T_c, T_air_bc,
     sub_dx, sub_ds, sub_ft, qn_air,
     fluid_material: TemperatureDependentMaterial,
+    run_root,
     stages=None,
     save_obj = None,
     dtau_init=1e-5,
@@ -755,6 +756,7 @@ def solve_ptc_temp_continuation(
         w, stage_info, F,JF,boundary_conditions,scales = solve_ptc_temp_stage(
             experiment=experiment,
             fluid_material=fluid_material,
+            run_root=run_root,
             W=W,
             w=w,
             w_n=w_n,

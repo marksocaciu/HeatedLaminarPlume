@@ -401,6 +401,7 @@ def base_version(experiment: Experiment):
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
 def temperature_dependent_version(experiment: Experiment):
+    run_root = make_run_root(experiment.name, "temp")
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
@@ -408,14 +409,14 @@ def temperature_dependent_version(experiment: Experiment):
         ymax=experiment.dimensions.domain.y_max
     )
     MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
-    FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/t_dep_mat/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/t_dep_mat/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/t_dep_mat/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/t_dep_mat/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/t_dep_mat/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/t_dep_mat/air_pvt.xdmf"
+    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
+    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = run_root + "/t_dep_mat/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = run_root + "/t_dep_mat/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = run_root + "/t_dep_mat/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = run_root + "/t_dep_mat/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = run_root + "/t_dep_mat/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/t_dep_mat/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"                             # use uniform heat generation
 
@@ -605,6 +606,7 @@ def temperature_dependent_version(experiment: Experiment):
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
         fluid_material=fluid_material,
+        run_root=run_root,
         dtau_init=1e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
@@ -695,7 +697,7 @@ def temperature_dependent_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
-            history_csv_path=experiment.name + "/time_step/temp/transient_history.csv",
+            history_csv_path=run_root + "/transient_history.csv",
         )
 
     print("transient status:", transient_info["status"])
@@ -758,7 +760,7 @@ def temperature_dependent_version(experiment: Experiment):
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
         
     out_dir=Path.cwd()
-    csv_path = os.path.join(out_dir,experiment.name, "t_dep_mat", "plane_fluxes.csv")
+    csv_path = os.path.join(out_dir,run_root, "temp", "plane_fluxes.csv")
     write_header = not os.path.exists(csv_path)
 
     with open(csv_path, "a", newline="") as f:
