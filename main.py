@@ -66,11 +66,11 @@ def base_version(experiment: Experiment):
     run_root = make_run_root(experiment.name, "base")
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=run_root,
+        output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max
     )
-    MSH_FILE = run_root + "/plume.msh"
+    MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
     FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
     OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
@@ -325,7 +325,7 @@ def base_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
-            history_csv_path=run_root + "/time_step/base/transient_history.csv",
+            history_csv_path=run_root + "/transient_history.csv",
         )
 
     print("transient status:", transient_info["status"])
@@ -756,11 +756,11 @@ def abs_version(experiment: Experiment):
     run_root = make_run_root(experiment.name, "abs")
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=run_root,
+        output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max
     )
-    MSH_FILE = run_root + "/plume.msh"
+    MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
     FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
     OUTPUT_XDMF_PATH_WIRE = run_root + "/abs/wire_temperature.xdmf"
@@ -1015,7 +1015,7 @@ def abs_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
-            history_csv_path=run_root + "/time_step/abs/transient_history.csv",
+            history_csv_path=run_root + "/transient_history.csv",
         )
 
     print("transient status:", transient_info["status"])
@@ -1032,14 +1032,14 @@ def abs_version(experiment: Experiment):
     )
 
     # plotting + output
-    plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
-                cmap="coolwarm", colorbar=True)
-    plot_mesh(theta, title="Temperature field", label="Temperature (nondim)",
-                cmap="coolwarm", colorbar=True)
-    plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
-                cmap="coolwarm", colorbar=True, mode="glyphs")
-    plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
-                cmap="coolwarm", colorbar=True)
+    # plot_mesh(T_dim, title="Temperature field", label="Temperature (K)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(theta, title="Temperature field", label="Temperature (nondim)",
+    #             cmap="coolwarm", colorbar=True)
+    # plot_mesh(u_dim, title="Velocity magnitude", label="Velocity (m/s)",
+    #             cmap="coolwarm", colorbar=True, mode="glyphs")
+    # plot_mesh(p_dim, title="Pressure field", label="Pressure (Pa)",
+    #             cmap="coolwarm", colorbar=True)
 
     save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_star, [p_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
