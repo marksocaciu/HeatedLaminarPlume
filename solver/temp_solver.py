@@ -153,6 +153,93 @@ def solve_temp_newton_continuation(
         w.vector().apply("insert")
     return w
 
+def theta_to_dimensional_temperature(
+    theta_src: fenics.Function,
+    scales,
+    T_ambient: float,
+):
+    """
+    Convert nondimensional theta on the air submesh to dimensional temperature.
+
+    T_dim = T_ambient + dTref * theta
+    """
+    T_dim = theta_src.copy(deepcopy=True)
+    T_dim.rename("T_dim_material", "T_dim_material")
+    T_dim.vector()[:] *= float(scales.dTref)
+
+    ones = theta_src.copy(deepcopy=True)
+    ones.vector()[:] = 1.0
+    T_dim.vector().axpy(float(T_ambient), ones.vector())
+    T_dim.vector().apply("insert")
+    return T_dim
+
+
+def update_material_from_mixed_temperature(
+    w_mixed: fenics.Function,
+    fluid_material,
+    scales,
+    T_ambient: float,
+):
+    """
+    Update temperature-dependent material fields from the current mixed state.
+
+    The temperature component of the mixed state is nondimensional theta on the
+    air submesh. The material model is updated with dimensional temperature.
+    """
+    theta = w_mixed.sub(2, deepcopy=True)
+    T_dim = theta_to_dimensional_temperature(theta, scales, T_ambient)
+    fluid_material.update(T_dim)
+    return theta, T_dim
+
+
+def material_outer_picard(
+    w: fenics.Function,
+    boundary_conditions,
+    F,
+    JF,
+    fluid_material,
+    scales,
+    T_ambient: float,
+    material_max_it: int = 8,
+    material_rtol: float = 1.0e-6,
+    newton_relaxation: float = 0.9,
+    newton_maxit: int = 20,
+    newton_atol: float = 1.0e-9,
+    newton_rtol: float = 1.0e-8,
+):
+    """
+    Frozen-coefficient outer iteration.
+
+    Coefficient Functions inside F/JF are assumed to be mutable objects owned by
+    ``fluid_material``. That means the forms do not need to be rebuilt, as long as
+    the material model updates those Functions in place.
+    """
+    theta_old = w.sub(2, deepcopy=True)
+    rel = float("inf")
+    for it in range(int(material_max_it)):
+        update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
+
+        base_solver(
+            F, w, boundary_conditions, JF,
+            relaxation=newton_relaxation,
+            maxit=newton_maxit,
+            atol=newton_atol,
+            rtol=newton_rtol,
+        )
+
+        theta_new = w.sub(2, deepcopy=True)
+        diff = (theta_new.vector() - theta_old.vector()).norm("l2")
+        norm = theta_old.vector().norm("l2") + 1.0e-14
+        rel = diff / norm
+        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+
+        if rel < float(material_rtol):
+            return w, rel, it + 1
+
+        theta_old.assign(theta_new)
+
+    return w, rel, int(material_max_it)
+
 
 def solve_ptc_temp_stage(
     experiment: Experiment,
@@ -191,6 +278,8 @@ def solve_ptc_temp_stage(
     x_probe=0.0,
     stage_name="ptc_stage",
     strict_steady=True,
+    material_max_it=8,
+    material_rtol=1.0e-6,
 ):
     """
     Solve one pseudo-transient continuation stage with fixed
@@ -247,6 +336,9 @@ def solve_ptc_temp_stage(
 
     copy_state(w_prev, w_n)
 
+    # Initialize coefficient fields from the accepted state before forms are built.
+    update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+
     # Build reusable forms once
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
@@ -263,7 +355,7 @@ def solve_ptc_temp_stage(
     F_steady, JF_steady = build_nonlinear_problem(
         W=W, w=w,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
+        mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b,
         sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
         buoyancy_scale=buoyancy_scale_c,
         qn_scale=qn_scale_c,
@@ -295,12 +387,27 @@ def solve_ptc_temp_stage(
         print(f"\n=== {stage_name} | step {step:04d} | dtau={dtau:.3e} ===")
 
         try:
-            base_solver(
-                F_ptc, w, boundary_conditions, JF_ptc,
-                relaxation=ptc_relaxation,
-                maxit=ptc_max_newton_it,
-                atol=ptc_atol,
-                rtol=ptc_rtol,
+            # base_solver(
+            #     F_ptc, w, boundary_conditions, JF_ptc,
+            #     relaxation=ptc_relaxation,
+            #     maxit=ptc_max_newton_it,
+            #     atol=ptc_atol,
+            #     rtol=ptc_rtol,
+            # )
+            w, _, _ = material_outer_picard(
+                w=w,
+                boundary_conditions=boundary_conditions,
+                F=F_ptc,
+                JF=JF_ptc,
+                fluid_material=fluid_material,
+                scales=scales,
+                T_ambient=T_ambient,
+                material_max_it=material_max_it,
+                material_rtol=material_rtol,
+                newton_relaxation=ptc_relaxation,
+                newton_maxit=ptc_max_newton_it,
+                newton_atol=ptc_atol,
+                newton_rtol=ptc_rtol,
             )
         except RuntimeError as err:
             rejected_steps += 1
@@ -672,39 +779,9 @@ def solve_ptc_temp_continuation(
             ptc_atol=1e-7,
             ptc_rtol=1e-7,
             ptc_max_newton_it=20,
+            material_max_it=8,
+            material_rtol=1.0e-6,
         )
-
-        # Initialize
-        # copy_state(w, w_n)
-        # Outer loop: update materials from last temperature, then Newton solve
-        _, _, T_old = w.split(True)
-
-        for it in range(max_it):
-            fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
-
-            # Newton solve with frozen coefficients
-            w = base_solver(
-                F, w, boundary_conditions, JF,
-                relaxation=0.9,
-                maxit=20,
-                atol=1e-9,
-                rtol=1e-8,
-            )
-
-            _, _, T_new = w.split(True)
-
-            # convergence check on temperature (choose your norm)
-            diff = (T_new.vector() - T_old.vector()).norm("l2")
-            norm = T_old.vector().norm("l2") + 1e-14
-            rel  = diff / norm
-
-            print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
-
-            if rel < rtol:
-                break
-
-            T_old.assign(T_new)
-
 
         continuation_history.append({
             "stage": stage_name,
@@ -821,6 +898,7 @@ def run_post_temp_continuation_transient(
         step_max = int(n_steps)
 
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+    update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
 
     copy_state(w, w_n)
     w_prev = fenics.Function(W)
@@ -978,7 +1056,7 @@ def run_post_temp_continuation_transient(
                 w=w,
                 w_prev=w_prev,
                 psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-                mu=mu, Pr=Pr, f_b=f_b,
+                mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b,
                 sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
                 dtau=dt,
                 buoyancy_scale=1.0,
@@ -988,51 +1066,31 @@ def run_post_temp_continuation_transient(
             )
 
             try:
-                w, n_newton, _ = base_solver(
-                    F_tr, w, boundary_conditions, JF_tr,
-                    relaxation=relaxation,
-                    maxit=max_newton_it,
-                    atol=atol,
-                    rtol=rtol,
-                    return_meta=True,
-                )
+                # w, n_newton, _ = base_solver(
+                #     F_tr, w, boundary_conditions, JF_tr,
+                #     relaxation=relaxation,
+                #     maxit=max_newton_it,
+                #     atol=atol,
+                #     rtol=rtol,
+                #     return_meta=True,
+                # )
 
-                # Initialize
-                # w.vector()[:] = w_n.vector()
-                # copy_state(w, w_n)
-                # Outer loop: update materials from last temperature, then Newton solve
-                _, _, T_old = w.split(True)
-
-                for it in range(max_it):
-                    fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
-
-                    # Newton solve with frozen coefficients
-                    w = base_solver(
-                        F_tr, w, boundary_conditions, JF_tr,
-                        relaxation=0.9,
-                        maxit=20,
-                        atol=1e-9,
-                        rtol=1e-8,
-                    )
-
-                    _, _, T_new = w.split(True)
-
-                    # convergence check on temperature (choose your norm)
-                    diff = (T_new.vector() - T_old.vector()).norm("l2")
-                    norm = T_old.vector().norm("l2") + 1e-14
-                    rel  = diff / norm
-
-                    print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
-
-                    if rel < rtol:
-                        break
-
-                    T_old.assign(T_new)
-
-                # keep working function synchronized with accepted state
-                # w.vector()[:] = w_n.vector()
-                # w.vector().apply("insert")
-                # copy_state(w_n, w)
+                w, _, _ = material_outer_picard(
+                    w=w,
+                    boundary_conditions=boundary_conditions,
+                    F=F_tr,
+                    JF=JF_tr,
+                    fluid_material=fluid_material,
+                    scales=scales,
+                    T_ambient=T_ambient,
+                    material_max_it=8,
+                    material_rtol=1.0e-6,
+                    newton_relaxation=relaxation,
+                    newton_maxit=max_newton_it,
+                    newton_atol=atol,
+                    newton_rtol=rtol,
+                 )
+                n_newton = None
 
                 delta = w.vector().copy()
                 delta.axpy(-1.0, w_n.vector())

@@ -232,12 +232,12 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     return F,w, boundary_conditions, JF, w_n
 
-def _build_temperature_assigner(W: fenics.FunctionSpace):
+def build_temperature_assigner(W: fenics.FunctionSpace):
     VT, _ = W.sub(2).collapse(True)
     assign_T = fenics.FunctionAssigner(W.sub(2), VT)
     return VT, assign_T
 
-def _assign_mixed_temperature(
+def assign_mixed_temperature(
     w_mixed: fenics.Function,
     theta_src: fenics.Function,
     VT: fenics.FunctionSpace,
@@ -252,7 +252,27 @@ def _assign_mixed_temperature(
     w_mixed.vector().apply("insert")
     return theta_tmp
 
-def _build_linear_startup_problem(
+def update_material_from_mixed_temperature(
+    fluid_material: TemperatureDependentMaterial,
+    w_mixed: fenics.Function,
+    scales,
+    T_ambient: float,
+):
+    """
+    Update temperature-dependent material fields from the mixed-state temperature.
+
+    The mixed variable stores nondimensional theta on the star-scaled air mesh.
+    We convert it back to dimensional temperature before calling
+    ``fluid_material.update(...)``.
+    """
+    theta = w_mixed.sub(2, deepcopy=True)
+    T_dim = fenics.Function(theta.function_space())
+    T_dim.vector()[:] = float(T_ambient) + float(scales.dTref) * theta.vector()[:]
+    T_dim.vector().apply("insert")
+    fluid_material.update(T_dim)
+    return T_dim
+
+def build_linear_startup_problem(
     experiment: Experiment,
     W: fenics.FunctionSpace,
     mu, Pr,
@@ -324,7 +344,7 @@ def stokes_initial_guess(
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
     # cache temperature assignment machinery
-    VT, assign_T = _build_temperature_assigner(W)
+    VT, assign_T = build_temperature_assigner(W)
     theta_tmp = fenics.Function(VT)
 
     # reference temperature field for continuation scaling
@@ -346,14 +366,14 @@ def stokes_initial_guess(
         theta_lam.vector()[:] *= float(lam)
         theta_lam.vector().apply("insert")
 
-        _assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
+        assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
 
         # start each stage from latest accepted mixed state
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
 
         print("  -> Stage A: conduction-only solve")
-        a_cond, L_cond = _build_linear_startup_problem(
+        a_cond, L_cond = build_linear_startup_problem(
             experiment=experiment,
             W=W,
             mu=mu,
@@ -373,7 +393,7 @@ def stokes_initial_guess(
         w_n.vector().apply("insert")
 
         print("  -> Stage B: frozen-temperature Stokes solve")
-        a_stokes, L_stokes = _build_linear_startup_problem(
+        a_stokes, L_stokes = build_linear_startup_problem(
             experiment=experiment,
             W=W,
             mu=mu,
@@ -389,6 +409,95 @@ def stokes_initial_guess(
 
         w_n.assign(w)
         w_n.vector().apply("insert")
+
+    return w_n
+
+def stokes_initial_guess_temp(
+    experiment: Experiment,
+    u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+    W: fenics.FunctionSpace, w: fenics.Function,
+    psi_p, psi_u, psi_T,
+    mu, Pr, f_b, T_c, T_air_bc,
+    sub_dx, sub_ds, sub_ft, qn_air,
+    fluid_material: TemperatureDependentMaterial,
+    w_n: fenics.Function,
+    T_ambient: float,
+    lambdas=(0.10, 0.25, 0.50, 1.00),
+):
+    """
+    Temperature-dependent startup.
+
+    Coefficients are frozen during each linear startup solve, but updated from the
+    current mixed-state temperature before each lambda stage and again after the
+    accepted startup state is written back into ``w_n``.
+    """
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    VT, assign_T = build_temperature_assigner(W)
+    theta_tmp = fenics.Function(VT)
+
+    theta_ref = fenics.Function(VT)
+    theta_ref.vector()[:] = w_n.sub(2, deepcopy=True).vector()
+    theta_ref.vector().apply("insert")
+
+    theta_lam = fenics.Function(VT)
+
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
+
+    for lam in lambdas:
+        print(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
+
+        theta_lam.vector()[:] = theta_ref.vector()
+        theta_lam.vector()[:] *= float(lam)
+        theta_lam.vector().apply("insert")
+
+        assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
+        update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
+
+        w.vector()[:] = w_n.vector()
+        w.vector().apply("insert")
+
+        print("  -> Stage A: conduction-only solve")
+        a_cond, L_cond = build_linear_startup_problem(
+            experiment=experiment,
+            W=W,
+            mu=fluid_material.mu,
+            Pr=fluid_material.Pr,
+            sub_dx=sub_dx,
+            sub_ds=sub_ds,
+            qn_air=qn_air,
+            qn_scale=lam,
+            frozen_buoyancy_temperature=None,
+            scales=scales,
+        )
+        w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
+
+        theta_cond = w.sub(2, deepcopy=True)
+
+        w_n.assign(w)
+        w_n.vector().apply("insert")
+        update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
+
+        print("  -> Stage B: frozen-temperature Stokes solve")
+        a_stokes, L_stokes = build_linear_startup_problem(
+            experiment=experiment,
+            W=W,
+            mu=fluid_material.mu,
+            Pr=fluid_material.Pr,
+            sub_dx=sub_dx,
+            sub_ds=sub_ds,
+            qn_air=qn_air,
+            qn_scale=lam,
+            frozen_buoyancy_temperature=theta_cond,
+            scales=scales,
+        )
+        w = solve_linear_problem(a_stokes, L_stokes, w, boundary_conditions)
+
+        w_n.assign(w)
+        w_n.vector().apply("insert")
+        update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
     return w_n
 
