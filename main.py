@@ -14,6 +14,19 @@ from solver.base_solver import *
 from solver.abe_solver import *
 from solver.temp_solver import *
 
+
+def make_run_root(experiment_name: str, mode: str) -> str:
+    """
+    Create a unique per-run output directory.
+    This prevents parallel base/ABE runs from clobbering each other's
+    mesh/XDMF/HDF5 files.
+    """
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    pid = os.getpid()
+    run_root = os.path.join(experiment_name, "runs", f"{mode}_{stamp}_pid{pid}")
+    os.makedirs(run_root, exist_ok=True)
+    return run_root
+
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
     # 1) dimensionalize qn_air: qn_dim [W/m^2]
     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
@@ -50,21 +63,22 @@ def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_
     print("===================================")
 
 def base_version(experiment: Experiment):
+    run_root = make_run_root(experiment.name, "base")
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=experiment.name,
+        output_path=run_root,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max
     )
-    MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
-    FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/base/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/base/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/base/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/base/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/base/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/base/air_pvt.xdmf"
+    MSH_FILE = run_root + "/plume.msh"
+    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
+    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = run_root + "/base/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = run_root + "/base/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = run_root + "/base/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = run_root + "/base/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/base/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
@@ -311,7 +325,7 @@ def base_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
-            history_csv_path=experiment.name + "/time_step/base/transient_history.csv",
+            history_csv_path=run_root + "/time_step/base/transient_history.csv",
         )
 
     print("transient status:", transient_info["status"])
@@ -374,7 +388,7 @@ def base_version(experiment: Experiment):
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
         
     out_dir=Path.cwd()
-    csv_path = os.path.join(out_dir,experiment.name, "base", "plane_fluxes.csv")
+    csv_path = os.path.join(out_dir,run_root, "base", "plane_fluxes.csv")
     write_header = not os.path.exists(csv_path)
 
     with open(csv_path, "a", newline="") as f:
@@ -739,21 +753,22 @@ def temperature_dependent_version(experiment: Experiment):
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
 def abs_version(experiment: Experiment):
+    run_root = make_run_root(experiment.name, "abs")
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=experiment.name,
+        output_path=run_root,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max
     )
-    MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = experiment.name + "/plume.xdmf"
-    FACETS_XDMF_PATH = experiment.name + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = experiment.name + "/abs/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = experiment.name + "/abs/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = experiment.name + "/abs/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = experiment.name + "/abs/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = experiment.name + "/abs/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = experiment.name + "/abs/air_pvt.xdmf"
+    MSH_FILE = run_root + "/plume.msh"
+    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
+    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+    OUTPUT_XDMF_PATH_WIRE = run_root + "/abs/wire_temperature.xdmf"
+    OUTPUT_XDMF_PATH_TEMP = run_root + "/abs/temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_T = run_root + "/abs/air_temperature.xdmf"
+    OUTPUT_XDMF_PATH_AIR_P = run_root + "/abs/air_pressure.xdmf"
+    OUTPUT_XDMF_PATH_AIR_V = run_root + "/abs/air_velocity.xdmf"
+    OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/abs/air_pvt.xdmf"
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
@@ -1000,7 +1015,7 @@ def abs_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
-            history_csv_path=experiment.name + "/time_step/abs/transient_history.csv",
+            history_csv_path=run_root + "/time_step/abs/transient_history.csv",
         )
 
     print("transient status:", transient_info["status"])
@@ -1052,7 +1067,7 @@ def abs_version(experiment: Experiment):
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
     
     out_dir=Path.cwd()
-    csv_path = os.path.join(out_dir,experiment.name, "abs", "plane_fluxes.csv")
+    csv_path = os.path.join(out_dir,run_root, "abs", "plane_fluxes.csv")
     write_header = not os.path.exists(csv_path)
 
     with open(csv_path, "a", newline="") as f:
