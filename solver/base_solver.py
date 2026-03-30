@@ -703,8 +703,96 @@ def solve_pseudo_transient_continuation_problem(
 
     return w, info
 
+def _theta_to_dimensional_temperature(
+    theta_src: fenics.Function,
+    scales,
+    T_ambient: float,
+):
+    """
+    Convert nondimensional theta on the air submesh to dimensional temperature.
+
+    T_dim = T_ambient + dTref * theta
+    """
+    T_dim = theta_src.copy(deepcopy=True)
+    T_dim.rename("T_dim_material", "T_dim_material")
+    T_dim.vector()[:] *= float(scales.dTref)
+
+    ones = theta_src.copy(deepcopy=True)
+    ones.vector()[:] = 1.0
+    T_dim.vector().axpy(float(T_ambient), ones.vector())
+    T_dim.vector().apply("insert")
+    return T_dim
+
+
+def _update_material_from_mixed_temperature(
+    w_mixed: fenics.Function,
+    fluid_material,
+    scales,
+    T_ambient: float,
+):
+    """
+    Update temperature-dependent material fields from the current mixed state.
+
+    The temperature component of the mixed state is nondimensional theta on the
+    air submesh. The material model is updated with dimensional temperature.
+    """
+    theta = w_mixed.sub(2, deepcopy=True)
+    T_dim = _theta_to_dimensional_temperature(theta, scales, T_ambient)
+    fluid_material.update(T_dim)
+    return theta, T_dim
+
+
+def _material_outer_picard(
+    w: fenics.Function,
+    boundary_conditions,
+    F,
+    JF,
+    fluid_material,
+    scales,
+    T_ambient: float,
+    material_max_it: int = 8,
+    material_rtol: float = 1.0e-6,
+    newton_relaxation: float = 0.9,
+    newton_maxit: int = 20,
+    newton_atol: float = 1.0e-9,
+    newton_rtol: float = 1.0e-8,
+):
+    """
+    Frozen-coefficient outer iteration.
+
+    Coefficient Functions inside F/JF are assumed to be mutable objects owned by
+    ``fluid_material``. That means the forms do not need to be rebuilt, as long as
+    the material model updates those Functions in place.
+    """
+    theta_old = w.sub(2, deepcopy=True)
+    rel = float("inf")
+    for it in range(int(material_max_it)):
+        _update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
+
+        base_solver(
+            F, w, boundary_conditions, JF,
+            relaxation=newton_relaxation,
+            maxit=newton_maxit,
+            atol=newton_atol,
+            rtol=newton_rtol,
+        )
+
+        theta_new = w.sub(2, deepcopy=True)
+        diff = (theta_new.vector() - theta_old.vector()).norm("l2")
+        norm = theta_old.vector().norm("l2") + 1.0e-14
+        rel = diff / norm
+        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+
+        if rel < float(material_rtol):
+            return w, rel, it + 1
+
+        theta_old.assign(theta_new)
+
+    return w, rel, int(material_max_it)
+
 def solve_ptc_stage(
     experiment: Experiment,
+    run_root,
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
@@ -739,6 +827,8 @@ def solve_ptc_stage(
     x_probe=0.0,
     stage_name="ptc_stage",
     strict_steady=True,
+    material_max_it=8,
+    material_rtol=1.0e-6,
 ):
     """
     Solve one pseudo-transient continuation stage with fixed
@@ -799,7 +889,7 @@ def solve_ptc_stage(
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
+        mu=fluid_material.mu, Pr=Pr, f_b=f_b,
         sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
         dtau=dtau_c,
         buoyancy_scale=buoyancy_scale_c,
@@ -821,7 +911,7 @@ def solve_ptc_stage(
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
     log_path = os.path.join(
-        experiment.name,
+        run_root,
         "base",
         f"ptc_history_{safe_stage_name}.csv",
     )
@@ -1138,6 +1228,7 @@ def solve_ptc_continuation(
     sub_dx, sub_ds, sub_ft, qn_air,
     stages=None,
     save_obj = None,
+    run_root = None,
     dtau_init=1e-5,
     dtau_min=1e-8,
     dtau_max=1e-4,
@@ -1183,6 +1274,7 @@ def solve_ptc_continuation(
 
         w, stage_info = solve_ptc_stage(
             experiment=experiment,
+            run_root=run_root,
             W=W,
             w=w,
             w_n=w_n,

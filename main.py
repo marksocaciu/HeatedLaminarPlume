@@ -236,6 +236,7 @@ def base_version(experiment: Experiment):
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+        run_root=run_root,
         dtau_init=5e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
@@ -922,6 +923,7 @@ def abs_version(experiment: Experiment):
 
     w, info = solve_ptc_abe_continuation(
         experiment,
+        run_root,
         W, w, w_n,
         psi_p, psi_u, psi_T,
         mu, Pr, f_b, T_c, T_air_bc,

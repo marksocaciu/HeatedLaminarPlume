@@ -218,6 +218,7 @@ def build_ptc_abe_problem(
 
 def solve_abe_ptc_stage(
     experiment: Experiment,
+    run_root,
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
@@ -336,7 +337,7 @@ def solve_abe_ptc_stage(
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
     log_path = os.path.join(
-        experiment.name,
+        run_root,
         "abs",
         f"ptc_history_{safe_stage_name}.csv",
     )
@@ -651,6 +652,7 @@ def solve_abe_ptc_stage(
 
 def solve_ptc_abe_continuation(
     experiment: Experiment,
+    run_root,
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
@@ -704,6 +706,7 @@ def solve_ptc_abe_continuation(
 
         w, stage_info = solve_abe_ptc_stage(
             experiment=experiment,
+            run_root=run_root,
             W=W,
             w=w,
             w_n=w_n,
