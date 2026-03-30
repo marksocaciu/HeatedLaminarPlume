@@ -156,6 +156,7 @@ def solve_temp_newton_continuation(
 
 def solve_ptc_temp_stage(
     experiment: Experiment,
+    fluid_material: TemperatureDependentMaterial,
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
@@ -250,7 +251,7 @@ def solve_ptc_temp_stage(
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b,
+        mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b,
         sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
         dtau=dtau_c,
         buoyancy_scale=buoyancy_scale_c,
@@ -646,11 +647,12 @@ def solve_ptc_temp_continuation(
 
         w, stage_info, F,JF,boundary_conditions,scales = solve_ptc_temp_stage(
             experiment=experiment,
+            fluid_material=fluid_material,
             W=W,
             w=w,
             w_n=w_n,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
             sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
             buoyancy_scale=lam,
             qn_scale=lam,
@@ -671,6 +673,38 @@ def solve_ptc_temp_continuation(
             ptc_rtol=1e-7,
             ptc_max_newton_it=20,
         )
+
+        # Initialize
+        # copy_state(w, w_n)
+        # Outer loop: update materials from last temperature, then Newton solve
+        _, _, T_old = w.split(True)
+
+        for it in range(max_it):
+            fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
+
+            # Newton solve with frozen coefficients
+            w = base_solver(
+                F, w, boundary_conditions, JF,
+                relaxation=0.9,
+                maxit=20,
+                atol=1e-9,
+                rtol=1e-8,
+            )
+
+            _, _, T_new = w.split(True)
+
+            # convergence check on temperature (choose your norm)
+            diff = (T_new.vector() - T_old.vector()).norm("l2")
+            norm = T_old.vector().norm("l2") + 1e-14
+            rel  = diff / norm
+
+            print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+
+            if rel < rtol:
+                break
+
+            T_old.assign(T_new)
+
 
         continuation_history.append({
             "stage": stage_name,
@@ -720,43 +754,6 @@ def solve_ptc_temp_continuation(
             save_experiment(p_out, save_obj[1], [p_dim])
             save_experiment(u_out, save_obj[1], [u_dim])
             save_experiment(t_out, save_obj[1], [T_dim])
-
-    # Initialize
-    # w.vector()[:] = w_n.vector()
-    copy_state(w, w_n)
-    # Outer loop: update materials from last temperature, then Newton solve
-    _, _, T_old = w.split(True)
-
-    for it in range(max_it):
-        fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
-
-        # Newton solve with frozen coefficients
-        w = base_solver(
-            F, w, boundary_conditions, JF,
-            relaxation=0.9,
-            maxit=20,
-            atol=1e-9,
-            rtol=1e-8,
-        )
-
-        _, _, T_new = w.split(True)
-
-        # convergence check on temperature (choose your norm)
-        diff = (T_new.vector() - T_old.vector()).norm("l2")
-        norm = T_old.vector().norm("l2") + 1e-14
-        rel  = diff / norm
-
-        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
-
-        if rel < rtol:
-            break
-
-        T_old.assign(T_new)
-
-     # keep working function synchronized with accepted state
-    # w.vector()[:] = w_n.vector()
-    # w.vector().apply("insert")
-    copy_state(w_n, w)
 
     return w, {
         "status": "continuation_complete",
