@@ -337,7 +337,6 @@ def solve_abe_ptc_stage(
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
     log_path = os.path.join(
         experiment.name,
-        "time_step",
         "abs",
         f"ptc_history_{safe_stage_name}.csv",
     )
