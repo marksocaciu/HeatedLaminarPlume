@@ -889,7 +889,7 @@ def solve_ptc_stage(
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=fluid_material.mu, Pr=Pr, f_b=f_b,
+        mu=mu, Pr=Pr, f_b=f_b,
         sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
         dtau=dtau_c,
         buoyancy_scale=buoyancy_scale_c,
