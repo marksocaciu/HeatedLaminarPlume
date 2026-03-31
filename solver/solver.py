@@ -680,7 +680,10 @@ def stokes_initial_guess_temp(
     # Temperature-only space and assigner
     VT, assign_T = build_temperature_assigner(W)
     theta_tmp = fenics.Function(VT)
-    W_pu = fenics.FunctionSpace(W.mesh(), fenics.MixedElement([psi_p, psi_u]))
+    # W_pu = fenics.FunctionSpace(W.mesh(), fenics.MixedElement([psi_p, psi_u]))
+    mixed_el = W.ufl_element()
+    p_el, u_el, T_el = mixed_el.sub_elements()
+    W_pu = fenics.FunctionSpace(W.mesh(), fenics.MixedElement([p_el, u_el]))
     bcs_stokes = set_bcs_stokes_only(W_pu, experiment, scales)
 
     print("\nStokes-only BC dof counts:")
