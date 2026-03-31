@@ -1114,8 +1114,8 @@ def main():
     experiment = experiment_list[args.experiment_index]
     print(f"Running experiment: {experiment.name}")
 
-    base_version(experiment)
-    # temperature_dependent_version(experiment)
+    # base_version(experiment)
+    temperature_dependent_version(experiment)
     # abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 

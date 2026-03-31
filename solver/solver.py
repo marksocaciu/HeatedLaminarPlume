@@ -412,6 +412,159 @@ def stokes_initial_guess(
 
     return w_n
 
+def build_temperature_bcs(
+    VT: fenics.FunctionSpace,
+    sub_ft,
+    T_air_bc,
+    T_c,
+    experiment: Experiment,
+    scales,
+):
+    """
+    Temperature-only BCs for the startup conduction solve.
+
+    This mirrors the temperature part of set_bcs(...):
+      - theta = 0 on the east boundary
+    """
+    class EastBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                x[0], experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
+            )
+
+    east = EastBoundary()
+
+    T_bcs = [
+        fenics.DirichletBC(VT, fenics.Constant(0.0), east),
+    ]
+    return T_bcs
+
+
+def solve_temperature_only_startup(
+    VT: fenics.FunctionSpace,
+    Pr,
+    sub_dx,
+    sub_ds,
+    qn_air,
+    qn_scale=1.0,
+    T_bcs=None,
+    linear_solver="mumps",
+):
+    """
+    Solve only the scalar conduction problem on the temperature space VT:
+
+        -div((1/Pr) grad(theta)) = 0   in air
+        (1/Pr) grad(theta)·n = qn_scale * qn_air   on interface
+
+    in weak form:
+        ∫ grad(s)·((1/Pr) grad(T)) dx = ∫ qn_scale * qn_air * s ds
+    """
+    T = fenics.TrialFunction(VT)
+    s = fenics.TestFunction(VT)
+
+    aT = fenics.dot(fenics.grad(s), (1.0 / Pr) * fenics.grad(T)) * sub_dx
+    LT = fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+
+    theta = fenics.Function(VT)
+    problem = fenics.LinearVariationalProblem(aT, LT, theta, T_bcs or [])
+    solver = fenics.LinearVariationalSolver(problem)
+
+    prm = solver.parameters
+    prm["linear_solver"] = linear_solver
+
+    solver.solve()
+    theta.vector().apply("insert")
+    return theta
+
+# def stokes_initial_guess_temp(
+#     experiment: Experiment,
+#     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+#     W: fenics.FunctionSpace, w: fenics.Function,
+#     psi_p, psi_u, psi_T,
+#     mu, Pr, f_b, T_c, T_air_bc,
+#     sub_dx, sub_ds, sub_ft, qn_air,
+#     fluid_material: TemperatureDependentMaterial,
+#     w_n: fenics.Function,
+#     T_ambient: float,
+#     lambdas=(0.10, 0.25, 0.50, 1.00),
+# ):
+#     """
+#     Temperature-dependent startup.
+
+#     Coefficients are frozen during each linear startup solve, but updated from the
+#     current mixed-state temperature before each lambda stage and again after the
+#     accepted startup state is written back into ``w_n``.
+#     """
+#     scales = compute_nondimensional_scales(experiment)
+#     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+#     VT, assign_T = build_temperature_assigner(W)
+#     theta_tmp = fenics.Function(VT)
+
+#     theta_ref = fenics.Function(VT)
+#     theta_ref.vector()[:] = w_n.sub(2, deepcopy=True).vector()
+#     theta_ref.vector().apply("insert")
+
+#     theta_lam = fenics.Function(VT)
+
+#     w.vector()[:] = w_n.vector()
+#     w.vector().apply("insert")
+
+#     for lam in lambdas:
+#         print(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
+
+#         theta_lam.vector()[:] = theta_ref.vector()
+#         theta_lam.vector()[:] *= float(lam)
+#         theta_lam.vector().apply("insert")
+
+#         assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
+#         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
+
+#         w.vector()[:] = w_n.vector()
+#         w.vector().apply("insert")
+
+#         print("  -> Stage A: conduction-only solve")
+#         a_cond, L_cond = build_linear_startup_problem(
+#             experiment=experiment,
+#             W=W,
+#             mu=fluid_material.mu,
+#             Pr=fluid_material.Pr,
+#             sub_dx=sub_dx,
+#             sub_ds=sub_ds,
+#             qn_air=qn_air,
+#             qn_scale=lam,
+#             frozen_buoyancy_temperature=None,
+#             scales=scales,
+#         )
+#         w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
+
+#         theta_cond = w.sub(2, deepcopy=True)
+
+#         w_n.assign(w)
+#         w_n.vector().apply("insert")
+#         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
+
+#         print("  -> Stage B: frozen-temperature Stokes solve")
+#         a_stokes, L_stokes = build_linear_startup_problem(
+#             experiment=experiment,
+#             W=W,
+#             mu=fluid_material.mu,
+#             Pr=fluid_material.Pr,
+#             sub_dx=sub_dx,
+#             sub_ds=sub_ds,
+#             qn_air=qn_air,
+#             qn_scale=lam,
+#             frozen_buoyancy_temperature=theta_cond,
+#             scales=scales,
+#         )
+#         w = solve_linear_problem(a_stokes, L_stokes, w, boundary_conditions)
+
+#         w_n.assign(w)
+#         w_n.vector().apply("insert")
+#         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
+
+#     return w_n
+
 def stokes_initial_guess_temp(
     experiment: Experiment,
     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
@@ -427,60 +580,86 @@ def stokes_initial_guess_temp(
     """
     Temperature-dependent startup.
 
-    Coefficients are frozen during each linear startup solve, but updated from the
-    current mixed-state temperature before each lambda stage and again after the
-    accepted startup state is written back into ``w_n``.
+    Stage A:
+        solve temperature only on VT
+    Stage B:
+        solve mixed frozen-temperature Stokes problem on W
+
+    Material coefficients are updated from the accepted mixed temperature state.
     """
     scales = compute_nondimensional_scales(experiment)
+
+    # Mixed BCs for Stage B
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
+    # Temperature-only space and assigner
     VT, assign_T = build_temperature_assigner(W)
     theta_tmp = fenics.Function(VT)
 
+    # Temperature-only BCs for Stage A
+    T_bcs = build_temperature_bcs(VT, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    # Reference temperature field from initial mixed state
     theta_ref = fenics.Function(VT)
     theta_ref.vector()[:] = w_n.sub(2, deepcopy=True).vector()
     theta_ref.vector().apply("insert")
 
     theta_lam = fenics.Function(VT)
 
+    # working state
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
 
     for lam in lambdas:
         print(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
 
+        # scale the reference temperature for continuation
         theta_lam.vector()[:] = theta_ref.vector()
         theta_lam.vector()[:] *= float(lam)
         theta_lam.vector().apply("insert")
 
+        # write scaled theta into mixed state and update materials
         assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
+        # restart current iterate from last accepted state
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
 
-        print("  -> Stage A: conduction-only solve")
-        a_cond, L_cond = build_linear_startup_problem(
-            experiment=experiment,
-            W=W,
-            mu=fluid_material.mu,
+        # --------------------------------------------------
+        # Stage A: scalar temperature-only conduction solve
+        # --------------------------------------------------
+        print("  -> Stage A: temperature-only conduction solve")
+
+        theta_cond = solve_temperature_only_startup(
+            VT=VT,
             Pr=fluid_material.Pr,
             sub_dx=sub_dx,
             sub_ds=sub_ds,
             qn_air=qn_air,
             qn_scale=lam,
-            frozen_buoyancy_temperature=None,
-            scales=scales,
+            T_bcs=T_bcs,
+            linear_solver="mumps",
         )
-        w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
 
-        theta_cond = w.sub(2, deepcopy=True)
+        # inject temperature result into mixed state
+        assign_T.assign(w.sub(2), theta_cond)
+        w.vector().apply("insert")
 
+        # accept Stage A into w_n and update material fields from it
         w_n.assign(w)
         w_n.vector().apply("insert")
         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
+        # --------------------------------------------------
+        # Stage B: frozen-temperature Stokes solve on W
+        # --------------------------------------------------
         print("  -> Stage B: frozen-temperature Stokes solve")
+
+        # restart Stage B from last accepted state
+        w.vector()[:] = w_n.vector()
+        w.vector().apply("insert")
+
         a_stokes, L_stokes = build_linear_startup_problem(
             experiment=experiment,
             W=W,
@@ -493,8 +672,10 @@ def stokes_initial_guess_temp(
             frozen_buoyancy_temperature=theta_cond,
             scales=scales,
         )
+
         w = solve_linear_problem(a_stokes, L_stokes, w, boundary_conditions)
 
+        # accept Stage B
         w_n.assign(w)
         w_n.vector().apply("insert")
         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
