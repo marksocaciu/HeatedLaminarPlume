@@ -313,14 +313,35 @@ def build_linear_startup_problem(
 
     return a, L
 
+# def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
+#     problem = fenics.LinearVariationalProblem(a, L, w, boundary_conditions)
+#     solver = fenics.LinearVariationalSolver(problem)
+
+#     prm = solver.parameters
+#     prm["linear_solver"] = linear_solver
+
+#     solver.solve()
+#     w.vector().apply("insert")
+#     return w
+
 def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
-    problem = fenics.LinearVariationalProblem(a, L, w, boundary_conditions)
-    solver = fenics.LinearVariationalSolver(problem)
+    A, b = fenics.assemble_system(a, L, boundary_conditions)
 
-    prm = solver.parameters
-    prm["linear_solver"] = linear_solver
+    # Helpful diagnostics
+    print(f"  matrix size: {A.size(0)} x {A.size(1)}")
+    print(f"  rhs l2 norm: {b.norm('l2'):.6e}")
 
-    solver.solve()
+    if fenics.has_lu_solver_method(linear_solver):
+        print(f"  using LU solver: {linear_solver}")
+        solver = fenics.LUSolver(A, linear_solver)
+        solver.solve(w.vector(), b)
+    else:
+        print(f"  requested LU solver '{linear_solver}' not available")
+        print(f"  available LU solvers: {fenics.lu_solver_methods()}")
+        print("  falling back to default LU")
+        solver = fenics.LUSolver(A, "default")
+        solver.solve(w.vector(), b)
+
     w.vector().apply("insert")
     return w
 
@@ -591,6 +612,10 @@ def stokes_initial_guess_temp(
 
     # Mixed BCs for Stage B
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+    print("\nBC dof counts:")
+    for i, bc in enumerate(boundary_conditions):
+        vals = bc.get_boundary_values()
+        print(f"  bc[{i}] -> {len(vals)} dofs")
 
     # Temperature-only space and assigner
     VT, assign_T = build_temperature_assigner(W)
@@ -659,6 +684,18 @@ def stokes_initial_guess_temp(
         # restart Stage B from last accepted state
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
+
+        try:
+            print(f"  mu min/max: {fluid_material.mu.vector().min():.6e}, {fluid_material.mu.vector().max():.6e}")
+        except Exception:
+            pass
+
+        try:
+            print(f"  Pr min/max: {fluid_material.Pr.vector().min():.6e}, {fluid_material.Pr.vector().max():.6e}")
+        except Exception:
+            pass
+
+        print(f"  theta_cond min/max: {theta_cond.vector().min():.6e}, {theta_cond.vector().max():.6e}")
 
         a_stokes, L_stokes = build_linear_startup_problem(
             experiment=experiment,

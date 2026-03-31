@@ -64,12 +64,18 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
                 x[0], experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
             )
 
+    # class PressurePin(fenics.SubDomain):
+    #     def inside(self, x, on_boundary):
+    #         return (
+    #             fenics.near(x[0], experiment.dimensions.domain.x_max / scales.Lref, 1.0e-10)
+    #             and fenics.near(x[1], experiment.dimensions.domain.y_max / scales.Lref, 1.0e-10)
+            # )
+        
     class PressurePin(fenics.SubDomain):
         def inside(self, x, on_boundary):
-            return (
-                fenics.near(x[0], experiment.dimensions.domain.x_max / scales.Lref, 1.0e-10)
-                and fenics.near(x[1], experiment.dimensions.domain.y_max / scales.Lref, 1.0e-10)
-            )
+            xR = experiment.dimensions.domain.x_max / scales.Lref
+            yT = experiment.dimensions.domain.y_max / scales.Lref
+            return fenics.near(x[0], xR, 1.0e-8) and fenics.near(x[1], yT, 1.0e-8)
     
     hot_wall=Hot_wall()
     east = EastBoundary()
