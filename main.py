@@ -536,26 +536,26 @@ def temperature_dependent_version(experiment: Experiment):
         scales=scales,
         T_ambient=T_ambient,
     )
-    w_n = stokes_initial_guess_temp(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        fluid_material=fluid_material,
-        w_n=w_n,
-        lambdas=(0.05, 0.1),
-        T_ambient=T_ambient
-    )
-    # Refresh coefficient fields from the post-startup accepted state before checks
-    # and before entering continuation/transient.
-    update_material_from_mixed_temperature(
-        fluid_material=fluid_material,
-        w_mixed=w_n,
-        scales=scales,
-        T_ambient=T_ambient,
-    )
+    # w_n = stokes_initial_guess_temp(
+    #     experiment=experiment,
+    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+    #     W=W, w=w,
+    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+    #     fluid_material=fluid_material,
+    #     w_n=w_n,
+    #     lambdas=(0.05, 0.1),
+    #     T_ambient=T_ambient
+    # )
+    # # Refresh coefficient fields from the post-startup accepted state before checks
+    # # and before entering continuation/transient.
+    # update_material_from_mixed_temperature(
+    #     fluid_material=fluid_material,
+    #     w_mixed=w_n,
+    #     scales=scales,
+    #     T_ambient=T_ambient,
+    # )
 
     print("Starting checks")
     w_t = w.copy(deepcopy=True)
