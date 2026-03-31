@@ -272,6 +272,69 @@ def update_material_from_mixed_temperature(
     fluid_material.update(T_dim)
     return T_dim
 
+def build_stokes_only_startup_problem(
+    W_pu: fenics.FunctionSpace,
+    mu,
+    frozen_buoyancy_temperature,
+    sub_dx,
+    scales,
+):
+    """
+    Linear startup on reduced mixed space (p, u) only.
+    Temperature is frozen and only appears in the RHS buoyancy term.
+    """
+    p, u = fenics.TrialFunctions(W_pu)
+    q, v = fenics.TestFunctions(W_pu)
+
+    gvec = fenics.Constant((0.0, -1.0))
+    buoyancy_coeff = fenics.Constant(float(scales.Ra / scales.Pr))
+
+    a = (
+        (-q * fenics.div(u))
+        + (
+            -fenics.div(v) * p
+            + 2.0 * mu * fenics.inner(
+                fenics.sym(fenics.grad(v)),
+                fenics.sym(fenics.grad(u)),
+            )
+        )
+    ) * sub_dx
+
+    L = - fenics.dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec) * sub_dx
+
+    return a, L
+
+def set_bcs_stokes_only(W_pu, experiment: Experiment, scales: NondimScales):
+    r = (experiment.dimensions.wire.diameter / 2) / scales.Lref
+
+    class Hot_wall(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                (x[0]**2) + ((x[1] - (experiment.dimensions.domain.y_max / scales.Lref / 10. + 11.*r))**2)
+                - 1.*r*r, 0., eps=1.e-1*r
+            ) and \
+            x[1] >= experiment.dimensions.domain.y_max / scales.Lref / 10. + 10.*r - 1e-12 and \
+            x[1] <= experiment.dimensions.domain.y_max / scales.Lref / 10. + 12.*r + 1e-12
+
+    class PressurePin(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return (
+                fenics.near(x[0], experiment.dimensions.domain.x_max / scales.Lref, 1.0e-8)
+                and fenics.near(x[1], experiment.dimensions.domain.y_max / scales.Lref, 1.0e-8)
+            )
+
+    hot_wall = Hot_wall()
+    p_pin = PressurePin()
+
+    W_p = W_pu.sub(0)
+    W_u = W_pu.sub(1)
+
+    boundary_conditions = [
+        fenics.DirichletBC(W_u, (0.0, 0.0), hot_wall),   # keep no-slip on wire
+        fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),
+    ]
+    return boundary_conditions
+
 def build_linear_startup_problem(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -327,21 +390,18 @@ def build_linear_startup_problem(
 def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
     A, b = fenics.assemble_system(a, L, boundary_conditions)
 
-    # Helpful diagnostics
     print(f"  matrix size: {A.size(0)} x {A.size(1)}")
     print(f"  rhs l2 norm: {b.norm('l2'):.6e}")
 
     if fenics.has_lu_solver_method(linear_solver):
         print(f"  using LU solver: {linear_solver}")
         solver = fenics.LUSolver(A, linear_solver)
-        solver.solve(w.vector(), b)
     else:
         print(f"  requested LU solver '{linear_solver}' not available")
         print(f"  available LU solvers: {fenics.lu_solver_methods()}")
-        print("  falling back to default LU")
         solver = fenics.LUSolver(A, "default")
-        solver.solve(w.vector(), b)
 
+    solver.solve(w.vector(), b)
     w.vector().apply("insert")
     return w
 
@@ -620,6 +680,13 @@ def stokes_initial_guess_temp(
     # Temperature-only space and assigner
     VT, assign_T = build_temperature_assigner(W)
     theta_tmp = fenics.Function(VT)
+    W_pu = fenics.FunctionSpace(W.mesh(), fenics.MixedElement([psi_p, psi_u]))
+    bcs_stokes = set_bcs_stokes_only(W_pu, experiment, scales)
+
+    print("\nStokes-only BC dof counts:")
+    for i, bc in enumerate(bcs_stokes):
+        vals = bc.get_boundary_values()
+        print(f"  bc[{i}] -> {len(vals)} dofs")
 
     # Temperature-only BCs for Stage A
     T_bcs = build_temperature_bcs(VT, sub_ft, T_air_bc, T_c, experiment, scales)
@@ -679,11 +746,29 @@ def stokes_initial_guess_temp(
         # --------------------------------------------------
         # Stage B: frozen-temperature Stokes solve on W
         # --------------------------------------------------
-        print("  -> Stage B: frozen-temperature Stokes solve")
+        # print("  -> Stage B: frozen-temperature Stokes solve")
+        print("  -> Stage B: frozen-temperature Stokes solve (reduced p-u system)")
 
-        # restart Stage B from last accepted state
-        w.vector()[:] = w_n.vector()
+        a_stokes, L_stokes = build_stokes_only_startup_problem(
+            W_pu=W_pu,
+            mu=fluid_material.mu,
+            frozen_buoyancy_temperature=theta_cond,
+            sub_dx=sub_dx,
+            scales=scales,
+        )
+
+        w_pu = fenics.Function(W_pu)
+        w_pu = solve_linear_problem(a_stokes, L_stokes, w_pu, bcs_stokes, linear_solver="mumps")
+
+        # copy reduced solve back into full mixed state
+        fenics.assign(w.sub(0), w_pu.sub(0))
+        fenics.assign(w.sub(1), w_pu.sub(1))
+        assign_T.assign(w.sub(2), theta_cond)
         w.vector().apply("insert")
+
+        w_n.assign(w)
+        w_n.vector().apply("insert")
+        update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
         try:
             print(f"  mu min/max: {fluid_material.mu.vector().min():.6e}, {fluid_material.mu.vector().max():.6e}")
