@@ -376,18 +376,18 @@ def build_linear_startup_problem(
 
     return a, L
 
-# def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
-#     problem = fenics.LinearVariationalProblem(a, L, w, boundary_conditions)
-#     solver = fenics.LinearVariationalSolver(problem)
-
-#     prm = solver.parameters
-#     prm["linear_solver"] = linear_solver
-
-#     solver.solve()
-#     w.vector().apply("insert")
-#     return w
-
 def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
+    problem = fenics.LinearVariationalProblem(a, L, w, boundary_conditions)
+    solver = fenics.LinearVariationalSolver(problem)
+
+    prm = solver.parameters
+    prm["linear_solver"] = linear_solver
+
+    solver.solve()
+    w.vector().apply("insert")
+    return w
+
+def solve_linear_problem_temp(a, L, w, boundary_conditions, linear_solver="mumps"):
     A, b = fenics.assemble_system(a, L, boundary_conditions)
 
     print(f"  matrix size: {A.size(0)} x {A.size(1)}")
