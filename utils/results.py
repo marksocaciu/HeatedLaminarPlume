@@ -1,5 +1,8 @@
 import fenics
 import numpy as np
+import os
+import csv
+
 
 def _mark_horizontal_slab_cells(mesh, y0_star, eps_star, marker_id=1):
     cell_markers = fenics.MeshFunction("size_t", mesh, mesh.topology().dim(), 0)
@@ -147,3 +150,107 @@ def plane_fluxes_slab_star(
         results.append((y0_m, Qconv, Qcond, Qtot, mdot))
 
     return results
+
+def compute_horizontal_plane_heat_fluxes(
+    u_dim,
+    T_dim,
+    sub_mesh_dim,
+    experiment,
+    y_planes_m,
+    nx=400,
+    T_ref=None,
+    half_domain_symmetric=True,
+):
+    """
+    Returns dict with total heat flux through horizontal planes y = const.
+
+    Flux definition:
+        Q(y) = ∫ [rho*cp*u_y*(T - T_ref) - k*dT/dy] dx
+
+    Units: W/m  (per unit out-of-plane depth)
+    """
+    rho = float(experiment.fluid.properties["rho"])
+    cp  = float(experiment.fluid.properties["cp"])
+    k   = float(experiment.fluid.properties["k"])
+
+    if T_ref is None:
+        T_ref = float(experiment.initial_conditions.temperature)
+
+    coords = sub_mesh_dim.coordinates()
+    x_min = float(np.min(coords[:, 0]))
+    x_max = float(np.max(coords[:, 0]))
+    y_min = float(np.min(coords[:, 1]))
+    y_max = float(np.max(coords[:, 1]))
+
+    u_dim.set_allow_extrapolation(True)
+    T_dim.set_allow_extrapolation(True)
+
+    fluxes = {}
+
+    # small offset for numerical dT/dy
+    dy_fd = max(5.0 * sub_mesh_dim.hmin(), 1.0e-6)
+
+    for y in y_planes_m:
+        if not (y_min + dy_fd < y < y_max - dy_fd):
+            fluxes[f"Qy_{y:.4f}m"] = float("nan")
+            continue
+
+        xs = np.linspace(x_min, x_max, nx)
+
+        conv_vals = []
+        cond_vals = []
+
+        for x in xs:
+            try:
+                u_val = u_dim(x, y)
+                T0    = T_dim(x, y)
+                Tp    = T_dim(x, y + dy_fd)
+                Tm    = T_dim(x, y - dy_fd)
+
+                uy = float(u_val[1])
+                dTdy = (Tp - Tm) / (2.0 * dy_fd)
+
+                q_conv = rho * cp * uy * (T0 - T_ref)
+                q_cond = -k * dTdy
+
+                conv_vals.append(q_conv)
+                cond_vals.append(q_cond)
+            except Exception:
+                conv_vals.append(np.nan)
+                cond_vals.append(np.nan)
+
+        conv_vals = np.array(conv_vals, dtype=float)
+        cond_vals = np.array(cond_vals, dtype=float)
+
+        mask = np.isfinite(conv_vals) & np.isfinite(cond_vals)
+        if np.count_nonzero(mask) < 2:
+            fluxes[f"Qy_{y:.4f}m"] = float("nan")
+            fluxes[f"Qy_conv_{y:.4f}m"] = float("nan")
+            fluxes[f"Qy_cond_{y:.4f}m"] = float("nan")
+            continue
+
+        q_conv_int = np.trapz(conv_vals[mask], xs[mask])
+        q_cond_int = np.trapz(cond_vals[mask], xs[mask])
+        q_total    = q_conv_int + q_cond_int
+
+        if half_domain_symmetric:
+            q_conv_int *= 2.0
+            q_cond_int *= 2.0
+            q_total    *= 2.0
+
+        fluxes[f"Qy_{y:.4f}m"] = float(q_total)
+        fluxes[f"Qy_conv_{y:.4f}m"] = float(q_conv_int)
+        fluxes[f"Qy_cond_{y:.4f}m"] = float(q_cond_int)
+
+    return fluxes
+
+
+def append_plane_flux_csv(csv_path, row):
+    file_exists = os.path.exists(csv_path)
+    fieldnames = list(row.keys())
+
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow(row)

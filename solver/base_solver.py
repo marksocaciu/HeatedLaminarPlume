@@ -3,6 +3,7 @@ from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
 from solver.biot import *
+from utils.results import *
 
 
 def pseudo_transient_rescue(
@@ -1680,6 +1681,29 @@ def run_post_continuation_transient(
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
+
+            plane_fluxes = compute_horizontal_plane_heat_fluxes(
+                u_dim=u_dim,
+                T_dim=T_dim,
+                sub_mesh_dim=sub_mesh_dim,
+                experiment=experiment,
+                y_planes_m=(0.01, 0.02, 0.04, 0.08),
+                T_ref=T_ambient,
+                nx=400,
+                half_domain_symmetric=True,
+            )
+
+            flux_row = {
+                "step": step,
+                "time": t,
+                "dt": dt,
+            }
+            flux_row.update(plane_fluxes)
+
+            append_plane_flux_csv(
+                os.path.join(os.path.dirname(T_path), "plane_fluxes.csv"),
+                flux_row
+            )
 
             if sub_ft_dim is not None and sub_ds_dim is not None:
                 try:
