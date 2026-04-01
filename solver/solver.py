@@ -86,6 +86,57 @@ def solve_buoyancy_sign_check(
 
     return w
 
+def thermal_galerkin_supg_form(
+    mesh,
+    T,
+    psi_T,
+    u,
+    Pr,
+    sub_dx,
+    convection_scale=1.0,
+    T_prev=None,
+    dtau=None,
+):
+    """
+    Temperature equation:
+        dT/dtau + c * u·grad(T) - div((1/Pr) grad(T)) = 0
+
+    Weak form:
+        (Galerkin) + (SUPG)
+
+    Notes:
+    - Omitted boundary terms imply homogeneous natural diffusive flux
+      on boundaries where no Dirichlet BC is imposed.
+    - SUPG is switched by the streamline derivative dot(u, grad(psi_T)).
+    """
+    kappa = 1.0 / Pr
+    c = fenics.Constant(float(convection_scale))
+
+    # Standard Galerkin part
+    galerkin = (
+        kappa * fenics.dot(fenics.grad(psi_T), fenics.grad(T))
+        + c * psi_T * fenics.dot(u, fenics.grad(T))
+    )
+
+    # Strong residual of the temperature equation
+    r_T = c * fenics.dot(u, fenics.grad(T)) - fenics.div(kappa * fenics.grad(T))
+    if (T_prev is not None) and (dtau is not None):
+        r_T += (T - T_prev) / dtau
+
+    # SUPG tau
+    h = fenics.CellDiameter(mesh)
+    u_mag = fenics.sqrt(fenics.inner(u, u) + fenics.DOLFIN_EPS)
+
+    tau = 1.0 / fenics.sqrt(
+        (2.0 * u_mag / h)**2
+        + (4.0 * kappa / (h * h))**2
+        + fenics.DOLFIN_EPS
+    )
+
+    supg = tau * c * fenics.dot(u, fenics.grad(psi_T)) * r_T
+
+    return (galerkin + supg) * sub_dx
+
 def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
            rho_air: float, beta_air: float, experiment: Experiment):
     P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
@@ -205,9 +256,20 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = (dot(grad(psi_T), (1.0/Pr) * grad(T) - T * u))
+    # energy = (1.0/Pr) * dot(grad(psi_T), grad(T)) + psi_T * dot(u, grad(T))
+    # F = (mass + momentum + energy) * sub_dx
 
-    F = (mass + momentum + energy) * sub_dx
+    energy = thermal_galerkin_supg_form(
+        mesh=W.mesh(),
+        T=T,
+        psi_T=psi_T,
+        u=u,
+        Pr=Pr,
+        sub_dx=sub_dx,
+        convection_scale=float(convection_scale),
+    )
+
+    F = (mass + momentum) * sub_dx + energy
 
     qn_scale_c = fenics.Constant(float(qn_scale))
 
@@ -838,9 +900,21 @@ def build_nonlinear_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    # F = (mass + momentum + energy) * sub_dx
 
-    F = (mass + momentum + energy) * sub_dx
+    energy = thermal_galerkin_supg_form(
+        mesh=W.mesh(),
+        T=T,
+        psi_T=psi_T,
+        u=u,
+        Pr=Pr,
+        sub_dx=sub_dx,
+        convection_scale=convection_scale,
+    )
+
+    F = (mass + momentum) * sub_dx + energy
+
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
@@ -1062,9 +1136,23 @@ def build_ptc_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+    # F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-    F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
+    energy = thermal_galerkin_supg_form(
+        mesh=W.mesh(),
+        T=T,
+        psi_T=psi_T,
+        u=u,
+        Pr=Pr,
+        sub_dx=sub_dx,
+        convection_scale=convection_scale,
+        T_prev=T_prev,
+        dtau=dtau_c,
+    )
+
+    F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
+
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
