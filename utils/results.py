@@ -229,8 +229,8 @@ def compute_horizontal_plane_heat_fluxes(
             fluxes[f"Qy_cond_{y:.4f}m"] = float("nan")
             continue
 
-        q_conv_int = np.trapz(conv_vals[mask], xs[mask])
-        q_cond_int = np.trapz(cond_vals[mask], xs[mask])
+        q_conv_int = np.trapezoid(conv_vals[mask], xs[mask])
+        q_cond_int = np.trapezoid(cond_vals[mask], xs[mask])
         q_total    = q_conv_int + q_cond_int
 
         if half_domain_symmetric:
