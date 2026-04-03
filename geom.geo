@@ -25,7 +25,7 @@ h = 100 * R;
 lc1 = R_placeholder / 10;
 lc2 = R_placeholder / 1000;
 resolution = resolution_placeholder;
-dist = h / 10 + 11 * R - h / 12;
+dist = R * 100;
 
 // Setting the points of the domain
 Point(1) = {0.0, 0.0,    0.0, lc1};
@@ -35,9 +35,9 @@ Point(4) = {0.0, h,      0.0, lc1};
 Point(5) = {0.0, h / 10 + 10 * R, 0.0, lc2};
 Point(6) = {0.0, h / 10 + 11 * R, 0.0, lc2};
 Point(7) = {0.0, h / 10 + 12 * R, 0.0, lc2};
-Point(8) = {0.0, h / 12, 0.0, lc2};
-Point(9) = {0.0, h / 12 + 3 * dist, 0.0, lc2};
-Point(10)= {0.0, h / 12 + 1.5 * dist, 0.0, lc2};
+Point(8) = {0.0, h / 10 - 12 * R, 0.0, lc2};
+Point(9) = {0.0, h / 10 - 12 * R + 2 * dist, 0.0, lc2};
+Point(10)= {0.0, h / 10 - 12 * R + dist, 0.0, lc2};
 
 // Setting the domain edges
 Line(1) = {1, 2};
@@ -75,15 +75,15 @@ Physical Surface(10) = {2};             // wire domain
 Physical Surface(11) = {1,3};             // air domain
 
 // Setting mesh resolution on the wire
-Transfinite Line{7} = resolution * 3;
+Transfinite Line{7} = resolution * 4;
 Transfinite Line{6} = resolution / 20;
-Transfinite Line{1} = resolution * w / h;
+Transfinite Line{1} = resolution * w / h * 3;
 Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
 Transfinite Line{4} = resolution * 20;
 Transfinite Line{5} = resolution ;
-Transfinite Line{8} = resolution * 8;
-Transfinite Line{9} = resolution * 4;
+Transfinite Line{8} = resolution * 10;
+Transfinite Line{9} = resolution * 3;
 Transfinite Line{10}= resolution * 10;
 
 // Meshing the geometry

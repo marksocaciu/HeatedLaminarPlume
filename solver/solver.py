@@ -239,7 +239,8 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
                      buoyancy_scale=1.0,
                      qn_scale=1.0,
                      include_convection=True,
-                     convection_scale=1.0):
+                     convection_scale=1.0,
+                     _SUPG=False):
 
     inner, dot, grad, div, sym = \
         fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
@@ -256,20 +257,22 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    # energy = (1.0/Pr) * dot(grad(psi_T), grad(T)) + psi_T * dot(u, grad(T))
-    # F = (mass + momentum + energy) * sub_dx
+    if _SUPG:
+        energy = thermal_galerkin_supg_form(
+            mesh=W.mesh(),
+            T=T,
+            psi_T=psi_T,
+            u=u,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            convection_scale=float(convection_scale),
+        )
 
-    energy = thermal_galerkin_supg_form(
-        mesh=W.mesh(),
-        T=T,
-        psi_T=psi_T,
-        u=u,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        convection_scale=float(convection_scale),
-    )
+        F = (mass + momentum) * sub_dx + energy
+    else:
+        energy = (1.0/Pr) * dot(grad(psi_T), grad(T)) + psi_T * dot(u, grad(T))
+        F = (mass + momentum + energy) * sub_dx
 
-    F = (mass + momentum) * sub_dx + energy
 
     qn_scale_c = fenics.Constant(float(qn_scale))
 
@@ -878,6 +881,7 @@ def build_nonlinear_problem(
     qn_scale=1.0,
     include_convection=True,
     convection_scale=1.0,
+    SUPG=False,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -900,20 +904,22 @@ def build_nonlinear_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
-    # F = (mass + momentum + energy) * sub_dx
+    if SUPG:
+        energy = thermal_galerkin_supg_form(
+            mesh=W.mesh(),
+            T=T,
+            psi_T=psi_T,
+            u=u,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            convection_scale=convection_scale,
+        )
 
-    energy = thermal_galerkin_supg_form(
-        mesh=W.mesh(),
-        T=T,
-        psi_T=psi_T,
-        u=u,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        convection_scale=convection_scale,
-    )
+        F = (mass + momentum) * sub_dx + energy
+    else:
+        energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+        F = (mass + momentum + energy) * sub_dx
 
-    F = (mass + momentum) * sub_dx + energy
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
@@ -1103,6 +1109,7 @@ def build_ptc_problem(
     qn_scale=1.0,
     include_convection=True,
     convection_scale=1.0,
+    SUPG=False,
 ):
     """
     Backward-Euler pseudo-transient problem for the mixed steady system.
@@ -1136,22 +1143,24 @@ def build_ptc_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
 
-    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
-    # F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
+    if SUPG:
+        energy = thermal_galerkin_supg_form(
+            mesh=W.mesh(),
+            T=T,
+            psi_T=psi_T,
+            u=u,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            convection_scale=convection_scale,
+            T_prev=T_prev,
+            dtau=dtau_c,
+        )
 
-    energy = thermal_galerkin_supg_form(
-        mesh=W.mesh(),
-        T=T,
-        psi_T=psi_T,
-        u=u,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        convection_scale=convection_scale,
-        T_prev=T_prev,
-        dtau=dtau_c,
-    )
+        F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
+    else:
+        energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
+        F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-    F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 

@@ -89,7 +89,7 @@ def base_version(experiment: Experiment):
     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
         TRIG_XDMF_PATH, FACETS_XDMF_PATH, MESH_NAME, PRINT_TAG_SUMMARY
     )
-
+    
     # --- 2) create submesh (dim)
     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
     
@@ -1114,8 +1114,8 @@ def main():
     experiment = experiment_list[args.experiment_index]
     print(f"Running experiment: {experiment.name}")
 
-    # base_version(experiment)
-    temperature_dependent_version(experiment)
+    base_version(experiment)
+    # temperature_dependent_version(experiment)
     # abs_version(experiment)
     # abs_temperature_dependent_version(experiment)
 
