@@ -186,7 +186,7 @@ def base_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=( 0.05, 0.1)#, 0.3, 0.5, 0.7, 0.9, 1.0)
+        lambdas=( 0.05, 0.1, 0.3, 0.5)# 0.7, 0.9, 1.0)
     )
 
     # Solve the full nonlinear problem with previous initial guess
@@ -237,7 +237,7 @@ def base_version(experiment: Experiment):
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
         run_root=run_root,
-        dtau_init=5e-3,
+        dtau_init=1e-3,
         dtau_min=1e-8,
         dtau_max=1e-2,
         stage_max_steps=40,
