@@ -895,7 +895,7 @@ def abs_version(experiment: Experiment):
         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
         w_n=w_n,
-        lambdas=(0.01, 0.03, 0.05)
+        lambdas=(0.1, 0.3, 0.5)
     )
 
     # Solve the full nonlinear problem with previous initial guess

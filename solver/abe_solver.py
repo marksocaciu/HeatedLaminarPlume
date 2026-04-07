@@ -14,6 +14,7 @@ def build_nonlinear_ABE_problem(
     qn_scale=1.0,
     include_convection=True,
     convection_scale=1.0,
+    SUPG=False,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -36,22 +37,24 @@ def build_nonlinear_ABE_problem(
         - div(psi_u) * p
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
+    if SUPG:
+        print("Using SUPG stabilization for convection.")
+        energy = thermal_galerkin_supg_form(
+            mesh=W.mesh(),
+            T=T,
+            psi_T=psi_T,
+            u=u,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            convection_scale=convection_scale,
+        ) - psi_T * fEc * dot(gvec, u) * sub_dx
 
-    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c) \
-    #     - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
-    # F = (mass + momentum + energy) * sub_dx
+        F = (mass + momentum) * sub_dx + energy
+    else:
+        energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c) \
+            - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
+        F = (mass + momentum + energy) * sub_dx
 
-    energy = thermal_galerkin_supg_form(
-        mesh=W.mesh(),
-        T=T,
-        psi_T=psi_T,
-        u=u,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        convection_scale=convection_scale,
-    ) - psi_T * fEc * dot(gvec, u) * sub_dx
-
-    F = (mass + momentum) * sub_dx + energy
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
@@ -185,7 +188,8 @@ def build_ptc_abe_problem(
     qn_scale=1.0,
     include_convection=True,
     convection_scale=1.0,
-    fEc: fenics.Constant = fenics.Constant(0.0)
+    fEc: fenics.Constant = fenics.Constant(0.0),
+    SUPG = False,
 ):
     """
     Backward-Euler pseudo-transient problem for the mixed steady system.
@@ -220,23 +224,26 @@ def build_ptc_abe_problem(
     )
 
     gvec = fenics.Constant((0.0, -1.0))
-    # energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)  \
-    #     - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
-    # F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
+    if SUPG:
+        print("Using SUPG stabilization for convection.")
+        energy = thermal_galerkin_supg_form(
+            mesh=W.mesh(),
+            T=T,
+            psi_T=psi_T,
+            u=u,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            convection_scale=convection_scale,
+            T_prev=T_prev,
+            dtau=dtau_c,
+        ) - psi_T * fEc * dot(gvec, u) * sub_dx
 
-    energy = thermal_galerkin_supg_form(
-        mesh=W.mesh(),
-        T=T,
-        psi_T=psi_T,
-        u=u,
-        Pr=Pr,
-        sub_dx=sub_dx,
-        convection_scale=convection_scale,
-        T_prev=T_prev,
-        dtau=dtau_c,
-    ) - psi_T * fEc * dot(gvec, u) * sub_dx
+        F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
+    else:
+        energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)  \
+            - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
+        F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-    F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
@@ -700,8 +707,8 @@ def solve_ptc_abe_continuation(
     """
     if stages is None:
         stages = [
-            {"name": "L0.10_C0.00", "lambda": 0.10, "conv": 0.00, "strict": False},
-            {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
+            # {"name": "L0.10_C0.00", "lambda": 0.10, "conv": 0.00, "strict": False},
+            # {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
             {"name": "L0.50_C0.10", "lambda": 0.50, "conv": 0.10, "strict": False},
             {"name": "L0.70_C0.20", "lambda": 0.70, "conv": 0.20, "strict": False},
             {"name": "L1.00_C0.30", "lambda": 1.00, "conv": 0.30, "strict": False},
