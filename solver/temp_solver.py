@@ -45,6 +45,7 @@ def solve_temp_newton_continuation(
     sub_dx, sub_ds, sub_ft, qn_air,
     fluid_material: TemperatureDependentMaterial,
     w_n: fenics.Function,
+    T_ambient: float,
     lambdas=None,
     relaxation_schedule=(0.2, 0.1, 0.05),
     stokes_startup=True,
@@ -67,13 +68,27 @@ def solve_temp_newton_continuation(
 
     w.vector()[:] = w_n.vector()
     w.vector().apply("insert")
+
     scales = compute_nondimensional_scales(experiment)
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    # Initialize temperature-dependent material fields from the accepted state
+    update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
 
     conv_targets = conv_stage_sequence()
 
     for lam in lambdas:
         print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+
+        # Re-sync materials at start of each lambda stage
+        update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+
+        buoyancy_prefactor = build_temperature_dependent_buoyancy_prefactor(
+            fluid_material=fluid_material,
+            experiment=experiment,
+            scales=scales,
+        )
+
         # optional output of current accepted state before advancing lambda
         if sub_mesh_star is not None and sub_mesh_dim is not None:
             p_star, u_star, theta = w_n.split(deepcopy=True)
@@ -96,16 +111,19 @@ def solve_temp_newton_continuation(
         # Stage 1: Stokes / zero momentum convection
         # ------------------------------------------------------------
         print("  --- stage: stokes ---")
+
         F_stokes, JF_stokes = build_nonlinear_problem(
             W=W, w=w,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b,
+            mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b,
             sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
             buoyancy_scale=lam,
             qn_scale=lam,
             include_convection=False,
             convection_scale=0.0,
+            buoyancy_prefactor=buoyancy_prefactor,
         )
+
         ok, used_relax, last_error = try_newton_stage_FJF_outside(
             F=F_stokes,
             JF=JF_stokes,
@@ -123,6 +141,7 @@ def solve_temp_newton_continuation(
             )
 
         accept_current_state(w, w_n)
+        update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
         print(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
 
         # ------------------------------------------------------------
@@ -130,24 +149,30 @@ def solve_temp_newton_continuation(
         # ------------------------------------------------------------
         accepted_conv = 0.0
         F_accepted, JF_accepted = None, None
+
         for target_conv in conv_targets:
             accepted_conv, F_accepted, JF_accepted = advance_convection_monotone(
                 W=W, w=w,
                 psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-                mu=mu, Pr=Pr, f_b=f_b,
+                mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b,
                 sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
                 boundary_conditions=boundary_conditions,
                 w_n=w_n,
                 buoyancy_scale=lam,
                 start_conv=accepted_conv,
                 target_conv=target_conv,
+                buoyancy_prefactor=buoyancy_prefactor,
+                fluid_material=fluid_material,
+                scales=scales,
+                T_ambient=T_ambient,
                 relaxation_schedule=relaxation_schedule,
-                min_interval=0.005,          # tighten/loosen as needed
+                min_interval=0.005,
                 max_local_bisections=3,
             )
-        
+
         if accepted_conv == 1.0 and F_accepted is not None and JF_accepted is not None:
             copy_state(w, w_n)
+
             w, _, _ = material_outer_picard(
                 w=w,
                 boundary_conditions=boundary_conditions,
@@ -164,12 +189,14 @@ def solve_temp_newton_continuation(
                 newton_rtol=1.0e-8,
             )
             accept_current_state(w, w_n)
+            update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
 
         print(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
 
         # keep working function synchronized with accepted state
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
+
     return w
 
 def theta_to_dimensional_temperature(
@@ -739,8 +766,11 @@ def solve_ptc_temp_continuation(
         stages = [
             {"name": "L0.10_C0.00", "lambda": 0.10, "conv": 0.00, "strict": False},
             {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
+            {"name": "L0.50_C0.00", "lambda": 0.50, "conv": 0.00, "strict": False},
             {"name": "L0.50_C0.10", "lambda": 0.50, "conv": 0.10, "strict": False},
-            {"name": "L0.70_C0.20", "lambda": 0.70, "conv": 0.20, "strict": False},
+            {"name": "L0.70_C0.10", "lambda": 0.70, "conv": 0.10, "strict": False},
+            {"name": "L1.00_C0.10", "lambda": 1.00, "conv": 0.10, "strict": False},
+            {"name": "L1.00_C0.20", "lambda": 1.00, "conv": 0.20, "strict": False},
             {"name": "L1.00_C0.30", "lambda": 1.00, "conv": 0.30, "strict": False},
             {"name": "L1.00_C0.50", "lambda": 1.00, "conv": 0.50, "strict": False},
             {"name": "L1.00_C0.70", "lambda": 1.00, "conv": 0.70, "strict": False},

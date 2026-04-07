@@ -882,6 +882,7 @@ def build_nonlinear_problem(
     include_convection=True,
     convection_scale=1.0,
     SUPG=False,
+    buoyancy_prefactor=None,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -898,8 +899,14 @@ def build_nonlinear_problem(
         if include_convection else fenics.Constant((0.0, 0.0))
     )
 
+    if buoyancy_prefactor is not None:
+        gvec = fenics.Constant((0.0, -1.0))
+        buoyancy_force = buoyancy_prefactor * T * gvec
+    else:
+        buoyancy_force = f_b
+
     momentum = (
-        dot(psi_u, convection_term + buoyancy_scale_c * f_b)
+        dot(psi_u, convection_term + buoyancy_scale_c * buoyancy_force)
         - div(psi_u) * p
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
@@ -1019,6 +1026,10 @@ def advance_convection_monotone(
     buoyancy_scale: float,
     start_conv: float,
     target_conv: float,
+    buoyancy_prefactor=None,
+    fluid_material=None,
+    scales=None,
+    T_ambient: float = 0.0,
     relaxation_schedule=(0.9, 0.7, 0.5),
     min_interval=0.01,
     max_local_bisections=3,
@@ -1036,7 +1047,7 @@ def advance_convection_monotone(
     accepted_conv = float(start_conv)
     pending_targets = [float(target_conv)]
     n_bisect = 0
-    F_accepted,JF_accepted = None, None
+    F_accepted, JF_accepted = None, None
 
     while pending_targets:
         trial_conv = pending_targets.pop(0)
@@ -1049,6 +1060,9 @@ def advance_convection_monotone(
             f"target={trial_conv:.4f}"
         )
 
+        if fluid_material is not None and scales is not None and T_ambient is not None:
+            update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+
         F, JF = build_nonlinear_problem(
             W=W, w=w,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
@@ -1058,6 +1072,7 @@ def advance_convection_monotone(
             qn_scale=buoyancy_scale,
             include_convection=True,
             convection_scale=trial_conv,
+            buoyancy_prefactor=buoyancy_prefactor,
         )
 
         ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -1072,8 +1087,13 @@ def advance_convection_monotone(
 
         if ok:
             accept_current_state(w, w_n)
+
+            if fluid_material is not None and scales is not None and T_ambient is not None:
+                update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+
             accepted_conv = trial_conv
-            F_accepted,JF_accepted = F, JF
+            F_accepted, JF_accepted = F, JF
+
             print(
                 f"    accepted convection scale {accepted_conv:.4f} "
                 f"(relaxation={used_relax:.3f})"
@@ -1095,7 +1115,6 @@ def advance_convection_monotone(
             f"-> {midpoint:.4f}"
         )
 
-        # try midpoint first, then come back to original target later
         pending_targets = [midpoint, trial_conv] + pending_targets
 
     return accepted_conv, F_accepted, JF_accepted
@@ -1111,6 +1130,7 @@ def build_ptc_problem(
     include_convection=True,
     convection_scale=1.0,
     SUPG=False,
+    buoyancy_prefactor=None,
 ):
     """
     Backward-Euler pseudo-transient problem for the mixed steady system.
@@ -1138,8 +1158,14 @@ def build_ptc_problem(
     pseudo_velocity = (1.0 / dtau_c) * inner(psi_u, u - u_prev)
     pseudo_temperature = (1.0 / dtau_c) * psi_T * (T - T_prev)
 
+    if buoyancy_prefactor is not None:
+        gvec = fenics.Constant((0.0, -1.0))
+        buoyancy_force = buoyancy_prefactor * T * gvec
+    else:
+        buoyancy_force = f_b
+
     momentum = (
-        dot(psi_u, convection_term + buoyancy_scale_c * f_b)
+        dot(psi_u, convection_term + buoyancy_scale_c * buoyancy_force)
         - div(psi_u) * p
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
