@@ -909,6 +909,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        SUPG=False,
     )
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
@@ -1100,7 +1101,7 @@ def solve_ptc_stage(
         # continuation level, and the residual has flattened out across the most
         # recent accepted steps, accept this stage as a usable seed instead of
         # forcing it to march until max_steps.
-        late_stage = float(convection_scale) >= 0.30
+        late_stage = float(convection_scale) >= 0.95
         if not strict_steady and (not late_stage) and step >= max(warmup_steps, 6):
             finite_recent = [v for v in res_hist[-5:] if np.isfinite(v)]
             if len(finite_recent) >= 4 and np.isfinite(steady_res):
@@ -1293,11 +1294,11 @@ def solve_ptc_continuation(
             update_tol=update_tol,
             residual_tol=residual_tol,
             warmup_steps=10,
-            residual_check_every=5,
-            log_every=5,
+            residual_check_every=1,
+            log_every=1,
             stage_name=stage_name,
-            strict_steady=strict,
-            steady_polish=strict,
+            strict_steady=False,
+            steady_polish=True,
             ptc_atol=1e-7,
             ptc_rtol=1e-7,
             ptc_max_newton_it=20,
