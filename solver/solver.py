@@ -1307,3 +1307,43 @@ def append_ptc_csv(log_path, fieldnames, row):
     with open(log_path, "a", newline="") as fcsv:
         writer = csv.DictWriter(fcsv, fieldnames=fieldnames)
         writer.writerow(row)
+
+def compute_cfl(sub_mesh, u, dt):
+    """
+    u  : velocity Function on the current mesh
+    dt : current nondimensional timestep
+    """
+    V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
+
+    h = fenics.project(fenics.CellDiameter(sub_mesh), V0)
+    umag = fenics.project(fenics.sqrt(fenics.inner(u, u)), V0)
+
+    h_loc = h.vector().get_local()
+    u_loc = umag.vector().get_local()
+
+    cfl_loc = dt * u_loc / np.maximum(h_loc, 1e-14)
+    cfl_max = float(np.max(cfl_loc))
+    cfl_mean = float(np.mean(cfl_loc))
+
+    cfl_fun = fenics.Function(V0, name="CFL")
+    cfl_fun.vector()[:] = cfl_loc
+    cfl_fun.vector().apply("insert")
+
+    return cfl_max, cfl_mean, cfl_fun
+
+def cfl_limited_dt(sub_mesh, u, cfl_target=1.0, safety=0.9, dt_min=1e-5, dt_max=1.0):
+    V0 = fenics.FunctionSpace(sub_mesh, "DG", 0)
+    h = fenics.project(fenics.CellDiameter(sub_mesh), V0)
+    umag = fenics.project(fenics.sqrt(fenics.inner(u, u)), V0)
+
+    h_loc = h.vector().get_local()
+    u_loc = umag.vector().get_local()
+
+    speed_over_h = u_loc / np.maximum(h_loc, 1e-14)
+    denom = np.max(speed_over_h)
+
+    if denom < 1e-14:
+        return dt_max
+
+    dt_new = safety * cfl_target / denom
+    return max(dt_min, min(dt_max, float(dt_new)))
