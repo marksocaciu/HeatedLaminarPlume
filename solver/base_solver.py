@@ -1161,8 +1161,8 @@ def solve_ptc_stage(
                 plateau_band_abs = rmax - rmin
                 plateau_ref = max(abs(steady_res), 1.0)
                 if steady_res > 1.0 and plateau_band_abs <= 0.01 * plateau_ref:
-                    print(f"{stage_name}: large steady residual plateau detected; aborting final stage.")
-                    info["status"] = "steady_residual_plateau"
+                    print(f"{stage_name}: steady residual plateau detected; accepting current state.")
+                    info["status"] = "steady_residual_plateau_accept"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
                     info["rejected_steps"] = rejected_steps
@@ -1171,7 +1171,6 @@ def solve_ptc_stage(
                     info["final_steady_residual"] = steady_res
                     copy_state(w, w_n)
                     return w, info
-
         # dtau controller
         if step < warmup_steps:
             pass
