@@ -905,6 +905,7 @@ def build_nonlinear_problem(
     )
 
     if SUPG:
+        print("Using SUPG stabilization for thermal equation.")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,
@@ -1144,6 +1145,7 @@ def build_ptc_problem(
     )
 
     if SUPG:
+        print("  building SUPG-stabilized energy form for PTC problem")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,

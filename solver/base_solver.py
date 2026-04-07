@@ -897,6 +897,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        SUPG=False,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -1243,8 +1244,8 @@ def solve_ptc_continuation(
     """
     if stages is None:
         stages = [
-            {"name": "L0.10_C0.00", "lambda": 0.10, "conv": 0.00, "strict": False},
-            {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
+            # {"name": "L0.10_C0.00", "lambda": 0.10, "conv": 0.00, "strict": False},
+            # {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
             {"name": "L0.50_C0.10", "lambda": 0.50, "conv": 0.10, "strict": False},
             {"name": "L0.70_C0.20", "lambda": 0.70, "conv": 0.20, "strict": False},
             {"name": "L1.00_C0.30", "lambda": 1.00, "conv": 0.30, "strict": False},
