@@ -4,6 +4,38 @@ from solver.params_bcs import *
 from solver.biot import *
 from utils.results import *
 
+
+def build_temperature_dependent_buoyancy_prefactor(
+    fluid_material: TemperatureDependentMaterial,
+    experiment: Experiment,
+    scales,
+):
+    """
+    Return the scalar prefactor multiplying theta * g in the nondimensional
+    buoyancy term.
+
+    Reference model:
+        (Ra_ref / Pr_ref) * theta
+
+    Temperature-dependent corrections are applied when the material model
+    exposes mutable coefficient fields such as ``beta`` and ``rho``.
+    """
+    pref = fenics.Constant(float(scales.Ra / scales.Pr))
+
+    beta_fun = getattr(fluid_material, "beta", None)
+    rho_fun = getattr(fluid_material, "rho", None)
+
+    if beta_fun is not None:
+        beta_ref = fenics.Constant(float(experiment.fluid.properties["beta"]))
+        pref = pref * (beta_fun / beta_ref)
+
+    if rho_fun is not None:
+        rho_ref = fenics.Constant(float(experiment.fluid.properties["rho"]))
+        pref = pref * (rho_ref / rho_fun)
+
+    return pref
+
+
 def solve_temp_newton_continuation(
     experiment: Experiment,
     u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
@@ -114,38 +146,24 @@ def solve_temp_newton_continuation(
                 max_local_bisections=3,
             )
         
-        if accepted_conv == 1.0:
-            # Initialize
-            w.vector()[:] = w_n.vector()
-
-            # Outer loop: update materials from last temperature, then Newton solve
-            _, _, T_old = w.split(True)
-
-            for it in range(max_it):
-                fluid_material.update(T_old)   # updates DG0 mu/Pr/... on sub_mesh
-
-                # Newton solve with frozen coefficients
-                w = base_solver(
-                    F_accepted, w, boundary_conditions, JF_accepted,
-                    relaxation=0.9,
-                    maxit=20,
-                    atol=1e-9,
-                    rtol=1e-8,
-                )
-
-                _, _, T_new = w.split(True)
-
-                # convergence check on temperature (choose your norm)
-                diff = (T_new.vector() - T_old.vector()).norm("l2")
-                norm = T_old.vector().norm("l2") + 1e-14
-                rel  = diff / norm
-
-                print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
-
-                if rel < rtol:
-                    break
-
-                T_old.assign(T_new)
+        if accepted_conv == 1.0 and F_accepted is not None and JF_accepted is not None:
+            copy_state(w, w_n)
+            w, _, _ = material_outer_picard(
+                w=w,
+                boundary_conditions=boundary_conditions,
+                F=F_accepted,
+                JF=JF_accepted,
+                fluid_material=fluid_material,
+                scales=scales,
+                T_ambient=T_ambient,
+                material_max_it=8,
+                material_rtol=1.0e-6,
+                newton_relaxation=0.9,
+                newton_maxit=20,
+                newton_atol=1.0e-9,
+                newton_rtol=1.0e-8,
+            )
+            accept_current_state(w, w_n)
 
         print(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
 
@@ -159,18 +177,10 @@ def theta_to_dimensional_temperature(
     scales,
     T_ambient: float,
 ):
-    """
-    Convert nondimensional theta on the air submesh to dimensional temperature.
-
-    T_dim = T_ambient + dTref * theta
-    """
+    """Convert nondimensional theta on the air submesh to dimensional temperature."""
     T_dim = theta_src.copy(deepcopy=True)
     T_dim.rename("T_dim_material", "T_dim_material")
-    T_dim.vector()[:] *= float(scales.dTref)
-
-    ones = theta_src.copy(deepcopy=True)
-    ones.vector()[:] = 1.0
-    T_dim.vector().axpy(float(T_ambient), ones.vector())
+    T_dim.vector()[:] = float(T_ambient) + float(scales.dTref) * theta_src.vector()[:]
     T_dim.vector().apply("insert")
     return T_dim
 
@@ -181,12 +191,7 @@ def update_material_from_mixed_temperature(
     scales,
     T_ambient: float,
 ):
-    """
-    Update temperature-dependent material fields from the current mixed state.
-
-    The temperature component of the mixed state is nondimensional theta on the
-    air submesh. The material model is updated with dimensional temperature.
-    """
+    """Update mutable material fields from the current mixed-state temperature."""
     theta = w_mixed.sub(2, deepcopy=True)
     T_dim = theta_to_dimensional_temperature(theta, scales, T_ambient)
     fluid_material.update(T_dim)
@@ -209,14 +214,15 @@ def material_outer_picard(
     newton_rtol: float = 1.0e-8,
 ):
     """
-    Frozen-coefficient outer iteration.
+    Frozen-coefficient outer iteration for temperature-dependent properties.
 
-    Coefficient Functions inside F/JF are assumed to be mutable objects owned by
-    ``fluid_material``. That means the forms do not need to be rebuilt, as long as
-    the material model updates those Functions in place.
+    The residual/Jacobian are assembled using mutable coefficient Functions owned
+    by ``fluid_material``. These are refreshed from the latest accepted theta field
+    before each inner Newton solve.
     """
     theta_old = w.sub(2, deepcopy=True)
     rel = float("inf")
+
     for it in range(int(material_max_it)):
         update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
 
@@ -235,10 +241,12 @@ def material_outer_picard(
         print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
         if rel < float(material_rtol):
+            update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
             return w, rel, it + 1
 
         theta_old.assign(theta_new)
 
+    update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
     return w, rel, int(material_max_it)
 
 
@@ -341,7 +349,14 @@ def solve_ptc_temp_stage(
     # Initialize coefficient fields from the accepted state before forms are built.
     update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
 
-    # Build reusable forms once
+    buoyancy_prefactor = build_temperature_dependent_buoyancy_prefactor(
+        fluid_material=fluid_material,
+        experiment=experiment,
+        scales=scales,
+    )
+
+    # Build reusable forms once. The coefficient Functions owned by fluid_material
+    # are updated in place inside material_outer_picard, so these forms remain valid.
     F_ptc, JF_ptc = build_ptc_problem(
         W=W, w=w, w_prev=w_prev,
         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
@@ -352,6 +367,7 @@ def solve_ptc_temp_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        buoyancy_prefactor=buoyancy_prefactor,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -363,6 +379,7 @@ def solve_ptc_temp_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        buoyancy_prefactor=buoyancy_prefactor,
     )
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
@@ -1054,6 +1071,11 @@ def run_post_temp_continuation_transient(
 
             print(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
 
+            buoyancy_prefactor = build_temperature_dependent_buoyancy_prefactor(
+                fluid_material=fluid_material,
+                experiment=experiment,
+                scales=scales,
+            )
             F_tr, JF_tr = build_ptc_problem(
                 W=W,
                 w=w,
@@ -1066,6 +1088,7 @@ def run_post_temp_continuation_transient(
                 qn_scale=1.0,
                 include_convection=True,
                 convection_scale=1.0,
+                buoyancy_prefactor=buoyancy_prefactor,
             )
 
             try:
@@ -1184,29 +1207,6 @@ def run_post_temp_continuation_transient(
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
-
-            plane_fluxes = compute_horizontal_plane_heat_fluxes(
-                u_dim=u_dim,
-                T_dim=T_dim,
-                sub_mesh_dim=sub_mesh_dim,
-                experiment=experiment,
-                y_planes_m=(0.01, 0.02, 0.04, 0.08),
-                T_ref=T_ambient,
-                nx=400,
-                half_domain_symmetric=True,
-            )
-
-            flux_row = {
-                "step": step,
-                "time": t,
-                "dt": dt,
-            }
-            flux_row.update(plane_fluxes)
-
-            append_plane_flux_csv(
-                os.path.join(os.path.dirname(T_path), "plane_fluxes.csv"),
-                flux_row
-            )
 
             if sub_ft_dim is not None and sub_ds_dim is not None:
                 try:
