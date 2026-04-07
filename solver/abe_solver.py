@@ -711,6 +711,7 @@ def solve_ptc_abe_continuation(
             # {"name": "L0.30_C0.00", "lambda": 0.30, "conv": 0.00, "strict": False},
             {"name": "L0.50_C0.10", "lambda": 0.50, "conv": 0.10, "strict": False},
             {"name": "L0.70_C0.20", "lambda": 0.70, "conv": 0.20, "strict": False},
+            {"name": "L0.85_C0.25", "lambda": 0.85, "conv": 0.25, "strict": False},
             {"name": "L1.00_C0.30", "lambda": 1.00, "conv": 0.30, "strict": False},
             {"name": "L1.00_C0.50", "lambda": 1.00, "conv": 0.50, "strict": False},
             {"name": "L1.00_C0.70", "lambda": 1.00, "conv": 0.70, "strict": False},
