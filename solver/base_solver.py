@@ -1041,13 +1041,8 @@ def solve_ptc_stage(
             )
         else:
             intermediate_update_tol = max(update_tol, 1e-4)
-            late_stage = float(convection_scale) >= 0.30
-            # Keep intermediate seeds modest. Once convection is appreciable,
-            # demand a genuinely useful residual level instead of allowing large
-            # O(1-10) plateaus to pass through continuation.
-            intermediate_abs_residual_tol = min(0.5, 0.2 + 1.0 * float(convection_scale))
-            # Require a meaningful drop if the residual is not already below the cap.
-            intermediate_required_drop = 0.80  # require at least 20% drop
+            intermediate_abs_residual_tol = 0.5 + 5.0 * float(convection_scale)
+            intermediate_required_drop = 0.95  # require at least 5% drop
 
             stage_converged = (
                 rel_update < intermediate_update_tol and
@@ -1055,7 +1050,6 @@ def solve_ptc_stage(
                 (
                     steady_res < intermediate_abs_residual_tol or
                     (
-                        (not late_stage) and
                         np.isfinite(stage_residual_ratio) and
                         stage_residual_ratio < intermediate_required_drop
                     )
@@ -1101,16 +1095,18 @@ def solve_ptc_stage(
         # continuation level, and the residual has flattened out across the most
         # recent accepted steps, accept this stage as a usable seed instead of
         # forcing it to march until max_steps.
-        late_stage = float(convection_scale) >= 0.95
-        if not strict_steady and (not late_stage) and step >= max(warmup_steps, 6):
+        if not strict_steady and step >= max(warmup_steps, 6):
             finite_recent = [v for v in res_hist[-5:] if np.isfinite(v)]
             if len(finite_recent) >= 4 and np.isfinite(steady_res):
                 rmin_recent = min(finite_recent)
                 rmax_recent = max(finite_recent)
                 plateau_ref = max(abs(initial_stage_res), 1.0) if np.isfinite(initial_stage_res) else 1.0
-                residual_plateaued = (rmax_recent - rmin_recent) <= 0.01 * plateau_ref
+                residual_plateaued = (rmax_recent - rmin_recent) <= 0.02 * plateau_ref
 
-                relaxed_abs_cap = min(0.5, 0.2 + 1.0 * float(convection_scale))
+                relaxed_abs_cap = max(
+                    0.5 + 5.0 * float(convection_scale),
+                    1.05 * plateau_ref + 1e-12,
+                )
 
                 if (
                     rel_update < max(update_tol, 1e-4) and
@@ -1296,8 +1292,8 @@ def solve_ptc_continuation(
             residual_check_every=1,
             log_every=1,
             stage_name=stage_name,
-            strict_steady=False,
-            steady_polish=True,
+            strict_steady=strict,
+            steady_polish=strict,
             ptc_atol=1e-7,
             ptc_rtol=1e-7,
             ptc_max_newton_it=20,
