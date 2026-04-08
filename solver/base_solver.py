@@ -897,7 +897,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
-        SUPG=False,
+        SUPG=True,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -909,7 +909,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
-        SUPG=False,
+        SUPG=True,
     )
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
@@ -1583,6 +1583,7 @@ def run_post_continuation_transient(
                 qn_scale=1.0,
                 include_convection=True,
                 convection_scale=1.0,
+                SUPG=True,
             )
 
             try:
