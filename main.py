@@ -1,3 +1,5 @@
+from curses.ascii import SUB
+
 from utils.imports import *
 from utils.geometry import *
 from utils.material import *
@@ -245,7 +247,8 @@ def base_version(experiment: Experiment):
         update_tol=1e-8,
         residual_tol=1e-8,
         # save_obj=save_obj
-        save_obj=None
+        save_obj=None,
+        SUPG=True,
     )
 
     if info.get("status") == "continuation_failed":
@@ -327,6 +330,7 @@ def base_version(experiment: Experiment):
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
             history_csv_path=run_root + "/transient_history.csv",
+            SUPG=True,
         )
 
     print("transient status:", transient_info["status"])

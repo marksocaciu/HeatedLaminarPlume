@@ -1,3 +1,5 @@
+from re import S
+
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
@@ -99,6 +101,7 @@ def solve_steady_newton_continuation(
     p_path: str = "",
     u_path: str = "",
     T_path: str = "",
+    SUPG=False,
 ):
     """
     Steady continuation solve with monotone convection ramping.
@@ -157,6 +160,7 @@ def solve_steady_newton_continuation(
             qn_scale=lam,
             include_convection=False,
             convection_scale=0.0,
+            SUPG=SUPG,
         )
 
         ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -222,6 +226,7 @@ def solve_steady_newton_continuation_with_pts(
     p_path: str = "",
     u_path: str = "",
     T_path: str = "",
+    SUPG=False,
 ):
     """
       Hybrid steady solve:
@@ -290,6 +295,7 @@ def solve_steady_newton_continuation_with_pts(
                 qn_scale=lam,
                 include_convection=include_convection,
                 convection_scale=target_conv_scale,
+                SUPG=SUPG,
             )
 
             ok, used_relax, err = try_newton_stage_FJF_outside(
@@ -432,6 +438,7 @@ def solve_pseudo_transient_continuation_problem(
     log_every=5,
     probe_ys=(2.0, 5.0, 10.0, 15.0),
     x_probe=0.0,
+    SUPG=False,
 ):
     """
     Conservative pseudo-transient march for the full coupled target problem.
@@ -508,6 +515,7 @@ def solve_pseudo_transient_continuation_problem(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        SUPG=SUPG,
     )
 
     for step in range(1, max_steps + 1):
@@ -611,6 +619,7 @@ def solve_pseudo_transient_continuation_problem(
                     qn_scale=1.0,
                     include_convection=True,
                     convection_scale=1.0,
+                    SUPG=SUPG,
                 )
 
                 ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -830,6 +839,7 @@ def solve_ptc_stage(
     strict_steady=False,
     material_max_it=8,
     material_rtol=1.0e-6,
+    SUPG=False,
 ):
     """
     Solve one pseudo-transient continuation stage with fixed
@@ -897,7 +907,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
-        SUPG=True,
+        SUPG=SUPG,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -909,7 +919,7 @@ def solve_ptc_stage(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
-        SUPG=True,
+        SUPG=SUPG,
     )
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
@@ -1234,6 +1244,7 @@ def solve_ptc_continuation(
     final_stage_max_steps=150,
     update_tol=1e-8,
     residual_tol=1e-8,
+    SUPG=False,
 ):
     """
     Continuation in (lambda, convection_scale), using PTC as the inner stage solver.
@@ -1303,6 +1314,7 @@ def solve_ptc_continuation(
             ptc_atol=1e-7,
             ptc_rtol=1e-7,
             ptc_max_newton_it=20,
+            SUPG=SUPG,
         )
 
         continuation_history.append({
@@ -1401,6 +1413,7 @@ def run_post_continuation_transient(
     steady_update_tol: float = 1.0e-4,
     diagnostic_every: int = 1,
     history_csv_path: str = "",
+    SUPG=False,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -1583,7 +1596,7 @@ def run_post_continuation_transient(
                 qn_scale=1.0,
                 include_convection=True,
                 convection_scale=1.0,
-                SUPG=True,
+                SUPG=SUPG,
             )
 
             try:
