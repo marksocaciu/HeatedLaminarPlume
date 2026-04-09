@@ -1765,7 +1765,7 @@ def run_post_continuation_transient(
         else:
             dt = min(float(dt), float(dt_max))
         
-        # dt = min(dt_cfl, dt)
+        dt = min(dt_cfl, dt)
 
     if step >= int(step_max) and status == "transient_complete":
         status = "step_limit_reached"
