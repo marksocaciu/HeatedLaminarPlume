@@ -43,14 +43,14 @@ Point(10)= {0.0, h / 10 - 12 * R + dist, 0.0, lc2};
 Line(1) = {1, 2};
 Line(2) = {2, 3};
 Line(3) = {3, 4};
-Line(4) = {4, 9};
+Line(4) = {9, 4};
 Line(5) = {8, 1};
 Line(6) = {7, 5};
 
 Circle(7) = {7, 6, 5};
 
-Line(8) = {9, 7};
-Line(9) = {8, 5};
+Line(8) = {7, 9};
+Line(9) = {5, 8};
 Circle(10) = {9, 10, 8};
 
 // Setting the outside curve
@@ -77,14 +77,14 @@ Physical Surface(11) = {1,3};             // air domain
 // Setting mesh resolution on the wire
 Transfinite Line{7} = resolution * 4;
 Transfinite Line{6} = resolution / 20;
-Transfinite Line{1} = resolution * w / h * 3;
+Transfinite Line{1} = resolution * w / h * 4 Using Progression 1.02;
 Transfinite Line{2} = resolution ;
 Transfinite Line{3} = resolution * w / h;
-Transfinite Line{4} = resolution * 20;
+Transfinite Line{4} = resolution * 20  Using Progression 1.001;
 Transfinite Line{5} = resolution ;
-Transfinite Line{8} = resolution * 10;
-Transfinite Line{9} = resolution * 3;
-Transfinite Line{10}= resolution * 10;
+Transfinite Line{8} = resolution * 10 Using Progression 1.005;
+Transfinite Line{9} = resolution * 1.5  Using Progression 1.02;
+Transfinite Line{10}= resolution * 4;
 
 // Meshing the geometry
 Mesh 1;
