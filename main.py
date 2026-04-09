@@ -232,6 +232,7 @@ def base_version(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_T
     )
 
+    SUPG = False
     w, info = solve_ptc_continuation(
         experiment,
         W, w, w_n,
@@ -248,7 +249,7 @@ def base_version(experiment: Experiment):
         residual_tol=1e-8,
         # save_obj=save_obj
         save_obj=None,
-        SUPG=True,
+        SUPG=SUPG,
     )
 
     if info.get("status") == "continuation_failed":
@@ -330,7 +331,7 @@ def base_version(experiment: Experiment):
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
             history_csv_path=run_root + "/transient_history.csv",
-            SUPG=True,
+            SUPG=SUPG,
         )
 
     print("transient status:", transient_info["status"])
