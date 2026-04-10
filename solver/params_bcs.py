@@ -1,3 +1,5 @@
+from matplotlib.pyplot import sca
+
 from utils.imports import *
 from utils.parser import *
 from solver.scales import *
@@ -155,6 +157,12 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
                 x[0], experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
             )
 
+    class SouthBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                x[1], experiment.dimensions.domain.y_min / scales.Lref, eps=1.0e-10
+            )
+
     class PressurePin(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return (
@@ -165,11 +173,13 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     hot_wall = Hot_wall()
     west = WestBoundary()
     east = EastBoundary()
+    south = SouthBoundary()
     p_pin = PressurePin()
 
     W_p = W.sub(0)
     W_u = W.sub(1)
     W_ux = W.sub(1).sub(0)   # x-component only
+    W_uy = W.sub(1).sub(1)   # y-component only
     W_T = W.sub(2)
 
     print("Setting boundary conditions...")
@@ -178,6 +188,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), hot_wall),   # wire no-slip
         fenics.DirichletBC(W_ux, fenics.Constant(0.0), west),             # symmetry: u_x = 0
         fenics.DirichletBC(W_ux, fenics.Constant(0.0), east),             # far-field lateral: no penetration
+        fenics.DirichletBC(W_uy, fenics.Constant(0.0), south),            # far-field bottom: no penetration
         fenics.DirichletBC(W_T, fenics.Constant(0.0), east),              # ambient anchor on east
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),
     ]
