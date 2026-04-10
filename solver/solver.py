@@ -883,7 +883,7 @@ def build_nonlinear_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    weak_outer_normal_penalty=1.0e-3,
+    weak_outer_normal_penalty=1.0e-2,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -1137,7 +1137,7 @@ def build_ptc_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    weak_outer_normal_penalty=1.0e-3,
+    weak_outer_normal_penalty=1.0e-2,
 ):
     """
     Backward-Euler pseudo-transient problem for the mixed steady system.
