@@ -240,7 +240,7 @@ def base_version(experiment: Experiment):
         mu, Pr, f_b, T_c, T_air_bc,
         sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
         run_root=run_root,
-        dtau_init=1e-4,
+        dtau_init=1e-5,
         dtau_min=1e-8,
         dtau_max=1e-2,
         stage_max_steps=40,
@@ -314,7 +314,7 @@ def base_version(experiment: Experiment):
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-2,
+            dt_start=1.0e-4,
             dt_growth=1.1,
             dt_cut=0.8,
             dt_hard_cut=0.5,
@@ -1122,7 +1122,6 @@ def main():
     base_version(experiment)
     # temperature_dependent_version(experiment)
     # abs_version(experiment)
-    # abs_temperature_dependent_version(experiment)
 
 
 if __name__ == "__main__":

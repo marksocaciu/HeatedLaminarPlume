@@ -1264,6 +1264,7 @@ def solve_ptc_continuation(
             {"name": "L1.00_C0.45", "lambda": 1.00, "conv": 0.45, "strict": False},
             {"name": "L1.00_C0.50", "lambda": 1.00, "conv": 0.50, "strict": False},
             {"name": "L1.00_C0.70", "lambda": 1.00, "conv": 0.70, "strict": False},
+            {"name": "L1.00_C0.80", "lambda": 1.00, "conv": 0.80, "strict": False},
             {"name": "L1.00_C0.85", "lambda": 1.00, "conv": 0.85, "strict": False},
             {"name": "L1.00_C0.90", "lambda": 1.00, "conv": 0.90, "strict": False},
             {"name": "L1.00_C0.95", "lambda": 1.00, "conv": 0.95, "strict": False},
