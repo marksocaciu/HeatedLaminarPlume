@@ -177,7 +177,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     boundary_conditions = [
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), hot_wall),   # wire no-slip
         fenics.DirichletBC(W_ux, fenics.Constant(0.0), west),             # symmetry: u_x = 0
-        # fenics.DirichletBC(W_ux, fenics.Constant(0.0), east),             # far-field lateral: no penetration
+        fenics.DirichletBC(W_ux, fenics.Constant(0.0), east),             # far-field lateral: no penetration
         fenics.DirichletBC(W_T, fenics.Constant(0.0), east),              # ambient anchor on east
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),
     ]
