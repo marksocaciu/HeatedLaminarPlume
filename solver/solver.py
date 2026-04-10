@@ -883,6 +883,7 @@ def build_nonlinear_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
+    weak_outer_normal_penalty=1.0e-3,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -891,6 +892,9 @@ def build_nonlinear_problem(
     buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
     convection_scale_c = fenics.Constant(float(convection_scale))
     qn_scale_c = fenics.Constant(float(qn_scale))
+
+    n = fenics.FacetNormal(W.mesh())
+    gamma_outer_c = fenics.Constant(float(weak_outer_normal_penalty))
 
     mass = -psi_p * div(u)
 
@@ -930,6 +934,8 @@ def build_nonlinear_problem(
 
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+
+    F += gamma_outer_c * fenics.dot(u, n) * fenics.dot(psi_u, n) * sub_ds(OUTER_AIR_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1131,6 +1137,7 @@ def build_ptc_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
+    weak_outer_normal_penalty=1.0e-3,
 ):
     """
     Backward-Euler pseudo-transient problem for the mixed steady system.
@@ -1142,6 +1149,8 @@ def build_ptc_problem(
 
     p, u, T = fenics.split(w)
     _, u_prev, T_prev = fenics.split(w_prev)
+    n = fenics.FacetNormal(W.mesh())
+    gamma_outer_c = fenics.Constant(float(weak_outer_normal_penalty))
 
     buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
     convection_scale_c = fenics.Constant(float(convection_scale))
@@ -1191,6 +1200,7 @@ def build_ptc_problem(
 
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += gamma_outer_c * fenics.dot(u, n) * fenics.dot(psi_u, n) * sub_ds(OUTER_AIR_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
