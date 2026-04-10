@@ -1199,13 +1199,23 @@ def run_post_abe_continuation_transient(
             )
             break
 
+        _, u_star, theta = w_n.split(deepcopy=True)
+        dt_cfl = cfl_limited_dt(
+            sub_mesh_star, u_star,
+            cfl_target=1.0,
+            safety=0.9,
+            dt_min=dt_min,
+            dt_max=dt_max
+        )
+        
         if n_newton is not None and n_newton <= int(newton_easy_iters) and rel_update <= float(rel_update_easy):
             dt = min(float(dt_max), float(dt) * float(dt_growth))
         elif n_newton is not None and (n_newton >= int(newton_hard_iters) or rel_update >= float(rel_update_hard)):
             dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
         else:
             dt = min(float(dt), float(dt_max))
-
+        dt = min(dt_cfl, dt)
+        
     if step >= int(step_max) and status == "transient_complete":
         status = "step_limit_reached"
     if t >= float(t_end) and status == "transient_complete":
