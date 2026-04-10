@@ -70,7 +70,8 @@ def base_version(experiment: Experiment):
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
-        ymax=experiment.dimensions.domain.y_max
+        ymax=experiment.dimensions.domain.y_max,
+        resolution=300,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
