@@ -872,6 +872,45 @@ def stokes_initial_guess_temp(
 
     return w_n
 
+def weak_open_boundary_momentum_term(
+    mesh,
+    u,
+    psi_u,
+    experiment,
+    scales,
+    outlet_penalty=1.0e-3,
+    backflow_beta=5.0e-1,
+):
+    """
+    Mild open-boundary stabilization on EAST + TOP only.
+
+    - outlet_penalty * (u·n)(v·n) :
+        weakly discourages large normal motion
+    - backflow_beta * <-(u·n)> (u·v) :
+        damps only inflow/backflow, not clean outflow
+
+    SOUTH is intentionally excluded.
+    """
+    if outlet_penalty <= 0.0 and backflow_beta <= 0.0:
+        return fenics.Constant(0.0) * fenics.dx(domain=mesh)
+
+    ds_open, EAST_ID, TOP_ID, SOUTH_ID = build_open_boundary_measure(mesh, experiment, scales)
+    n = fenics.FacetNormal(mesh)
+    un = fenics.dot(u, n)
+
+    ds_out = ds_open(EAST_ID) + ds_open(TOP_ID)
+
+    term = 0
+
+    if outlet_penalty > 0.0:
+        term += fenics.Constant(float(outlet_penalty)) * fenics.dot(u, n) * fenics.dot(psi_u, n) * ds_out
+
+    if backflow_beta > 0.0:
+        un_in = 0.5 * (abs(un) - un)   # positive only when u·n < 0
+        term += fenics.Constant(float(backflow_beta)) * un_in * fenics.dot(u, psi_u) * ds_out
+
+    return term
+
 def build_nonlinear_problem(
     W, w,
     psi_p, psi_u, psi_T,
@@ -883,7 +922,10 @@ def build_nonlinear_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    weak_outer_normal_penalty=1.0e-1,
+    experiment=None,
+    scales=None,
+    outlet_penalty=0.0,
+    backflow_beta=0.0,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
@@ -892,9 +934,6 @@ def build_nonlinear_problem(
     buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
     convection_scale_c = fenics.Constant(float(convection_scale))
     qn_scale_c = fenics.Constant(float(qn_scale))
-
-    n = fenics.FacetNormal(W.mesh())
-    gamma_outer_c = fenics.Constant(float(weak_outer_normal_penalty))
 
     mass = -psi_p * div(u)
 
@@ -926,16 +965,23 @@ def build_nonlinear_problem(
             sub_dx=sub_dx,
             convection_scale=convection_scale,
         )
-
         F = (mass + momentum) * sub_dx + energy
     else:
         energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
         F = (mass + momentum + energy) * sub_dx
 
-
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
-    F += gamma_outer_c * fenics.dot(u, n) * fenics.dot(psi_u, n) * sub_ds(OUTER_AIR_TAG)
+    if experiment is not None and scales is not None:
+        F += weak_open_boundary_momentum_term(
+            mesh=W.mesh(),
+            u=u,
+            psi_u=psi_u,
+            experiment=experiment,
+            scales=scales,
+            outlet_penalty=outlet_penalty,
+            backflow_beta=backflow_beta,
+        )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1079,6 +1125,10 @@ def advance_convection_monotone(
             include_convection=True,
             convection_scale=trial_conv,
             buoyancy_prefactor=buoyancy_prefactor,
+            experiment=experiment,
+            scales=scales,
+            outlet_penalty=1.0e-3,
+            backflow_beta=5.0e-1,
         )
 
         ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -1137,20 +1187,15 @@ def build_ptc_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    weak_outer_normal_penalty=1.0e-1,
+    experiment=None,
+    scales=None,
+    outlet_penalty=0.0,
+    backflow_beta=0.0,
 ):
-    """
-    Backward-Euler pseudo-transient problem for the mixed steady system.
-
-    The pseudo-time mass is added only to velocity and temperature.
-    Pressure remains algebraic, which is appropriate for incompressible flow.
-    """
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 
     p, u, T = fenics.split(w)
     _, u_prev, T_prev = fenics.split(w_prev)
-    n = fenics.FacetNormal(W.mesh())
-    gamma_outer_c = fenics.Constant(float(weak_outer_normal_penalty))
 
     buoyancy_scale_c = fenics.Constant(float(buoyancy_scale))
     convection_scale_c = fenics.Constant(float(convection_scale))
@@ -1192,15 +1237,23 @@ def build_ptc_problem(
             T_prev=T_prev,
             dtau=dtau_c,
         )
-
         F = (mass + pseudo_velocity + momentum) * sub_dx + pseudo_temperature * sub_dx + energy
     else:
         energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
         F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
-    F += gamma_outer_c * fenics.dot(u, n) * fenics.dot(psi_u, n) * sub_ds(OUTER_AIR_TAG)
+
+    if experiment is not None and scales is not None:
+        F += weak_open_boundary_momentum_term(
+            mesh=W.mesh(),
+            u=u,
+            psi_u=psi_u,
+            experiment=experiment,
+            scales=scales,
+            outlet_penalty=outlet_penalty,
+            backflow_beta=backflow_beta,
+        )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1221,6 +1274,11 @@ def steady_residual_norm(
     qn_scale=1.0,
     include_convection=True,
     convection_scale=1.0,
+    experiment=None,
+    scales=None,
+    outlet_penalty=1.0e-3,
+    backflow_beta=5.0e-1,
+
 ) -> float:
     F_steady, _ = build_nonlinear_problem(
         W=W, w=w,
@@ -1231,6 +1289,10 @@ def steady_residual_norm(
         qn_scale=qn_scale,
         include_convection=include_convection,
         convection_scale=convection_scale,
+        experiment=experiment,
+        scales=scales,
+        outlet_penalty=1.0e-3,
+        backflow_beta=5.0e-1,
     )
 
     r = fenics.assemble(F_steady)

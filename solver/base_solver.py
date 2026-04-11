@@ -54,6 +54,10 @@ def pseudo_transient_rescue(
                 qn_scale=lam,
                 include_convection=(conv_scale > 0.0),
                 convection_scale=conv_scale,
+                experiment=experiment,
+                scales=scales,
+                outlet_penalty=1.0e-3,
+                backflow_beta=5.0e-1,
             )
 
             try:
@@ -161,6 +165,10 @@ def solve_steady_newton_continuation(
             include_convection=False,
             convection_scale=0.0,
             SUPG=SUPG,
+            experiment=experiment,
+            scales=scales,
+            outlet_penalty=1.0e-3,
+            backflow_beta=5.0e-1,
         )
 
         ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -504,6 +512,10 @@ def solve_pseudo_transient_continuation_problem(
         qn_scale=qn_scale_c,
         include_convection=True,
         convection_scale=convection_scale_c,
+        experiment=experiment,
+        scales=scales,
+        outlet_penalty=1.0e-3,
+        backflow_beta=5.0e-1,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -516,6 +528,10 @@ def solve_pseudo_transient_continuation_problem(
         include_convection=True,
         convection_scale=convection_scale_c,
         SUPG=SUPG,
+        experiment=experiment,
+        scales=scales,
+        outlet_penalty=1.0e-3,
+        backflow_beta=5.0e-1,
     )
 
     for step in range(1, max_steps + 1):
@@ -620,6 +636,10 @@ def solve_pseudo_transient_continuation_problem(
                     include_convection=True,
                     convection_scale=1.0,
                     SUPG=SUPG,
+                    experiment=experiment,
+                    scales=scales,
+                    outlet_penalty=1.0e-3,
+                    backflow_beta=5.0e-1,
                 )
 
                 ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -908,6 +928,10 @@ def solve_ptc_stage(
         include_convection=True,
         convection_scale=convection_scale_c,
         SUPG=SUPG,
+        experiment=experiment,
+        scales=scales,
+        outlet_penalty=1.0e-3,
+        backflow_beta=5.0e-1,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -920,6 +944,10 @@ def solve_ptc_stage(
         include_convection=True,
         convection_scale=convection_scale_c,
         SUPG=SUPG,
+        experiment=experiment,
+        scales=scales,
+        outlet_penalty=1.0e-3,
+        backflow_beta=5.0e-1,
     )
 
     safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
@@ -1598,6 +1626,10 @@ def run_post_continuation_transient(
                 include_convection=True,
                 convection_scale=1.0,
                 SUPG=SUPG,
+                experiment=experiment,
+                scales=scales,
+                outlet_penalty=1.0e-3,
+                backflow_beta=5.0e-1,
             )
 
             try:
