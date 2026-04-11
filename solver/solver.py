@@ -873,41 +873,34 @@ def stokes_initial_guess_temp(
     return w_n
 
 def weak_open_boundary_momentum_term(
-    mesh,
     u,
     psi_u,
-    experiment,
-    scales,
+    sub_ds,
+    outlet_tag,
     outlet_penalty=1.0e-3,
     backflow_beta=5.0e-1,
 ):
     """
-    Mild open-boundary stabilization on EAST + TOP only.
+    Mild outlet control on an existing exterior-facet tag, using the SAME ds
+    measure already present in the rest of the form.
 
-    - outlet_penalty * (u·n)(v·n) :
-        weakly discourages large normal motion
-    - backflow_beta * <-(u·n)> (u·v) :
-        damps only inflow/backflow, not clean outflow
-
-    SOUTH is intentionally excluded.
+    This avoids mixing different subdomain_data objects in legacy FEniCS.
     """
     if outlet_penalty <= 0.0 and backflow_beta <= 0.0:
-        return fenics.Constant(0.0) * fenics.dx(domain=mesh)
+        return fenics.Constant(0.0) * sub_ds(outlet_tag)
 
-    ds_open, EAST_ID, TOP_ID, SOUTH_ID = build_open_boundary_measure(mesh, experiment, scales)
+    mesh = u.ufl_domain().ufl_cargo()
     n = fenics.FacetNormal(mesh)
     un = fenics.dot(u, n)
-
-    ds_out = ds_open(EAST_ID) + ds_open(TOP_ID)
 
     term = 0
 
     if outlet_penalty > 0.0:
-        term += fenics.Constant(float(outlet_penalty)) * fenics.dot(u, n) * fenics.dot(psi_u, n) * ds_out
+        term += fenics.Constant(float(outlet_penalty)) * fenics.dot(u, n) * fenics.dot(psi_u, n) * sub_ds(outlet_tag)
 
     if backflow_beta > 0.0:
-        un_in = 0.5 * (abs(un) - un)   # positive only when u·n < 0
-        term += fenics.Constant(float(backflow_beta)) * un_in * fenics.dot(u, psi_u) * ds_out
+        un_in = 0.5 * (abs(un) - un)   # only active for inflow/backflow
+        term += fenics.Constant(float(backflow_beta)) * un_in * fenics.dot(u, psi_u) * sub_ds(outlet_tag)
 
     return term
 
@@ -922,8 +915,6 @@ def build_nonlinear_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    experiment=None,
-    scales=None,
     outlet_penalty=0.0,
     backflow_beta=0.0,
 ):
@@ -955,7 +946,6 @@ def build_nonlinear_problem(
     )
 
     if SUPG:
-        print("Using SUPG stabilization for thermal equation.")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,
@@ -972,16 +962,14 @@ def build_nonlinear_problem(
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
-    if experiment is not None and scales is not None:
-        F += weak_open_boundary_momentum_term(
-            mesh=W.mesh(),
-            u=u,
-            psi_u=psi_u,
-            experiment=experiment,
-            scales=scales,
-            outlet_penalty=outlet_penalty,
-            backflow_beta=backflow_beta,
-        )
+    F += weak_open_boundary_momentum_term(
+        u=u,
+        psi_u=psi_u,
+        sub_ds=sub_ds,
+        outlet_tag=OUTER_AIR_TAG,
+        outlet_penalty=outlet_penalty,
+        backflow_beta=backflow_beta,
+    )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1125,8 +1113,8 @@ def advance_convection_monotone(
             include_convection=True,
             convection_scale=trial_conv,
             buoyancy_prefactor=buoyancy_prefactor,
-            experiment=experiment,
-            scales=scales,
+            # experiment=experiment,
+            # scales=scales,
             outlet_penalty=1.0e-3,
             backflow_beta=5.0e-1,
         )
@@ -1187,8 +1175,6 @@ def build_ptc_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    experiment=None,
-    scales=None,
     outlet_penalty=0.0,
     backflow_beta=0.0,
 ):
@@ -1208,7 +1194,6 @@ def build_ptc_problem(
     )
 
     mass = -psi_p * div(u)
-
     pseudo_velocity = (1.0 / dtau_c) * inner(psi_u, u - u_prev)
     pseudo_temperature = (1.0 / dtau_c) * psi_T * (T - T_prev)
 
@@ -1225,7 +1210,6 @@ def build_ptc_problem(
     )
 
     if SUPG:
-        print("  building SUPG-stabilized energy form for PTC problem")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,
@@ -1244,16 +1228,14 @@ def build_ptc_problem(
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
-    if experiment is not None and scales is not None:
-        F += weak_open_boundary_momentum_term(
-            mesh=W.mesh(),
-            u=u,
-            psi_u=psi_u,
-            experiment=experiment,
-            scales=scales,
-            outlet_penalty=outlet_penalty,
-            backflow_beta=backflow_beta,
-        )
+    F += weak_open_boundary_momentum_term(
+        u=u,
+        psi_u=psi_u,
+        sub_ds=sub_ds,
+        outlet_tag=OUTER_AIR_TAG,
+        outlet_penalty=outlet_penalty,
+        backflow_beta=backflow_beta,
+    )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1289,8 +1271,8 @@ def steady_residual_norm(
         qn_scale=qn_scale,
         include_convection=include_convection,
         convection_scale=convection_scale,
-        experiment=experiment,
-        scales=scales,
+        # experiment=experiment,
+        # scales=scales,
         outlet_penalty=1.0e-3,
         backflow_beta=5.0e-1,
     )
