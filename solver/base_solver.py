@@ -928,8 +928,8 @@ def solve_ptc_stage(
         include_convection=True,
         convection_scale=convection_scale_c,
         SUPG=SUPG,
-        experiment=experiment,
-        scales=scales,
+        # experiment=experiment,
+        # scales=scales,
         outlet_penalty=1.0e-3,
         backflow_beta=5.0e-1,
     )
@@ -1626,8 +1626,8 @@ def run_post_continuation_transient(
                 include_convection=True,
                 convection_scale=1.0,
                 SUPG=SUPG,
-                experiment=experiment,
-                scales=scales,
+                # experiment=experiment,
+                # scales=scales,
                 outlet_penalty=1.0e-3,
                 backflow_beta=5.0e-1,
             )
