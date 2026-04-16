@@ -1,4 +1,5 @@
 from curses.ascii import SUB
+from email.mime import base
 
 from utils.imports import *
 from utils.geometry import *
@@ -1434,7 +1435,8 @@ def main():
     experiment = experiment_list[args.experiment_index]
     print(f"Running experiment: {experiment.name}")
 
-    base_version(experiment)
+    base_version_old(experiment)
+    # base_version(experiment)  
     # temperature_dependent_version(experiment)
     # abs_version(experiment)
 
