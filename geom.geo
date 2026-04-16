@@ -2,99 +2,141 @@
 //
 //  Gmsh GEO generation
 //
-//  Generating the half geometry based on the symmetry axis of the problem definiton
-//  consisting of a wire at hight 10R from the base of an open domain. The domain has
-//  40R semiwidth and 100R height based on the problem description
+//  Full geometry obtained by mirroring the former half-domain about x = 0.
+//  Domain width = 80R on each side, total width = 160R, height = 100R.
 //
 // ----------------------------------------------------------------------------------
 
-
-// Setting the appropiate kernel
 SetFactory("OpenCASCADE");
-General.NumThreads = 0; // Use all threads
+General.NumThreads = 12;
 
-// Setting up the parameters for the geometry to be modelled for multiple 
-// experimental setups
-
+// Parameters
 R_placeholder = 1;
-resolution_placeholder = 50;
+resolution_placeholder = 100;
 
 R = R_placeholder;
-w = 40 * R;
+w = 40 * R;                  // half-width
 h = 100 * R;
-lc1 = R_placeholder / 10;
-lc2 = R_placeholder / 1000;
+lc_far  = 5e-4;
+lc_axis = 1e-6;
+lc_wire = 1e-7;
 resolution = resolution_placeholder;
 dist = R * 100;
 
-// Setting the points of the domain
-Point(1) = {0.0, 0.0,    0.0, lc1};
-Point(2) = {w,   0.0,    0.0, lc1};
-Point(3) = {w,   h,      0.0, lc1};
-Point(4) = {0.0, h,      0.0, lc1};
-Point(5) = {0.0, h / 10 + 10 * R, 0.0, lc2};
-Point(6) = {0.0, h / 10 + 11 * R, 0.0, lc2};
-Point(7) = {0.0, h / 10 + 12 * R, 0.0, lc2};
-Point(8) = {0.0, h / 10 - 12 * R, 0.0, lc2};
-Point(9) = {0.0, h / 10 - 12 * R + 2 * dist, 0.0, lc2};
-Point(10)= {0.0, h / 10 - 12 * R + dist, 0.0, lc2};
+// -----------------------------------------------------------------------------
+// Points
+// -----------------------------------------------------------------------------
 
-// Setting the domain edges
-Line(1) = {1, 2};
-Line(2) = {2, 3};
-Line(3) = {3, 4};
-Line(4) = {9, 4};
-Line(5) = {8, 1};
-Line(6) = {7, 5};
+// Outer rectangle
+Point(1) = {0.0, 0.0, 0.0, lc_far};      // bottom symmetry point
+Point(2) = { w, 0.0, 0.0, lc_far};
+Point(3) = { w,   h, 0.0, lc_far};
+Point(4) = {0.0, h, 0.0, lc_far};        // upper symmetry point
+Point(5) = {-w,   h, 0.0, lc_far};
+Point(6) = {-w, 0.0, 0.0, lc_far};
 
-Circle(7) = {7, 6, 5};
+// Symmetry axis points wire
+Point(7)  = {0.0,  h/10 + 10*R, 0.0, lc_wire};   // lower point of upper semicircle
+Point(8)  = {0.0,  h/10 + 11*R, 0.0, lc_wire};   // center of upper semicircle
+Point(9)  = {0.0,  h/10 + 12*R, 0.0, lc_wire};   // top point of upper semicircle
 
-Line(8) = {7, 9};
-Line(9) = {5, 8};
-Circle(10) = {9, 10, 8};
+// Symmetry axis points refinement
+Point(10)  = {0.0,  h/10 - 12*R, 0.0, lc_axis};   // lower point of lower semicircle
+Point(11) = {0.0,  h/10 - 12*R + dist, 0.0, lc_axis};   // center of lower semicircle
+Point(12)  = {0.0,  h/10 - 12*R + 2*dist, 0.0, lc_axis}; // top point of lower semicircle
 
-// Setting the outside curve
-Curve Loop(1) = {1, 2, 3, 4, 10, 5};
-Curve Loop(2) = {-7, 6};
-Curve Loop(3) = {10,8,-7,-9};
-//Curve (3) = {6};
-//Curve (4) = {7};
 
-// Setting the surface
+// -----------------------------------------------------------------------------
+// Outer boundary
+// -----------------------------------------------------------------------------
+Line(1) = {1, 2};   // bottom-right
+Line(2) = {2, 3};   // right
+Line(3) = {4, 3};   // top-right
+Line(4) = {4, 5};   // top-left
+Line(5) = {5, 6};   // left
+Line(6) = {1, 6};   // bottom-left
+
+// -----------------------------------------------------------------------------
+// Internal wire
+// -----------------------------------------------------------------------------
+Circle(7)  = {0.0,  h/10 + 11*R, 0.0, R};    // right semicircle
+//Circle(8)  = {7, 8, 9};    // left semicircle
+
+//-----------------------------------------------------------------------------
+// Internal refinement
+// -----------------------------------------------------------------------------
+Circle(9) = {0.0,  h/10 - 12*R + dist, 0.0, dist};   // right semicircle
+//Circle(10) = {10, 11, 12};   // left semicircle
+
+// Centerline
+Line(8) = {9, 12};      // wire - refinement internal split
+Line(10) = {12, 4};      // refinement - boundary internal split
+// Line(9) = {7, 5};      // wire symmetry line
+// Line(11)    = {7, 9};       // internal vertical connector
+// Line(12)   = {5, 8};       // internal vertical connector
+
+// -----------------------------------------------------------------------------
+// Surface loops
+// -----------------------------------------------------------------------------
+
+// Full outer air region cut by internal line-source geometry
+Curve Loop(1) = {1, 2, -3, 4, 5, -6};
+
+// Wire domain
+Curve Loop(2) = {7};
+
+// Central air strip around wire
+Curve Loop(3) = {9};
+
+// Surfaces
 Plane Surface(1) = {1};
 Plane Surface(2) = {2};
 Plane Surface(3) = {3};
 
-// Setting Physical surfaces
-Physical Curve(100) = {4,8,-9,5};       // symmetry boundary of the air domain
-Physical Curve(101) = {1,2,3};          // outer boundary of the air domain
-Physical Curve(102) = {7};              // outer boundary of the wire domain
-Physical Curve(103) = {6};              // symmetry boundary of the wire domain
+// Make the topology conformal: split all overlapping surfaces
+BooleanFragments{ Surface{1}; Delete; }{ Surface{2}; Surface{3}; Curve{8}; Curve{10}; Delete; }
 
-Physical Surface(10) = {2};             // wire domain
-Physical Surface(11) = {1,3};             // air domain
+// -----------------------------------------------------------------------------
+// Physical groups
+// -----------------------------------------------------------------------------
 
-// Setting mesh resolution on the wire
-Transfinite Line{7} = resolution * 4;
-Transfinite Line{6} = resolution / 20;
-Transfinite Line{1} = resolution * w / h * 4 Using Progression 1.02;
-Transfinite Line{2} = resolution ;
-Transfinite Line{3} = resolution * w / h;
-Transfinite Line{4} = resolution * 20  Using Progression 1.001;
-Transfinite Line{5} = resolution ;
-Transfinite Line{8} = resolution * 10 Using Progression 1.005;
-Transfinite Line{9} = resolution * 1.5  Using Progression 1.02;
-Transfinite Line{10}= resolution * 4;
+// No symmetry boundary anymore
+Physical Curve(101) = {20, 19, 18, 17, 16, 15};   // outer boundary of air domain
 
-// Meshing the geometry
-Mesh 1;
+// Wire-air interface
+Physical Curve(102) = {13, 14};            // outer boundary of wire domain
+Physical Curve(103) = {11, 12};
+
+Physical Surface(10) = {2};           // wire domain
+Physical Surface(11) = {4, 3};        // air domain
+
+// -----------------------------------------------------------------------------
+// Mesh resolution
+// -----------------------------------------------------------------------------
+// Wire
+Transfinite Line{13}  = resolution * 1.5;
+Transfinite Line{14}  = resolution * 0.5;
+
+// Outer
+Transfinite Line{20}  = resolution Using Progression 1.008;
+Transfinite Line{19}  = resolution;
+Transfinite Line{18}  = resolution;
+Transfinite Line{17}  = resolution;
+Transfinite Line{16}  = resolution;
+Transfinite Line{15}  = resolution Using Progression 1.008;
+
+// Refinement
+Transfinite Line{11}  = resolution * 3 * 0.25;
+Transfinite Line{12}  = resolution * 3 * 0.75;
+
+// Centerline
+Transfinite Line{8}  = resolution * 3 Using Progression 1.009;
+Transfinite Line{10}  = resolution * 8 Using Progression 1.004;
+
+// Mesh
 Mesh 2;
 
-// Finally we apply an elliptic smoother to the grid to have a more regular
-// mesh:
 Mesh.Smoothing = 100;
 
-// Saving the geometry
 Save "plume.msh";
-
 Exit;

@@ -1427,3 +1427,278 @@ def cfl_limited_dt(sub_mesh, u, cfl_target=1.0, safety=0.9, dt_min=1e-5, dt_max=
 
     dt_new = safety * cfl_target / denom
     return max(dt_min, min(dt_max, float(dt_new)))
+
+# solver.py
+
+from utils.imports import *
+from solver.solver import *   # if this file is split in your project, adjust imports
+from solver.params_bcs import *
+from solver.biot import *
+from utils.results import *
+
+
+def build_air_flow_spaces(sub_mesh_star):
+    """
+    Build mixed pressure-velocity space on the AIR submesh only.
+    Legacy FEniCS compatible Taylor-Hood pair.
+    """
+    P1 = fenics.FiniteElement("P", sub_mesh_star.ufl_cell(), 1)
+    P2 = fenics.VectorElement("P", sub_mesh_star.ufl_cell(), 2)
+    W_pu = fenics.FunctionSpace(sub_mesh_star, fenics.MixedElement([P1, P2]))
+
+    w = fenics.Function(W_pu, name="w_pu")
+    p, u = fenics.split(w)
+
+    psi_p, psi_u = fenics.TestFunctions(W_pu)
+
+    return W_pu, w, p, u, psi_p, psi_u
+
+
+def build_buoyancy_force_from_theta(theta_air_star, experiment):
+    """
+    Construct the nondimensional buoyancy vector on the air submesh.
+    This uses your existing nondimensional scales.
+    """
+    scales = compute_nondimensional_scales(experiment)
+    Ra = fenics.Constant(float(scales.Ra))
+    Pr = fenics.Constant(float(scales.Pr))
+
+    # Gravity direction follows your existing convention:
+    # upward plume from vertical buoyancy; adjust sign if your star formulation differs.
+    gvec = fenics.Constant((0.0, 1.0))
+
+    # Standard nondimensional buoyancy: (Ra / Pr) * theta * g
+    f_b = (Ra / Pr) * theta_air_star * gvec
+    return f_b, Pr
+
+
+def build_air_flow_problem(
+    sub_mesh_star,
+    sub_dx_star,
+    sub_ft_star,
+    experiment,
+    theta_air_star,
+    include_convection=True,
+    convection_scale=1.0,
+):
+    """
+    Build the nonlinear AIR-ONLY flow problem:
+
+        -div(u) = 0
+        (u·grad)u - div(sigma) + buoyancy(theta_air) = 0
+
+    Temperature is NOT an unknown here anymore.
+    """
+    W_pu, w, p, u, psi_p, psi_u = build_air_flow_spaces(sub_mesh_star)
+
+    mu = fenics.Constant(float(experiment.fluid.properties["mu"]))
+    f_b, Pr = build_buoyancy_force_from_theta(theta_air_star, experiment)
+
+    inner = fenics.inner
+    dot = fenics.dot
+    grad = fenics.grad
+    div = fenics.div
+    sym = fenics.sym
+
+    # continuity
+    mass = -psi_p * div(u)
+
+    # momentum
+    c_scale = fenics.Constant(float(convection_scale))
+    if include_convection:
+        convection_term = c_scale * dot(grad(u), u)
+    else:
+        convection_term = fenics.Constant((0.0, 0.0))
+
+    momentum = (
+        dot(psi_u, convection_term + f_b)
+        - div(psi_u) * p
+        + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
+    )
+
+    F = (mass + momentum) * sub_dx_star
+    JF = fenics.derivative(F, w, fenics.TrialFunction(W_pu))
+
+    bcs = set_bcs_flow_only(W_pu, sub_ft_star, experiment)
+
+    return W_pu, w, F, JF, bcs
+
+
+def solve_air_flow_problem(
+    sub_mesh_star,
+    sub_dx_star,
+    sub_ft_star,
+    experiment,
+    theta_air_star,
+    w_init=None,
+    include_convection=True,
+    convection_scale=1.0,
+    relaxation=0.5,
+    maxit=20,
+    atol=1.0e-9,
+    rtol=1.0e-8,
+):
+    """
+    Solve the air-only (p,u) nonlinear problem.
+    """
+    W_pu, w, F, JF, bcs = build_air_flow_problem(
+        sub_mesh_star=sub_mesh_star,
+        sub_dx_star=sub_dx_star,
+        sub_ft_star=sub_ft_star,
+        experiment=experiment,
+        theta_air_star=theta_air_star,
+        include_convection=include_convection,
+        convection_scale=convection_scale,
+    )
+
+    if w_init is not None:
+        w.vector()[:] = w_init.vector()
+        w.vector().apply("insert")
+
+    problem = fenics.NonlinearVariationalProblem(F, w, bcs, JF)
+    solver = fenics.NonlinearVariationalSolver(problem)
+
+    prm = solver.parameters
+    prm["nonlinear_solver"] = "newton"
+
+    nprm = prm["newton_solver"]
+    nprm["linear_solver"] = "mumps"
+    nprm["absolute_tolerance"] = atol
+    nprm["relative_tolerance"] = rtol
+    nprm["maximum_iterations"] = maxit
+    nprm["report"] = True
+    nprm["error_on_nonconvergence"] = True
+    nprm["relaxation_parameter"] = relaxation
+
+    result = solver.solve()
+
+    n_iter = None
+    converged = True
+    if isinstance(result, tuple):
+        if len(result) >= 1:
+            n_iter = result[0]
+        if len(result) >= 2:
+            converged = bool(result[1])
+    elif isinstance(result, (int, float)):
+        n_iter = int(result)
+
+    p_air, u_air = w.split(deepcopy=True)
+    p_air.rename("p_air", "p_air")
+    u_air.rename("u_air", "u_air")
+
+    return {
+        "W": W_pu,
+        "w": w,
+        "p": p_air,
+        "u": u_air,
+        "n_iter": n_iter,
+        "converged": converged,
+    }
+
+
+def solve_air_stokes_startup(
+    sub_mesh_star,
+    sub_dx_star,
+    sub_ft_star,
+    experiment,
+    theta_air_star,
+    relaxation=1.0,
+):
+    """
+    Startup solve with momentum convection disabled.
+    """
+    return solve_air_flow_problem(
+        sub_mesh_star=sub_mesh_star,
+        sub_dx_star=sub_dx_star,
+        sub_ft_star=sub_ft_star,
+        experiment=experiment,
+        theta_air_star=theta_air_star,
+        w_init=None,
+        include_convection=False,
+        convection_scale=0.0,
+        relaxation=relaxation,
+        maxit=20,
+    )
+
+
+def restrict_full_temperature_to_air_submesh(
+    T_full,
+    sub_mesh_dim,
+    T_ambient,
+    dTref,
+):
+    """
+    Restrict dimensional parent-mesh temperature [K] to the dimensional air submesh,
+    then convert to nondimensional theta on that SAME dimensional air submesh.
+
+    Returns
+    -------
+    T_air_dim, theta_air_dim
+    """
+    V_air_dim = fenics.FunctionSpace(sub_mesh_dim, "CG", 1)
+    T_air_dim = fenics.interpolate(T_full, V_air_dim)
+    T_air_dim.rename("T_air_dim", "T_air_dim")
+
+    theta_air_dim = fenics.Function(V_air_dim, name="theta_air_dim")
+    theta_air_dim.vector()[:] = (T_air_dim.vector()[:] - float(T_ambient)) / float(dTref)
+    theta_air_dim.vector().apply("insert")
+
+    return T_air_dim, theta_air_dim
+
+
+def transfer_scalar_to_new_submesh_by_sampling(source_f, target_mesh, name="scalar_transfer"):
+    """
+    Simple robust transfer by point sampling.
+    Works for CG1-like fields when meshes are geometrically aligned.
+
+    This mirrors the approach already visible in your current main path.  [oai_citation:5‡main.py](sediment://file_00000000fb8872468f86b32172903ceb)
+    """
+    Vt = fenics.FunctionSpace(target_mesh, "CG", 1)
+    out = fenics.Function(Vt, name=name)
+
+    source_f.set_allow_extrapolation(True)
+    dof_coords = Vt.tabulate_dof_coordinates().reshape((-1, target_mesh.geometry().dim()))
+    values = [source_f(x) for x in dof_coords]
+
+    out.vector()[:] = values
+    out.vector().apply("insert")
+    return out
+
+
+def extend_air_velocity_to_parent_mesh_by_point_eval(
+    u_air_star,
+    mesh_star,
+    mc,
+):
+    """
+    Build a parent-mesh velocity field by sampling the air-submesh velocity in air cells
+    and setting zero in wire cells.
+
+    This is intentionally simple and explicit.
+
+    IMPORTANT:
+    - this assumes mesh_star is the scaled parent mesh
+    - it uses DOF coordinates on the parent mesh
+    - points in the wire or outside air evaluation range are assigned zero
+    """
+    V_full = fenics.VectorFunctionSpace(mesh_star, "CG", 1)
+    u_full = fenics.Function(V_full, name="u_full")
+
+    u_air_star.set_allow_extrapolation(True)
+    dof_coords = V_full.tabulate_dof_coordinates().reshape((-1, mesh_star.geometry().dim()))
+    values = np.zeros((len(dof_coords), mesh_star.geometry().dim()), dtype=float)
+
+    # A crude but robust default:
+    # evaluate everywhere; if it fails, leave zero.
+    for i, x in enumerate(dof_coords):
+        try:
+            val = u_air_star(x)
+            values[i, 0] = float(val[0])
+            values[i, 1] = float(val[1])
+        except Exception:
+            values[i, :] = 0.0
+
+    # Flatten into vector ordering
+    u_full.vector()[:] = values.reshape(-1)
+    u_full.vector().apply("insert")
+    return u_full

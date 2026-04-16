@@ -48,7 +48,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     class WestBoundary(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return on_boundary and fenics.near(
-                x[0], experiment.dimensions.domain.x_min / scales.Lref, eps=1.0e-10
+                x[0], -1.0 * experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
             )
 
     class EastBoundary(fenics.SubDomain):
@@ -71,14 +71,13 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
 
     W_p = W.sub(0)
     W_u = W.sub(1)
-    W_ux = W.sub(1).sub(0)
     W_T = W.sub(2)
 
     print("Setting boundary conditions...")
 
     boundary_conditions = [
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), hot_wall),   # wire no-slip
-        fenics.DirichletBC(W_ux, fenics.Constant(0.0), west),             # symmetry: u_x = 0
+        fenics.DirichletBC(W_T, fenics.Constant(0.0), west),              # ambient anchor on west
         fenics.DirichletBC(W_T, fenics.Constant(0.0), east),              # ambient anchor on east
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),
     ]
@@ -131,3 +130,43 @@ def volume_heat_source(experiment: Experiment):
     elif experiment.initial_conditions.heat_surface is not None:
         heat_volume = 4.0 / experiment.dimensions.wire.diameter * (experiment.initial_conditions.heat_surface )
     return heat_volume
+
+
+def set_bcs_flow_only(W_pu, sub_ft, experiment):
+    """
+    Flow-only boundary conditions for the AIR submesh.
+
+    Assumes W_pu = [P1, P2] = [pressure, velocity].
+    Adjust boundary tags to your exact project markers.
+    """
+    bcs = []
+
+    # Subspaces
+    P_sub = W_pu.sub(0)
+    U_sub = W_pu.sub(1)
+
+    zero_vec = fenics.Constant((0.0, 0.0))
+    zero_p = fenics.Constant(0.0)
+
+    # ------------------------------------------------------------------
+    # 1) No-slip on the wire interface as seen from the air side
+    # ------------------------------------------------------------------
+    bcs.append(
+        fenics.DirichletBC(U_sub, zero_vec, sub_ft, INTERFACE_TAG)
+    )
+
+    # ------------------------------------------------------------------
+    # 3) Pressure pin
+    #
+    # Best to pin a single point to remove nullspace.
+    # Reuse your existing pressure pin pattern if you already have one.
+    # ------------------------------------------------------------------
+    class PressurePin(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            # Adjust pin location if needed
+            return on_boundary and fenics.near(x[0], 0.0, 1.0e-12) and fenics.near(x[1], 0.0, 1.0e-12)
+
+    pin = PressurePin()
+    bcs.append(fenics.DirichletBC(P_sub, zero_p, pin, method="pointwise"))
+
+    return bcs
