@@ -57,6 +57,17 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
                 x[0], experiment.dimensions.domain.x_max / scales.Lref, eps=1.0e-10
             )
 
+    class SouthBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                x[1], experiment.dimensions.domain.y_min / scales.Lref, eps=1.0e-10
+            )
+
+    class NorthBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and fenics.near(
+                x[1], experiment.dimensions.domain.y_max / scales.Lref, eps=1.0e-10
+            )
     class PressurePin(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return (
@@ -67,6 +78,8 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     hot_wall = Hot_wall()
     west = WestBoundary()
     east = EastBoundary()
+    south = SouthBoundary()
+    north = NorthBoundary()
     p_pin = PressurePin()
 
     W_p = W.sub(0)
@@ -77,6 +90,10 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
 
     boundary_conditions = [
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), hot_wall),   # wire no-slip
+        fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), east),       # east no-slip
+        fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), west),       # west no-slip
+        fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), south),      # south no-slip
+        fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), north),      # north no-slip
         fenics.DirichletBC(W_T, fenics.Constant(0.0), west),              # ambient anchor on west
         fenics.DirichletBC(W_T, fenics.Constant(0.0), east),              # ambient anchor on east
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),

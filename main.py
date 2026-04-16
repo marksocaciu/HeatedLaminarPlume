@@ -207,7 +207,7 @@ def base_version(experiment: Experiment):
     )
 
     print(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
-    return
+    
     # ------------------------------------------------------------------
     # 4) Air-flow startup (Stokes / no momentum convection)
     # ------------------------------------------------------------------
