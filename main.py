@@ -182,8 +182,8 @@ def base_version(experiment: Experiment):
         experiment.dimensions.wire.diameter,
     )
 
-    print(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
-    print(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
+    # print(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
+    # print(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
 
     # ------------------------------------------------------------------
     # 3) Scale parent mesh to STAR coordinates
