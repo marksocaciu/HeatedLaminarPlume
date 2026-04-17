@@ -387,7 +387,7 @@ def base_version_old(experiment: Experiment):
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
-        resolution=250,
+        resolution=400,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
@@ -644,8 +644,8 @@ def base_version_old(experiment: Experiment):
             rel_update_hard=1.0e-3,
             rel_update_reject=1.0e-2,
             steady_window=25,
-            steady_rel_tol=5.0e-3,
-            steady_update_tol=1.0e-4,
+            steady_rel_tol=1.0e-5,
+            steady_update_tol=1.0e-6,
             history_csv_path=run_root + "/transient_history.csv",
             SUPG=SUPG,
         )
