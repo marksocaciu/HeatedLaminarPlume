@@ -130,8 +130,8 @@ Transfinite Line{11}  = resolution * 3 * 0.25;
 Transfinite Line{12}  = resolution * 3 * 0.75;
 
 // Centerline
-Transfinite Line{8}  = resolution * 3 Using Progression 1.009;
-Transfinite Line{10}  = resolution * 8 Using Progression 1.004;
+Transfinite Line{8}  = resolution * 3 Using Progression 1.006;
+Transfinite Line{10}  = resolution * 8 Using Progression 1.003;
 
 // Mesh
 Mesh 2;

@@ -387,7 +387,7 @@ def base_version_old(experiment: Experiment):
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
-        resolution=400,
+        resolution=250,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
