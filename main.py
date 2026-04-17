@@ -548,7 +548,7 @@ def base_version_old(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_T
     )
 
-    SUPG = False
+    SUPG = True
     w, info = solve_ptc_continuation(
         experiment,
         W, w, w_n,

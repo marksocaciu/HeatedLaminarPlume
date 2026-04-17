@@ -962,14 +962,14 @@ def build_nonlinear_problem(
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
-    F += weak_open_boundary_momentum_term(
-        u=u,
-        psi_u=psi_u,
-        sub_ds=sub_ds,
-        outlet_tag=OUTER_AIR_TAG,
-        outlet_penalty=outlet_penalty,
-        backflow_beta=backflow_beta,
-    )
+    # F += weak_open_boundary_momentum_term(
+    #     u=u,
+    #     psi_u=psi_u,
+    #     sub_ds=sub_ds,
+    #     outlet_tag=OUTER_AIR_TAG,
+    #     outlet_penalty=outlet_penalty,
+    #     backflow_beta=backflow_beta,
+    # )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -1228,14 +1228,14 @@ def build_ptc_problem(
 
     F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
-    F += weak_open_boundary_momentum_term(
-        u=u,
-        psi_u=psi_u,
-        sub_ds=sub_ds,
-        outlet_tag=OUTER_AIR_TAG,
-        outlet_penalty=outlet_penalty,
-        backflow_beta=backflow_beta,
-    )
+    # F += weak_open_boundary_momentum_term(
+    #     u=u,
+    #     psi_u=psi_u,
+    #     sub_ds=sub_ds,
+    #     outlet_tag=OUTER_AIR_TAG,
+    #     outlet_penalty=outlet_penalty,
+    #     backflow_beta=backflow_beta,
+    # )
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
