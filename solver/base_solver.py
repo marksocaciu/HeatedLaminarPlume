@@ -139,7 +139,7 @@ def solve_steady_newton_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -269,7 +269,7 @@ def solve_steady_newton_continuation_with_pts(
             p_star, u_star, theta = w.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
             p_path_l = p_path.split(".xdmf")[0] + f"_lambda_{int(lam*100):03d}.xdmf"
@@ -1382,7 +1382,7 @@ def solve_ptc_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 save_obj[1], u_star, p_star, theta,
-                save_obj[2].Uref, save_obj[2].dTref, T_ambient,
+                save_obj[2].Uplume, save_obj[2].dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -1721,7 +1721,7 @@ def run_post_continuation_transient(
             p_star, u_star, theta = w_n.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
 

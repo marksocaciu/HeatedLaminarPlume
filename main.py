@@ -605,7 +605,14 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     
     scales = compute_nondimensional_scales(experiment)
     print(scales)
-
+    print(f"Uref   = {scales.Uref:.6e} m/s")
+    print(f"Uplume = {scales.Uplume:.6e} m/s")
+    print(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
+    print(f"Lref   = {scales.Lref:.6e} m")
+    print(f"Lplume = {scales.Lplume:.6e} m")
+    print(f"dTref  = {scales.dTref:.6e} K")
+    print(f"dTline = {scales.dTline:.6e} K")
+    
     # --- 3) conduction initial guess (dim parent mesh)
     print("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
@@ -827,7 +834,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -898,7 +905,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1200,7 +1207,7 @@ def temperature_dependent_version(experiment: Experiment):
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1270,7 +1277,7 @@ def temperature_dependent_version(experiment: Experiment):
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1586,7 +1593,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1656,7 +1663,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 

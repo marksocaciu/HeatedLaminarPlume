@@ -103,7 +103,7 @@ def solve_ABE_newton_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -804,7 +804,7 @@ def solve_ptc_abe_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 save_obj[1], u_star, p_star, theta,
-                save_obj[2].Uref, save_obj[2].dTref, T_ambient,
+                save_obj[2].Uplume, save_obj[2].dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -1138,7 +1138,7 @@ def run_post_abe_continuation_transient(
             p_star, u_star, theta = w_n.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
 
