@@ -863,6 +863,8 @@ def run_post_abe_continuation_transient(
     steady_update_tol: float = 1.0e-4,
     diagnostic_every: int = 1,
     history_csv_path: str = "",
+    start_time: float = 0.0,
+    start_step: int = 0,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -888,8 +890,8 @@ def run_post_abe_continuation_transient(
     copy_state(w_last_accepted, w_n)
 
     dt = float(dt_start)
-    t = 0.0
-    step = 0
+    t = float(start_time)
+    step = float(start_step)
     accepted_steps = 0
     rejected_steps = 0
     history = []
@@ -1169,6 +1171,16 @@ def run_post_abe_continuation_transient(
             append_plane_flux_csv(
                 os.path.join(os.path.dirname(T_path), "plane_fluxes.csv"),
                 flux_row
+            )
+
+            checkpoint_dir = os.path.join(os.path.dirname(T_path), "restart_checkpoint")
+            save_restart_checkpoint(
+                checkpoint_dir=checkpoint_dir,
+                mesh_star=sub_mesh_star,
+                w_n=w_n,
+                step=step,
+                time_value=t,
+                dt_value=dt,
             )
 
             if sub_ft_dim is not None and sub_ds_dim is not None:

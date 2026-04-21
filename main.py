@@ -686,8 +686,8 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         experiment
     )
 
-    restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
-
+    # Optional restart
+    restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
     if restart_from_last_transient:
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
         try:
@@ -784,7 +784,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         OUTPUT_XDMF_PATH_AIR_T
     )
 
-    SUPG = False
+    SUPG = True
     if not restart_from_last_transient:
         w, info = solve_ptc_continuation(
             experiment,
@@ -1331,13 +1331,14 @@ def temperature_dependent_version(experiment: Experiment):
         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
-def abs_version(experiment: Experiment):
-    run_root = make_run_root(experiment.name, "abs")
+def abs_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+    run_root = make_run_root(experiment.name, "abs", reuse_existing=existing_run_root)
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
-        ymax=experiment.dimensions.domain.y_max
+        ymax=experiment.dimensions.domain.y_max,
+        resolution=250,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
@@ -1445,18 +1446,62 @@ def abs_version(experiment: Experiment):
         experiment
     )
 
-    # Use Stokes initial guess for better convergene
-    print("Solving Stokes problem for initial guess...")
-    w_n = stokes_initial_guess(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        w_n=w_n,
-        lambdas=(0.1, 0.3)
-    )
+    # Optional restart
+    restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
+    if restart_from_last_transient:
+        checkpoint_dir = os.path.join(run_root, "abs", "restart_checkpoint")
+        try:
+            if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
+                print("Attempting restart from true checkpoint...")
+                w, w_n, restart_meta = load_true_restart_checkpoint(
+                    checkpoint_dir=checkpoint_dir,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                )
+            else:
+                print("Attempting restart from last saved transient snapshot...")
+                w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
+                    run_root=run_root,
+                    mode_subdir="base",
+                    sub_mesh_dim=sub_mesh_dim,
+                    sub_mesh_star=sub_mesh_star,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                    scales=scales,
+                    T_ambient=T_ambient,
+                    rho_air=experiment.fluid.properties["rho"],
+                    fallback_dt=1.0e-4,
+                )
+
+            print(
+                f"Restart recovered from {restart_meta['source']}: "
+                f"step={restart_meta['step']}, "
+                f"time={restart_meta['time']:.6e}, "
+                f"dt={restart_meta['dt']:.6e}"
+            )
+
+        except Exception as exc:
+            print("Restart request could not be satisfied.")
+            print(f"Reason: {exc}")
+            print("Falling back to fresh transient start from steady state.")
+            copy_state(w, w_n)
+            restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
+
+    if not restart_from_last_transient:
+        # Use Stokes initial guess for better convergene
+        print("Solving Stokes problem for initial guess...")
+        w_n = stokes_initial_guess(
+            experiment=experiment,
+            u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+            W=W, w=w,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            w_n=w_n,
+            lambdas=( 0.05, 0.1, 0.3)
+        )
 
     # Solve the full nonlinear problem with previous initial guess
     print("Starting checks")
@@ -1498,40 +1543,42 @@ def abs_version(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_V,
         OUTPUT_XDMF_PATH_AIR_T
     )
+    SUPG = False
 
-    w, info = solve_ptc_abe_continuation(
-        experiment,
-        run_root,
-        W, w, w_n,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        dtau_init=1e-4,
-        dtau_min=1e-8,
-        dtau_max=1e-2,
-        stage_max_steps=40,
-        final_stage_max_steps=2000,
-        update_tol=1e-8,
-        residual_tol=1e-8,
-        # save_obj=save_obj
-        save_obj=None
-    )
+    if not restart_from_last_transient:
+        w, info = solve_ptc_abe_continuation(
+            experiment,
+            run_root,
+            W, w, w_n,
+            psi_p, psi_u, psi_T,
+            mu, Pr, f_b, T_c, T_air_bc,
+            sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+            dtau_init=1e-4,
+            dtau_min=1e-8,
+            dtau_max=1e-2,
+            stage_max_steps=40,
+            final_stage_max_steps=2000,
+            update_tol=1e-8,
+            residual_tol=1e-8,
+            # save_obj=save_obj
+            save_obj=None
+        )
 
-    if info.get("status") == "continuation_failed":
-        print("failed_stage:", info.get("failed_stage"))
-        last = info.get("last_stage_info", {})
-        print("last_stage_status:", last.get("status"))
-        print("accepted_steps:", last.get("accepted_steps"))
-        print("rejected_steps:", last.get("rejected_steps"))
-        print("final_dtau:", last.get("final_dtau"))
-        print("final_rel_update:", last.get("final_rel_update"))
-        print("final_steady_residual:", last.get("final_steady_residual"))
-    else:
-        print("accepted_steps:", info.get("accepted_steps"))
-        print("rejected_steps:", info.get("rejected_steps"))
-        print("final_dtau:", info.get("final_dtau"))
-        print("final_rel_update:", info.get("final_rel_update"))
-        print("final_steady_residual:", info.get("final_steady_residual"))
+        if info.get("status") == "continuation_failed":
+            print("failed_stage:", info.get("failed_stage"))
+            last = info.get("last_stage_info", {})
+            print("last_stage_status:", last.get("status"))
+            print("accepted_steps:", last.get("accepted_steps"))
+            print("rejected_steps:", last.get("rejected_steps"))
+            print("final_dtau:", last.get("final_dtau"))
+            print("final_rel_update:", last.get("final_rel_update"))
+            print("final_steady_residual:", last.get("final_steady_residual"))
+        else:
+            print("accepted_steps:", info.get("accepted_steps"))
+            print("rejected_steps:", info.get("rejected_steps"))
+            print("final_dtau:", info.get("final_dtau"))
+            print("final_rel_update:", info.get("final_rel_update"))
+            print("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -1579,10 +1626,10 @@ def abs_version(experiment: Experiment):
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-2,
-            dt_growth=1.2,
-            dt_cut=0.5,
-            dt_hard_cut=0.8,
+            dt_start=1.0e-5,
+            dt_growth=1.1,
+            dt_cut=0.8,
+            dt_hard_cut=0.5,
             dt_min=1.0e-5,
             dt_max=1.0,
             t_end=15000.0,
@@ -1590,11 +1637,13 @@ def abs_version(experiment: Experiment):
             save_every=20,
             max_retries_per_step=8,
             rel_update_easy=1.0e-3,
-            rel_update_hard=5.0e-3,
+            rel_update_hard=1.0e-3,
             rel_update_reject=2.0e-2,
             steady_window=25,
-            steady_rel_tol=5.0e-3,
-            steady_update_tol=1.0e-4,
+            steady_rel_tol=1.0e-5,
+            steady_update_tol=1.0e-6,
+            start_time=restart_meta["time"],
+            start_step=restart_meta["step"],
             history_csv_path=run_root + "/transient_history.csv",
         )
 
@@ -1683,7 +1732,11 @@ def main():
     )
     # base_version_new(experiment)  
     # temperature_dependent_version(experiment)
-    # abs_version(experiment)
+    # abs_version(
+    #     experiment,
+    #     restart_from_last_transient=args.restart_from_last_transient,
+    #     existing_run_root=args.existing_run_root
+    # )
 
 
 if __name__ == "__main__":

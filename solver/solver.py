@@ -1702,3 +1702,27 @@ def extend_air_velocity_to_parent_mesh_by_point_eval(
     u_full.vector()[:] = values.reshape(-1)
     u_full.vector().apply("insert")
     return u_full
+
+def save_restart_checkpoint(checkpoint_dir, mesh_star, w_n, step, time_value, dt_value):
+    import json
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    p_star, u_star, theta_star = w_n.split(deepcopy=True)
+
+    h5_path = os.path.join(checkpoint_dir, "state.h5")
+    meta_path = os.path.join(checkpoint_dir, "state.json")
+
+    h5 = fenics.HDF5File(mesh_star.mpi_comm(), h5_path, "w")
+    h5.write(mesh_star, "/mesh")
+    h5.write(p_star, "/p_star")
+    h5.write(u_star, "/u_star")
+    h5.write(theta_star, "/theta_star")
+    h5.close()
+
+    meta = {
+        "step": int(step),
+        "time": float(time_value),
+        "dt": float(dt_value),
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
