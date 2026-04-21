@@ -645,7 +645,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     )
 
     # Optional approximate restart from the last saved dimensional transient snapshots.
-    restart_meta = {"step": 1280, "time": 1.289e-2, "dt": 1.0e-5, "source": "fresh_start"}
+    restart_meta = {"step": 480, "time": 1.2e-3, "dt": 1.0e-5, "source": "fresh_start"}
     if restart_from_last_transient:
         print("Attemting restart from last saved snapshot...")
         w, w_n, _ = approximate_restart_from_last_saved_transient(
