@@ -20,7 +20,7 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     T_ref = fenics.Constant(0.0)
 
     f_b = (Ra / Pr) * T * gvec
-    mu = fenics.Constant(sc.nu / (sc.Uref * sc.Lref))
+    mu = fenics.Constant(sc.nu / (sc.Uplume * sc.Lref))
 
     VTa = fenics.FunctionSpace(sub_mesh, "CG", 1)
     T_air_bc = fenics.Function(VTa)
@@ -96,6 +96,8 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), north),      # north no-slip
         fenics.DirichletBC(W_T, fenics.Constant(0.0), west),              # ambient anchor on west
         fenics.DirichletBC(W_T, fenics.Constant(0.0), east),              # ambient anchor on east
+        fenics.DirichletBC(W_T, fenics.Constant(0.0), north),              # ambient anchor on east
+        fenics.DirichletBC(W_T, fenics.Constant(0.0), south),              # ambient anchor on east
         fenics.DirichletBC(W_p, fenics.Constant(0.0), p_pin, method="pointwise"),
     ]
 

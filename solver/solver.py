@@ -188,6 +188,9 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     print("Init T min/max:",
         w_n.sub(2).vector().min(),
         w_n.sub(2).vector().max())
+    print("Init u min/max:",
+        w_n.sub(1).vector().min(),
+        w_n.sub(1).vector().max())
 
     # Now split for convenience (these are UFL objects / views; OK for variational forms)
     p_n, u_n, T_n = fenics.split(w_n)
@@ -532,6 +535,13 @@ def stokes_initial_guess(
             scales=scales,
         )
         w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
+
+        u_chk = w.sub(1, deepcopy=True)
+
+        Vmag = fenics.FunctionSpace(W.mesh(), "CG", 1)
+        umag = fenics.project(fenics.sqrt(fenics.inner(u_chk, u_chk)), Vmag, solver_type="mumps")
+
+        print(f"  |u| min/max = {umag.vector().min():.6e}, {umag.vector().max():.6e}")
 
         theta_cond = w.sub(2, deepcopy=True)
 
