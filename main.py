@@ -18,17 +18,167 @@ from solver.abe_solver import *
 from solver.temp_solver import *
 
 
-def make_run_root(experiment_name: str, mode: str) -> str:
+def make_run_root(experiment_name: str, mode: str, reuse_existing: str = "") -> str:
     """
-    Create a unique per-run output directory.
-    This prevents parallel base/ABE runs from clobbering each other's
-    mesh/XDMF/HDF5 files.
+    Create a unique per-run output directory, unless ``reuse_existing`` is given.
+    This allows transient restarts to keep writing into the original run folder.
     """
+    if reuse_existing:
+        os.makedirs(reuse_existing, exist_ok=True)
+        return reuse_existing
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     pid = os.getpid()
     run_root = os.path.join(experiment_name, "runs", f"{mode}_{stamp}_pid{pid}")
     os.makedirs(run_root, exist_ok=True)
     return run_root
+
+def _infer_xdmf_attribute_name(xdmf_path: str) -> str:
+    import xml.etree.ElementTree as ET
+
+    root = ET.parse(xdmf_path).getroot()
+    for attr in root.iter():
+        if attr.tag.endswith('Attribute'):
+            name = attr.attrib.get('Name', '').strip()
+            if name:
+                return name
+    raise RuntimeError(f"Could not infer XDMF Attribute Name from {xdmf_path}")
+
+
+def _load_checkpoint_snapshot_from_xdmf(xdmf_path: str, function):
+    attr_name = _infer_xdmf_attribute_name(xdmf_path)
+    with fenics.XDMFFile(function.function_space().mesh().mpi_comm(), xdmf_path) as xdmf:
+        try:
+            xdmf.read_checkpoint(function, attr_name, 0)
+        except RuntimeError:
+            xdmf.read(function)
+    return function
+
+
+def _last_transient_step_from_history(history_csv_path: str) -> int:
+    import csv
+
+    if not history_csv_path or not os.path.exists(history_csv_path):
+        return -1
+    last_step = -1
+    with open(history_csv_path, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                last_step = int(row['step'])
+            except Exception:
+                continue
+    return last_step
+
+
+def approximate_restart_from_last_saved_transient(
+    run_root: str,
+    mode_subdir: str,
+    sub_mesh_dim,
+    sub_mesh_star,
+    W,
+    w,
+    w_n,
+    scales,
+    T_ambient: float,
+    rho_air: float,
+    fallback_dt: float,
+):
+    """
+    Rebuild an approximate restart state from the latest saved dimensional transient
+    XDMF snapshots plus transient_history.csv.
+
+    This is intended for one-off recovery of an interrupted run when no true restart
+    checkpoint was written.
+    """
+    import csv
+
+    base_dir = os.path.join(run_root, mode_subdir)
+    history_csv = os.path.join(run_root, 'transient_history.csv')
+    step = _last_transient_step_from_history(history_csv)
+    if step < 0:
+        raise RuntimeError(f"No usable transient_history.csv found at {history_csv}")
+
+    p_xdmf = os.path.join(base_dir, f'air_pressure_transient_{step:05d}.xdmf')
+    u_xdmf = os.path.join(base_dir, f'air_velocity_transient_{step:05d}.xdmf')
+    T_xdmf = os.path.join(base_dir, f'air_temperature_transient_{step:05d}.xdmf')
+    for path in (p_xdmf, u_xdmf, T_xdmf):
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Missing transient snapshot file: {path}")
+
+    # Recover time / dt from history.
+    time_value = 0.0
+    dt_value = float(fallback_dt)
+    with open(history_csv, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                if int(row['step']) == step:
+                    time_value = float(row['time'])
+                    dt_value = float(row['dt'])
+            except Exception:
+                continue
+
+    # Read dimensional fields from the last snapshot.
+    Vp_dim = fenics.FunctionSpace(sub_mesh_dim, 'CG', 1)
+    Vu_dim = fenics.VectorFunctionSpace(sub_mesh_dim, 'CG', 2)
+    VT_dim = fenics.FunctionSpace(sub_mesh_dim, 'CG', 1)
+
+    p_dim = fenics.Function(Vp_dim)
+    u_dim = fenics.Function(Vu_dim)
+    T_dim = fenics.Function(VT_dim)
+
+    _load_checkpoint_snapshot_from_xdmf(p_xdmf, p_dim)
+    _load_checkpoint_snapshot_from_xdmf(u_xdmf, u_dim)
+    _load_checkpoint_snapshot_from_xdmf(T_xdmf, T_dim)
+
+    # Convert back to nondimensional variables on the dimensional submesh.
+    p_star_dim = fenics.Function(Vp_dim)
+    u_star_dim = fenics.Function(Vu_dim)
+    theta_dim = fenics.Function(VT_dim)
+
+    p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.Pref)
+    u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref)
+    theta_dim.vector()[:] = (T_dim.vector()[:] - float(T_ambient)) / float(scales.dTref)
+    p_star_dim.vector().apply('insert')
+    u_star_dim.vector().apply('insert')
+    theta_dim.vector().apply('insert')
+
+    # Interpolate onto the current star mesh collapsed subspaces.
+    Vp_star, _ = W.sub(0).collapse(True)
+    Vu_star, _ = W.sub(1).collapse(True)
+    VT_star, _ = W.sub(2).collapse(True)
+
+    for fn in (p_star_dim, u_star_dim, theta_dim):
+        try:
+            fn.set_allow_extrapolation(True)
+        except Exception:
+            pass
+
+    p_star = fenics.interpolate(p_star_dim, Vp_star)
+    u_star = fenics.interpolate(u_star_dim, Vu_star)
+    theta_star = fenics.interpolate(theta_dim, VT_star)
+
+    assign_p = fenics.FunctionAssigner(W.sub(0), Vp_star)
+    assign_u = fenics.FunctionAssigner(W.sub(1), Vu_star)
+    assign_T = fenics.FunctionAssigner(W.sub(2), VT_star)
+
+    assign_p.assign(w_n.sub(0), p_star)
+    assign_u.assign(w_n.sub(1), u_star)
+    assign_T.assign(w_n.sub(2), theta_star)
+    w_n.vector().apply('insert')
+    copy_state(w, w_n)
+
+    meta = {
+        'step': int(step),
+        'time': float(time_value),
+        'dt': float(dt_value),
+        'source': 'approximate_xdmf_restart',
+    }
+    print('Loaded approximate restart from transient snapshots:')
+    print(f"  step = {meta['step']}")
+    print(f"  time = {meta['time']:.6e}")
+    print(f"  dt   = {meta['dt']:.6e}")
+    return w, w_n, meta
 
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
     # 1) dimensionalize qn_air: qn_dim [W/m^2]
@@ -85,7 +235,7 @@ def relative_update(new_f, old_f):
     diff.axpy(-1.0, old_f.vector())
     return diff.norm("l2") / (new_f.vector().norm("l2") + 1.0e-14)
 
-def base_version(experiment: Experiment):
+def base_version_new(experiment: Experiment):
     """
     New conjugate skeleton:
 
@@ -380,8 +530,8 @@ def base_version(experiment: Experiment):
         "theta_air_star": theta_air_star,
     }
 
-def base_version_old(experiment: Experiment):
-    run_root = make_run_root(experiment.name, "base")
+def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+    run_root = make_run_root(experiment.name, "base", reuse_existing=existing_run_root)
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
@@ -493,19 +643,38 @@ def base_version_old(experiment: Experiment):
         experiment.fluid.properties["beta"],
         experiment
     )
-    
-    # Use Stokes initial guess for better convergene
-    print("Solving Stokes problem for initial guess...")
-    w_n = stokes_initial_guess(
-        experiment=experiment,
-        u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        W=W, w=w,
-        psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        w_n=w_n,
-        lambdas=( 0.05, 0.1, 0.3)
-    )
+
+    # Optional approximate restart from the last saved dimensional transient snapshots.
+    restart_meta = {"step": 1280, "time": 1.289e-2, "dt": 1.0e-5, "source": "fresh_start"}
+    if restart_from_last_transient:
+        print("Attemting restart from last saved snapshot...")
+        w, w_n, _ = approximate_restart_from_last_saved_transient(
+            run_root=run_root,
+            mode_subdir="base",
+            sub_mesh_dim=sub_mesh_dim,
+            sub_mesh_star=sub_mesh_star,
+            W=W,
+            w=w,
+            w_n=w_n,
+            scales=scales,
+            T_ambient=T_ambient,
+            rho_air=experiment.fluid.properties["rho"],
+            fallback_dt=1.0e-4,
+        )
+
+    if not restart_from_last_transient:
+        # Use Stokes initial guess for better convergene
+        print("Solving Stokes problem for initial guess...")
+        w_n = stokes_initial_guess(
+            experiment=experiment,
+            u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+            W=W, w=w,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            w_n=w_n,
+            lambdas=( 0.05, 0.1, 0.3)
+        )
     
     # Solve the full nonlinear problem with previous initial guess
     print("Starting checks")
@@ -548,41 +717,42 @@ def base_version_old(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_T
     )
 
-    SUPG = True
-    w, info = solve_ptc_continuation(
-        experiment,
-        W, w, w_n,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        run_root=run_root,
-        dtau_init=1e-5,
-        dtau_min=1e-8,
-        dtau_max=1e-2,
-        stage_max_steps=40,
-        final_stage_max_steps=2000,
-        update_tol=1e-8,
-        residual_tol=1e-8,
-        # save_obj=save_obj
-        save_obj=None,
-        SUPG=SUPG,
-    )
+    SUPG = False
+    if not restart_from_last_transient:
+        w, info = solve_ptc_continuation(
+            experiment,
+            W, w, w_n,
+            psi_p, psi_u, psi_T,
+            mu, Pr, f_b, T_c, T_air_bc,
+            sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
+            run_root=run_root,
+            dtau_init=1e-5,
+            dtau_min=1e-8,
+            dtau_max=1e-2,
+            stage_max_steps=40,
+            final_stage_max_steps=2000,
+            update_tol=1e-8,
+            residual_tol=1e-8,
+            # save_obj=save_obj
+            save_obj=None,
+            SUPG=SUPG,
+        )
 
-    if info.get("status") == "continuation_failed":
-        print("failed_stage:", info.get("failed_stage"))
-        last = info.get("last_stage_info", {})
-        print("last_stage_status:", last.get("status"))
-        print("accepted_steps:", last.get("accepted_steps"))
-        print("rejected_steps:", last.get("rejected_steps"))
-        print("final_dtau:", last.get("final_dtau"))
-        print("final_rel_update:", last.get("final_rel_update"))
-        print("final_steady_residual:", last.get("final_steady_residual"))
-    else:
-        print("accepted_steps:", info.get("accepted_steps"))
-        print("rejected_steps:", info.get("rejected_steps"))
-        print("final_dtau:", info.get("final_dtau"))
-        print("final_rel_update:", info.get("final_rel_update"))
-        print("final_steady_residual:", info.get("final_steady_residual"))
+        if info.get("status") == "continuation_failed":
+            print("failed_stage:", info.get("failed_stage"))
+            last = info.get("last_stage_info", {})
+            print("last_stage_status:", last.get("status"))
+            print("accepted_steps:", last.get("accepted_steps"))
+            print("rejected_steps:", last.get("rejected_steps"))
+            print("final_dtau:", last.get("final_dtau"))
+            print("final_rel_update:", last.get("final_rel_update"))
+            print("final_steady_residual:", last.get("final_steady_residual"))
+        else:
+            print("accepted_steps:", info.get("accepted_steps"))
+            print("rejected_steps:", info.get("rejected_steps"))
+            print("final_dtau:", info.get("final_dtau"))
+            print("final_rel_update:", info.get("final_rel_update"))
+            print("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -646,6 +816,8 @@ def base_version_old(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=1.0e-5,
             steady_update_tol=1.0e-6,
+            start_time=restart_meta["time"],
+            start_step=restart_meta["step"],
             history_csv_path=run_root + "/transient_history.csv",
             SUPG=SUPG,
         )
@@ -1429,14 +1601,20 @@ def main():
         default=1,
         help="Index of the experiment to run from experiments.json",
     )
+    argparser.add_argument("--restart-from-last-transient", action="store_true")
+    argparser.add_argument("--existing-run-root", type=str, default="")
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
     experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
     experiment = experiment_list[args.experiment_index]
     print(f"Running experiment: {experiment.name}")
 
-    base_version_old(experiment)
-    # base_version(experiment)  
+    base_version(
+        experiment,
+        restart_from_last_transient=args.restart_from_last_transient,
+        existing_run_root=args.existing_run_root
+    )
+    # base_version_new(experiment)  
     # temperature_dependent_version(experiment)
     # abs_version(experiment)
 

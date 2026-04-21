@@ -1,4 +1,5 @@
 from re import S
+import json
 
 from utils.imports import *
 from solver.solver import *
@@ -753,7 +754,6 @@ def _theta_to_dimensional_temperature(
     T_dim.vector().apply("insert")
     return T_dim
 
-
 def _update_material_from_mixed_temperature(
     w_mixed: fenics.Function,
     fluid_material,
@@ -770,7 +770,6 @@ def _update_material_from_mixed_temperature(
     T_dim = _theta_to_dimensional_temperature(theta, scales, T_ambient)
     fluid_material.update(T_dim)
     return theta, T_dim
-
 
 def _material_outer_picard(
     w: fenics.Function,
@@ -1443,6 +1442,8 @@ def run_post_continuation_transient(
     diagnostic_every: int = 1,
     history_csv_path: str = "",
     SUPG=False,
+    start_time: float = 0.0,
+    start_step: int = 0,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -1468,8 +1469,8 @@ def run_post_continuation_transient(
     copy_state(w_last_accepted, w_n)
 
     dt = float(dt_start)
-    t = 0.0
-    step = 0
+    t = float(start_time)
+    step = int(start_step)  
     accepted_steps = 0
     rejected_steps = 0
     history = []
@@ -1755,6 +1756,16 @@ def run_post_continuation_transient(
                 flux_row
             )
 
+            checkpoint_dir = os.path.join(os.path.dirname(T_path), "restart_checkpoint")
+            save_restart_checkpoint(
+                checkpoint_dir=checkpoint_dir,
+                mesh_star=sub_mesh_star,
+                w_n=w_n,
+                step=step,
+                time_value=t,
+                dt_value=dt,
+            )
+        
             if sub_ft_dim is not None and sub_ds_dim is not None:
                 try:
                     _,_, biots = biot_wrap(
@@ -1814,3 +1825,26 @@ def run_post_continuation_transient(
         "final_time": t,
         "history": history,
     }
+
+def save_restart_checkpoint(checkpoint_dir, mesh_star, w_n, step, time_value, dt_value):
+    import json
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    p_star, u_star, theta_star = w_n.split(deepcopy=True)
+    h5_path = os.path.join(checkpoint_dir, "state.h5")
+    meta_path = os.path.join(checkpoint_dir, "state.json")
+
+    h5 = fenics.HDF5File(mesh_star.mpi_comm(), h5_path, "w")
+    h5.write(mesh_star, "/mesh")
+    h5.write(p_star, "/p_star")
+    h5.write(u_star, "/u_star")
+    h5.write(theta_star, "/theta_star")
+    h5.close()
+
+    meta = {
+        "step": int(step),
+        "time": float(time_value),
+        "dt": float(dt_value),
+    }
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
