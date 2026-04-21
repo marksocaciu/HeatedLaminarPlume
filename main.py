@@ -1,5 +1,7 @@
 from curses.ascii import SUB
 from email.mime import base
+import csv
+import json
 
 from utils.imports import *
 from utils.geometry import *
@@ -55,20 +57,60 @@ def _load_checkpoint_snapshot_from_xdmf(xdmf_path: str, function):
 
 
 def _last_transient_step_from_history(history_csv_path: str) -> int:
-    import csv
-
     if not history_csv_path or not os.path.exists(history_csv_path):
         return -1
     last_step = -1
-    with open(history_csv_path, 'r', newline='') as f:
+
+    with open(history_csv_path, "r", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             try:
-                last_step = int(row['step'])
+                last_step = int(row["step"])
             except Exception:
                 continue
     return last_step
 
+def load_true_restart_checkpoint(checkpoint_dir: str, W, w, w_n):
+    h5_path = os.path.join(checkpoint_dir, "state.h5")
+    meta_path = os.path.join(checkpoint_dir, "state.json")
+
+    if not os.path.exists(h5_path):
+        raise FileNotFoundError(f"Missing restart file: {h5_path}")
+
+    if not os.path.exists(meta_path):
+        raise FileNotFoundError(f"Missing restart metadata: {meta_path}")
+
+    Vp_star, _ = W.sub(0).collapse(True)
+    Vu_star, _ = W.sub(1).collapse(True)
+    VT_star, _ = W.sub(2).collapse(True)
+
+    p_star = fenics.Function(Vp_star)
+    u_star = fenics.Function(Vu_star)
+    theta_star = fenics.Function(VT_star)
+
+    h5 = fenics.HDF5File(W.mesh().mpi_comm(), h5_path, "r")
+    h5.read(p_star, "/p_star")
+    h5.read(u_star, "/u_star")
+    h5.read(theta_star, "/theta_star")
+    h5.close()
+
+    assign_p = fenics.FunctionAssigner(W.sub(0), Vp_star)
+    assign_u = fenics.FunctionAssigner(W.sub(1), Vu_star)
+    assign_T = fenics.FunctionAssigner(W.sub(2), VT_star)
+
+    assign_p.assign(w_n.sub(0), p_star)
+    assign_u.assign(w_n.sub(1), u_star)
+    assign_T.assign(w_n.sub(2), theta_star)
+
+    w_n.vector().apply("insert")
+
+    copy_state(w, w_n)
+
+    with open(meta_path, "r") as f:
+        meta = json.load(f)
+        
+    meta["source"] = "true_checkpoint"
+    return w, w_n, meta
 
 def approximate_restart_from_last_saved_transient(
     run_root: str,
@@ -644,23 +686,48 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         experiment
     )
 
-    # Optional approximate restart from the last saved dimensional transient snapshots.
-    restart_meta = {"step": 480, "time": 1.2e-3, "dt": 1.0e-5, "source": "fresh_start"}
+    restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
+
     if restart_from_last_transient:
-        print("Attemting restart from last saved snapshot...")
-        w, w_n, _ = approximate_restart_from_last_saved_transient(
-            run_root=run_root,
-            mode_subdir="base",
-            sub_mesh_dim=sub_mesh_dim,
-            sub_mesh_star=sub_mesh_star,
-            W=W,
-            w=w,
-            w_n=w_n,
-            scales=scales,
-            T_ambient=T_ambient,
-            rho_air=experiment.fluid.properties["rho"],
-            fallback_dt=1.0e-4,
-        )
+        checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
+        try:
+            if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
+                print("Attempting restart from true checkpoint...")
+                w, w_n, restart_meta = load_true_restart_checkpoint(
+                    checkpoint_dir=checkpoint_dir,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                )
+            else:
+                print("Attempting restart from last saved transient snapshot...")
+                w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
+                    run_root=run_root,
+                    mode_subdir="base",
+                    sub_mesh_dim=sub_mesh_dim,
+                    sub_mesh_star=sub_mesh_star,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                    scales=scales,
+                    T_ambient=T_ambient,
+                    rho_air=experiment.fluid.properties["rho"],
+                    fallback_dt=1.0e-4,
+                )
+
+            print(
+                f"Restart recovered from {restart_meta['source']}: "
+                f"step={restart_meta['step']}, "
+                f"time={restart_meta['time']:.6e}, "
+                f"dt={restart_meta['dt']:.6e}"
+            )
+
+        except Exception as exc:
+            print("Restart request could not be satisfied.")
+            print(f"Reason: {exc}")
+            print("Falling back to fresh transient start from steady state.")
+            copy_state(w, w_n)
+            restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
 
     if not restart_from_last_transient:
         # Use Stokes initial guess for better convergene
