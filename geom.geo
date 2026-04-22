@@ -118,12 +118,12 @@ Transfinite Line{13}  = resolution * 1.5;
 Transfinite Line{14}  = resolution * 0.5;
 
 // Outer
-Transfinite Line{20}  = resolution Using Progression 1.008;
-Transfinite Line{19}  = resolution;
-Transfinite Line{18}  = resolution;
-Transfinite Line{17}  = resolution;
-Transfinite Line{16}  = resolution;
-Transfinite Line{15}  = resolution Using Progression 1.008;
+Transfinite Line{20}  = resolution * 0.2 Using Progression 1.008;
+Transfinite Line{19}  = resolution * 0.3;
+Transfinite Line{18}  = resolution * 0.2;
+Transfinite Line{17}  = resolution * 0.2;
+Transfinite Line{16}  = resolution * 0.3;
+Transfinite Line{15}  = resolution * 0.2 Using Progression 1.008;
 
 // Refinement
 Transfinite Line{11}  = resolution * 3 * 0.25;
