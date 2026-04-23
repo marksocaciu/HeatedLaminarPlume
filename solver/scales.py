@@ -179,6 +179,8 @@ class NondimScales:
     Ra: float         # [-]
     nu: float         # [m^2/s]
     alpha: float      # [m^2/s]
+    Gr: float                  # [-] Grashof number based on current solver Lref,dTref
+    Gr_wire: Optional[float] = None   # [-] diameter-based Grashof number
 
     # --- heating bookkeeping ---
     qsurf: Optional[float] = None     # [W/m^2] equivalent wire surface heat flux
@@ -296,6 +298,9 @@ def compute_nondimensional_scales(experiment) -> NondimScales:
     Ec = (Uref**2) / (cp * dTref)
     fEc = Ec / e
 
+    Gr = Ra / Pr
+    Gr_wire = g * beta * dTref * (d ** 3) / (nu ** 2)
+
     return NondimScales(
         Lref=Lref,
         dTref=dTref,
@@ -304,6 +309,8 @@ def compute_nondimensional_scales(experiment) -> NondimScales:
         Ra=Ra,
         nu=nu,
         alpha=alpha,
+        Gr=Gr,
+        Gr_wire=Gr_wire,
         qsurf=qsurf,
         QL=QL,
         qstar=qstar,

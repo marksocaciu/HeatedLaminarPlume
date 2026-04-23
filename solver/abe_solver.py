@@ -891,7 +891,7 @@ def run_post_abe_continuation_transient(
 
     dt = float(dt_start)
     t = float(start_time)
-    step = float(start_step)
+    step = int(start_step)
     accepted_steps = 0
     rejected_steps = 0
     history = []
