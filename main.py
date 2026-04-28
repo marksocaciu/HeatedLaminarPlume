@@ -277,300 +277,300 @@ def relative_update(new_f, old_f):
     diff.axpy(-1.0, old_f.vector())
     return diff.norm("l2") / (new_f.vector().norm("l2") + 1.0e-14)
 
-def base_version_new(experiment: Experiment):
-    """
-    New conjugate skeleton:
+# def base_version_new(experiment: Experiment):
+#     """
+#     New conjugate skeleton:
 
-      1) solve T_full on parent mesh
-      2) restrict T_full -> theta_air
-      3) solve air-only flow on air submesh
-      4) extend u_air -> parent mesh
-      5) solve updated T_full with air-only convection
-      6) iterate
-    """
-    run_root = make_run_root(experiment.name, "base")
-    GEOM_FILE = geometry_template(
-        wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=experiment.name,
-        xmax=experiment.dimensions.domain.x_max,
-        ymax=experiment.dimensions.domain.y_max,
-        resolution=250,
-    )
-    MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
-    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
-    OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
-    OUTPUT_XDMF_PATH_TEMP = run_root + "/base/temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_T = run_root + "/base/air_temperature.xdmf"
-    OUTPUT_XDMF_PATH_AIR_P = run_root + "/base/air_pressure.xdmf"
-    OUTPUT_XDMF_PATH_AIR_V = run_root + "/base/air_velocity.xdmf"
-    OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/base/air_pvt.xdmf"
-    MESH_NAME = "Grid"
-    ELEM = "triangle"
+#       1) solve T_full on parent mesh
+#       2) restrict T_full -> theta_air
+#       3) solve air-only flow on air submesh
+#       4) extend u_air -> parent mesh
+#       5) solve updated T_full with air-only convection
+#       6) iterate
+#     """
+#     run_root = make_run_root(experiment.name, "base")
+#     GEOM_FILE = geometry_template(
+#         wire_radius=experiment.dimensions.wire.diameter / 2,
+#         output_path=experiment.name,
+#         xmax=experiment.dimensions.domain.x_max,
+#         ymax=experiment.dimensions.domain.y_max,
+#         resolution=250,
+#     )
+#     MSH_FILE = experiment.name + "/plume.msh"
+#     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
+#     FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+#     OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
+#     OUTPUT_XDMF_PATH_TEMP = run_root + "/base/temperature.xdmf"
+#     OUTPUT_XDMF_PATH_AIR_T = run_root + "/base/air_temperature.xdmf"
+#     OUTPUT_XDMF_PATH_AIR_P = run_root + "/base/air_pressure.xdmf"
+#     OUTPUT_XDMF_PATH_AIR_V = run_root + "/base/air_velocity.xdmf"
+#     OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/base/air_pvt.xdmf"
+#     MESH_NAME = "Grid"
+#     ELEM = "triangle"
 
-    # ------------------------------------------------------------------
-    # 0) Build full mesh and dimensional air submesh
-    # ------------------------------------------------------------------
-    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
+#     # ------------------------------------------------------------------
+#     # 0) Build full mesh and dimensional air submesh
+#     # ------------------------------------------------------------------
+#     generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
 
-    mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
-        TRIG_XDMF_PATH, FACETS_XDMF_PATH, "Grid", PRINT_TAG_SUMMARY
-    )
+#     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
+#         TRIG_XDMF_PATH, FACETS_XDMF_PATH, "Grid", PRINT_TAG_SUMMARY
+#     )
 
-    # Dimensional air submesh
-    sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
+#     # Dimensional air submesh
+#     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
 
-    scales = compute_nondimensional_scales(experiment)
-    print(scales)
+#     scales = compute_nondimensional_scales(experiment)
+#     print(scales)
 
-    T_ambient = float(experiment.initial_conditions.temperature)
-    dTref = float(scales.dTref)
+#     T_ambient = float(experiment.initial_conditions.temperature)
+#     dTref = float(scales.dTref)
 
-    # ------------------------------------------------------------------
-    # 1) Thermal initialization on FULL DIMENSIONAL parent mesh
-    # ------------------------------------------------------------------
-    print("Computing initial full-domain thermal field...")
-    heat_volume = volume_heat_source(experiment)
-    print(f"Using wire volumetric heating: {heat_volume:.6e} W/m^3")
+#     # ------------------------------------------------------------------
+#     # 1) Thermal initialization on FULL DIMENSIONAL parent mesh
+#     # ------------------------------------------------------------------
+#     print("Computing initial full-domain thermal field...")
+#     heat_volume = volume_heat_source(experiment)
+#     print(f"Using wire volumetric heating: {heat_volume:.6e} W/m^3")
 
-    T_full, k_func = solve_full_temperature(
-        mesh=mesh,
-        mc=mc,
-        mf=mf,
-        experiment=experiment,
-        heat_volume=heat_volume,
-        output_xdmf_path=OUTPUT_XDMF_PATH_TEMP,
-        u_full=None,
-        include_convection=False,
-        T_prev=None,
-        pseudo_dt=None,
-        max_material_iters=6,
-        material_tol=1.0e-8,
-    )
+#     T_full, k_func = solve_full_temperature(
+#         mesh=mesh,
+#         mc=mc,
+#         mf=mf,
+#         experiment=experiment,
+#         heat_volume=heat_volume,
+#         output_xdmf_path=OUTPUT_XDMF_PATH_TEMP,
+#         u_full=None,
+#         include_convection=False,
+#         T_prev=None,
+#         pseudo_dt=None,
+#         max_material_iters=6,
+#         material_tol=1.0e-8,
+#     )
 
-    # Restrict dimensional T_full -> dimensional air submesh -> nondim theta on dim submesh
-    T_air_dim, theta_air_dim = restrict_full_temperature_to_air_submesh(
-        T_full=T_full,
-        sub_mesh_dim=sub_mesh_dim,
-        T_ambient=T_ambient,
-        dTref=dTref,
-    )
+#     # Restrict dimensional T_full -> dimensional air submesh -> nondim theta on dim submesh
+#     T_air_dim, theta_air_dim = restrict_full_temperature_to_air_submesh(
+#         T_full=T_full,
+#         sub_mesh_dim=sub_mesh_dim,
+#         T_ambient=T_ambient,
+#         dTref=dTref,
+#     )
 
-    print(f"Initial T_full min/max [K]: {T_full.vector().min():.6e}, {T_full.vector().max():.6e}")
-    print(f"Initial theta_air_dim min/max [-]: {theta_air_dim.vector().min():.6e}, {theta_air_dim.vector().max():.6e}")
+#     print(f"Initial T_full min/max [K]: {T_full.vector().min():.6e}, {T_full.vector().max():.6e}")
+#     print(f"Initial theta_air_dim min/max [-]: {theta_air_dim.vector().min():.6e}, {theta_air_dim.vector().max():.6e}")
 
-    # ------------------------------------------------------------------
-    # 2) Keep qn_air ONLY as diagnostic
-    # ------------------------------------------------------------------
-    qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
-    check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
+#     # ------------------------------------------------------------------
+#     # 2) Keep qn_air ONLY as diagnostic
+#     # ------------------------------------------------------------------
+#     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
+#     check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
 
-    biot_air_h_eff, biot_air_Bi = biot(
-        sub_mesh_dim,
-        sub_ft_dim,
-        T_full,
-        qn_air,
-        T_ambient,
-        experiment.wire.properties["k"],
-        experiment.dimensions.wire.diameter,
-    )
+#     biot_air_h_eff, biot_air_Bi = biot(
+#         sub_mesh_dim,
+#         sub_ft_dim,
+#         T_full,
+#         qn_air,
+#         T_ambient,
+#         experiment.wire.properties["k"],
+#         experiment.dimensions.wire.diameter,
+#     )
 
-    # print(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
-    # print(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
+#     # print(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
+#     # print(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
 
-    # ------------------------------------------------------------------
-    # 3) Scale parent mesh to STAR coordinates
-    #
-    # Your current main path already does this before solving on the air
-    # star mesh.  [oai_citation:6‡main.py](sediment://file_00000000fb8872468f86b32172903ceb)
-    # ------------------------------------------------------------------
-    Lref = float(scales.Lref)
-    scale_mesh_inplace(mesh, Lref)
-    scale_mesh_inplace(sub_mesh_dim, Lref)
+#     # ------------------------------------------------------------------
+#     # 3) Scale parent mesh to STAR coordinates
+#     #
+#     # Your current main path already does this before solving on the air
+#     # star mesh.  [oai_citation:6‡main.py](sediment://file_00000000fb8872468f86b32172903ceb)
+#     # ------------------------------------------------------------------
+#     Lref = float(scales.Lref)
+#     scale_mesh_inplace(mesh, Lref)
+#     scale_mesh_inplace(sub_mesh_dim, Lref)
 
-    # rebuild STAR air submesh from scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
+#     # rebuild STAR air submesh from scaled parent mesh
+#     sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
 
-    # transfer theta from dim-submesh to star-submesh by sampling
-    theta_air_star = transfer_scalar_to_new_submesh_by_sampling(
-        theta_air_dim,
-        sub_mesh_star,
-        name="theta_air_star",
-    )
+#     # transfer theta from dim-submesh to star-submesh by sampling
+#     theta_air_star = transfer_scalar_to_new_submesh_by_sampling(
+#         theta_air_dim,
+#         sub_mesh_star,
+#         name="theta_air_star",
+#     )
 
-    print(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
+#     print(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
     
-    # ------------------------------------------------------------------
-    # 4) Air-flow startup (Stokes / no momentum convection)
-    # ------------------------------------------------------------------
-    print("Starting air-only Stokes startup...")
-    startup = solve_air_stokes_startup(
-        sub_mesh_star=sub_mesh_star,
-        sub_dx_star=sub_dx_star,
-        sub_ft_star=sub_ft_star,
-        experiment=experiment,
-        theta_air_star=theta_air_star,
-        relaxation=1.0,
-    )
+#     # ------------------------------------------------------------------
+#     # 4) Air-flow startup (Stokes / no momentum convection)
+#     # ------------------------------------------------------------------
+#     print("Starting air-only Stokes startup...")
+#     startup = solve_air_stokes_startup(
+#         sub_mesh_star=sub_mesh_star,
+#         sub_dx_star=sub_dx_star,
+#         sub_ft_star=sub_ft_star,
+#         experiment=experiment,
+#         theta_air_star=theta_air_star,
+#         relaxation=1.0,
+#     )
 
-    p_air = startup["p"]
-    u_air = startup["u"]
-    w_air = startup["w"]
+#     p_air = startup["p"]
+#     u_air = startup["u"]
+#     w_air = startup["w"]
 
-    print(f"[startup] converged = {startup['converged']} | n_iter = {startup['n_iter']}")
+#     print(f"[startup] converged = {startup['converged']} | n_iter = {startup['n_iter']}")
 
-    # ------------------------------------------------------------------
-    # 5) Outer segregated coupling loop
-    # ------------------------------------------------------------------
-    max_outer_it = 20
-    tol_outer = 1.0e-5
-    omega_T = 0.5
-    omega_u = 0.4
+#     # ------------------------------------------------------------------
+#     # 5) Outer segregated coupling loop
+#     # ------------------------------------------------------------------
+#     max_outer_it = 20
+#     tol_outer = 1.0e-5
+#     omega_T = 0.5
+#     omega_u = 0.4
 
-    convection_schedule = [0.10, 0.30, 0.60, 1.00]
+#     convection_schedule = [0.10, 0.30, 0.60, 1.00]
 
-    T_full_old = fenics.Function(T_full.function_space(), name="T_full_old")
-    T_full_old.assign(T_full)
+#     T_full_old = fenics.Function(T_full.function_space(), name="T_full_old")
+#     T_full_old.assign(T_full)
 
-    u_air_old = fenics.Function(u_air.function_space(), name="u_air_old")
-    u_air_old.assign(u_air)
+#     u_air_old = fenics.Function(u_air.function_space(), name="u_air_old")
+#     u_air_old.assign(u_air)
 
-    for cscale in convection_schedule:
-        print(f"\n=== Convection continuation: cscale = {cscale:.2f} ===")
+#     for cscale in convection_schedule:
+#         print(f"\n=== Convection continuation: cscale = {cscale:.2f} ===")
 
-        for outer_it in range(max_outer_it):
-            print(f"\n--- Outer iteration {outer_it:02d} @ convection scale {cscale:.2f} ---")
+#         for outer_it in range(max_outer_it):
+#             print(f"\n--- Outer iteration {outer_it:02d} @ convection scale {cscale:.2f} ---")
 
-            # ----------------------------------------------------------
-            # A) Extend air velocity to the FULL STAR parent mesh
-            # ----------------------------------------------------------
-            u_full_star = extend_air_velocity_to_parent_mesh_by_point_eval(
-                u_air_star=u_air,
-                mesh_star=mesh,
-                mc=mc,
-            )
+#             # ----------------------------------------------------------
+#             # A) Extend air velocity to the FULL STAR parent mesh
+#             # ----------------------------------------------------------
+#             u_full_star = extend_air_velocity_to_parent_mesh_by_point_eval(
+#                 u_air_star=u_air,
+#                 mesh_star=mesh,
+#                 mc=mc,
+#             )
 
-            # ----------------------------------------------------------
-            # B) Solve full-domain temperature on parent mesh (STAR geometry,
-            #    but still dimensional T values)
-            # ----------------------------------------------------------
-            T_full_new, k_func = solve_full_temperature(
-                mesh=mesh,
-                mc=mc,
-                mf=mf,
-                experiment=experiment,
-                heat_volume=heat_volume,
-                output_xdmf_path=None,
-                u_full=u_full_star,
-                include_convection=True,
-                T_prev=T_full_old,
-                pseudo_dt=None,     # you can add pseudo-time later if needed
-                max_material_iters=4,
-                material_tol=1.0e-8,
-            )
+#             # ----------------------------------------------------------
+#             # B) Solve full-domain temperature on parent mesh (STAR geometry,
+#             #    but still dimensional T values)
+#             # ----------------------------------------------------------
+#             T_full_new, k_func = solve_full_temperature(
+#                 mesh=mesh,
+#                 mc=mc,
+#                 mf=mf,
+#                 experiment=experiment,
+#                 heat_volume=heat_volume,
+#                 output_xdmf_path=None,
+#                 u_full=u_full_star,
+#                 include_convection=True,
+#                 T_prev=T_full_old,
+#                 pseudo_dt=None,     # you can add pseudo-time later if needed
+#                 max_material_iters=4,
+#                 material_tol=1.0e-8,
+#             )
 
-            # under-relax T_full
-            T_full_relaxed = under_relax_scalar(T_full_new, T_full_old, omega_T)
+#             # under-relax T_full
+#             T_full_relaxed = under_relax_scalar(T_full_new, T_full_old, omega_T)
 
-            # ----------------------------------------------------------
-            # C) Restrict updated T_full -> dim/star air theta
-            #
-            # Since the parent mesh is now already scaled, the old dim-submesh
-            # has also been scaled in place, so sampling still works.
-            # ----------------------------------------------------------
-            T_air_dim_cur, theta_air_dim_cur = restrict_full_temperature_to_air_submesh(
-                T_full=T_full_relaxed,
-                sub_mesh_dim=sub_mesh_dim,
-                T_ambient=T_ambient,
-                dTref=dTref,
-            )
+#             # ----------------------------------------------------------
+#             # C) Restrict updated T_full -> dim/star air theta
+#             #
+#             # Since the parent mesh is now already scaled, the old dim-submesh
+#             # has also been scaled in place, so sampling still works.
+#             # ----------------------------------------------------------
+#             T_air_dim_cur, theta_air_dim_cur = restrict_full_temperature_to_air_submesh(
+#                 T_full=T_full_relaxed,
+#                 sub_mesh_dim=sub_mesh_dim,
+#                 T_ambient=T_ambient,
+#                 dTref=dTref,
+#             )
 
-            theta_air_star_new = transfer_scalar_to_new_submesh_by_sampling(
-                theta_air_dim_cur,
-                sub_mesh_star,
-                name="theta_air_star",
-            )
+#             theta_air_star_new = transfer_scalar_to_new_submesh_by_sampling(
+#                 theta_air_dim_cur,
+#                 sub_mesh_star,
+#                 name="theta_air_star",
+#             )
 
-            # ----------------------------------------------------------
-            # D) Solve air-only flow
-            # ----------------------------------------------------------
-            air_sol = solve_air_flow_problem(
-                sub_mesh_star=sub_mesh_star,
-                sub_dx_star=sub_dx_star,
-                sub_ft_star=sub_ft_star,
-                experiment=experiment,
-                theta_air_star=theta_air_star_new,
-                w_init=w_air,
-                include_convection=(cscale > 0.0),
-                convection_scale=cscale,
-                relaxation=0.5,
-                maxit=20,
-                atol=1.0e-9,
-                rtol=1.0e-8,
-            )
+#             # ----------------------------------------------------------
+#             # D) Solve air-only flow
+#             # ----------------------------------------------------------
+#             air_sol = solve_air_flow_problem(
+#                 sub_mesh_star=sub_mesh_star,
+#                 sub_dx_star=sub_dx_star,
+#                 sub_ft_star=sub_ft_star,
+#                 experiment=experiment,
+#                 theta_air_star=theta_air_star_new,
+#                 w_init=w_air,
+#                 include_convection=(cscale > 0.0),
+#                 convection_scale=cscale,
+#                 relaxation=0.5,
+#                 maxit=20,
+#                 atol=1.0e-9,
+#                 rtol=1.0e-8,
+#             )
 
-            p_air_new = air_sol["p"]
-            u_air_new = air_sol["u"]
-            w_air_new = air_sol["w"]
+#             p_air_new = air_sol["p"]
+#             u_air_new = air_sol["u"]
+#             w_air_new = air_sol["w"]
 
-            print(f"[air solve] converged = {air_sol['converged']} | n_iter = {air_sol['n_iter']}")
+#             print(f"[air solve] converged = {air_sol['converged']} | n_iter = {air_sol['n_iter']}")
 
-            # under-relax velocity only
-            u_air_relaxed = under_relax_mixed_component(u_air_new, u_air_old, omega_u)
+#             # under-relax velocity only
+#             u_air_relaxed = under_relax_mixed_component(u_air_new, u_air_old, omega_u)
 
-            # ----------------------------------------------------------
-            # E) Compute outer convergence
-            # ----------------------------------------------------------
-            relT = relative_update(T_full_relaxed, T_full_old)
-            relU = relative_update(u_air_relaxed, u_air_old)
+#             # ----------------------------------------------------------
+#             # E) Compute outer convergence
+#             # ----------------------------------------------------------
+#             relT = relative_update(T_full_relaxed, T_full_old)
+#             relU = relative_update(u_air_relaxed, u_air_old)
 
-            print(f"[outer] relT = {relT:.3e} | relU = {relU:.3e}")
+#             print(f"[outer] relT = {relT:.3e} | relU = {relU:.3e}")
 
-            # update accepted states
-            T_full_old.assign(T_full_relaxed)
-            u_air_old.assign(u_air_relaxed)
-            T_full.assign(T_full_relaxed)
-            u_air.assign(u_air_relaxed)
-            p_air.assign(p_air_new)
-            theta_air_star.assign(theta_air_star_new)
-            w_air.assign(w_air_new)
+#             # update accepted states
+#             T_full_old.assign(T_full_relaxed)
+#             u_air_old.assign(u_air_relaxed)
+#             T_full.assign(T_full_relaxed)
+#             u_air.assign(u_air_relaxed)
+#             p_air.assign(p_air_new)
+#             theta_air_star.assign(theta_air_star_new)
+#             w_air.assign(w_air_new)
 
-            # optional updated diagnostics
-            try:
-                qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
-                check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
-            except Exception as err:
-                print(f"[diagnostic] qn_air update skipped: {err}")
+#             # optional updated diagnostics
+#             try:
+#                 qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
+#                 check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
+#             except Exception as err:
+#                 print(f"[diagnostic] qn_air update skipped: {err}")
 
-            if max(relT, relU) < tol_outer:
-                print(f"[outer] converged at iteration {outer_it:02d} for cscale={cscale:.2f}")
-                break
+#             if max(relT, relU) < tol_outer:
+#                 print(f"[outer] converged at iteration {outer_it:02d} for cscale={cscale:.2f}")
+#                 break
 
-    # ------------------------------------------------------------------
-    # 6) Save final outputs
-    # ------------------------------------------------------------------
-    try:
-        with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_U) as xdmf_u:
-            xdmf_u.write(sub_mesh_star)
-            xdmf_u.write(u_air)
+#     # ------------------------------------------------------------------
+#     # 6) Save final outputs
+#     # ------------------------------------------------------------------
+#     try:
+#         with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_U) as xdmf_u:
+#             xdmf_u.write(sub_mesh_star)
+#             xdmf_u.write(u_air)
 
-        with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_P) as xdmf_p:
-            xdmf_p.write(sub_mesh_star)
-            xdmf_p.write(p_air)
+#         with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_P) as xdmf_p:
+#             xdmf_p.write(sub_mesh_star)
+#             xdmf_p.write(p_air)
 
-        with fenics.XDMFFile(mesh.mpi_comm(), OUTPUT_XDMF_PATH_TEMP) as xdmf_t:
-            xdmf_t.write(mesh)
-            xdmf_t.write(T_full)
-    except Exception as err:
-        print(f"[output] warning: final write failed: {err}")
+#         with fenics.XDMFFile(mesh.mpi_comm(), OUTPUT_XDMF_PATH_TEMP) as xdmf_t:
+#             xdmf_t.write(mesh)
+#             xdmf_t.write(T_full)
+#     except Exception as err:
+#         print(f"[output] warning: final write failed: {err}")
 
-    return {
-        "T_full": T_full,
-        "k_func": k_func,
-        "u_air": u_air,
-        "p_air": p_air,
-        "theta_air_star": theta_air_star,
-    }
+#     return {
+#         "T_full": T_full,
+#         "k_func": k_func,
+#         "u_air": u_air,
+#         "p_air": p_air,
+#         "theta_air_star": theta_air_star,
+#     }
 
 def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
     run_root = make_run_root(experiment.name, "base", reuse_existing=existing_run_root)
@@ -967,13 +967,14 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
-def temperature_dependent_version(experiment: Experiment):
-    run_root = make_run_root(experiment.name, "temp")
+def temperature_dependent_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+    run_root = make_run_root(experiment.name, "temp", reuse_existing=existing_run_root)
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
-        ymax=experiment.dimensions.domain.y_max
+        ymax=experiment.dimensions.domain.y_max,
+        resolution=250,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
@@ -1000,6 +1001,13 @@ def temperature_dependent_version(experiment: Experiment):
 
     scales = compute_nondimensional_scales(experiment)
     print(scales)
+    print(f"Uref   = {scales.Uref:.6e} m/s")
+    print(f"Uplume = {scales.Uplume:.6e} m/s")
+    print(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
+    print(f"Lref   = {scales.Lref:.6e} m")
+    print(f"Lplume = {scales.Lplume:.6e} m")
+    print(f"dTref  = {scales.dTref:.6e} K")
+    print(f"dTline = {scales.dTline:.6e} K")
 
     # --- 3) conduction initial guess (dim parent mesh)
     print("Computing initial guess for temperature field...")
@@ -1012,6 +1020,7 @@ def temperature_dependent_version(experiment: Experiment):
     # --- 4) restrict/interpolate to submesh (dim) → theta_full_dim
     # (DO NOT project across meshes; interpolate T_full onto submesh space first)
     T_ambient = float(experiment.initial_conditions.temperature)
+    theta_ambient = 0.0   # nondim ambient temperature
     dTref = float(scales.dTref)
 
     V_air_dim = fenics.FunctionSpace(sub_mesh_dim, "CG", 1)
@@ -1047,7 +1056,8 @@ def temperature_dependent_version(experiment: Experiment):
     print(f"Initial min temperature: {T_full.vector().min():.2f} K")
     print(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
     print(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
-
+    theta_ambient=theta_full_dim.vector().min()
+    
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
     scale_mesh_inplace(mesh, Lref)
@@ -1069,7 +1079,7 @@ def temperature_dependent_version(experiment: Experiment):
     print(f"Rho_air: {experiment.fluid.properties['rho']}")
     print(f"Beta_air: {experiment.fluid.properties['beta']}")
 
-        # Define temperature-dependent material model for air
+    # Define temperature-dependent material model for air
     fluid_material = TemperatureDependentMaterial(
         mesh=sub_mesh_star,
         T_ref=experiment.initial_conditions.temperature,
@@ -1078,7 +1088,8 @@ def temperature_dependent_version(experiment: Experiment):
         k_ref=experiment.fluid.properties["k"],
         beta_ref=experiment.fluid.properties["beta"],
         rho_ref=experiment.fluid.properties["rho"],
-        table_file="materials/air_properties_coolprop.csv"   # or None
+        # table_file="materials/air_properties_coolprop.csv"   # or None
+        table_file="materials/spindle_oil_estimated_table.csv"   # or None
     )
     
 
@@ -1097,32 +1108,76 @@ def temperature_dependent_version(experiment: Experiment):
     
     # Use Stokes initial guess for better convergene
     print("Solving Stokes problem for initial guess...")
-    update_material_from_mixed_temperature(
+    update_material_from_mixed_nondimensional_temperature(
         fluid_material=fluid_material,
         w_mixed=w_n,
         scales=scales,
-        T_ambient=T_ambient,
+        T_ambient=theta_ambient,
     )
-    # w_n = stokes_initial_guess_temp(
-    #     experiment=experiment,
-    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-    #     W=W, w=w,
-    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-    #     fluid_material=fluid_material,
-    #     w_n=w_n,
-    #     lambdas=(0.05, 0.1),
-    #     T_ambient=T_ambient
-    # )
-    # # Refresh coefficient fields from the post-startup accepted state before checks
-    # # and before entering continuation/transient.
-    # update_material_from_mixed_temperature(
-    #     fluid_material=fluid_material,
-    #     w_mixed=w_n,
-    #     scales=scales,
-    #     T_ambient=T_ambient,
-    # )
+    # Optional restart
+    restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
+    if restart_from_last_transient:
+        checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
+        try:
+            if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
+                print("Attempting restart from true checkpoint...")
+                w, w_n, restart_meta = load_true_restart_checkpoint(
+                    checkpoint_dir=checkpoint_dir,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                )
+            else:
+                print("Attempting restart from last saved transient snapshot...")
+                w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
+                    run_root=run_root,
+                    mode_subdir="base",
+                    sub_mesh_dim=sub_mesh_dim,
+                    sub_mesh_star=sub_mesh_star,
+                    W=W,
+                    w=w,
+                    w_n=w_n,
+                    scales=scales,
+                    T_ambient=T_ambient,
+                    rho_air=experiment.fluid.properties["rho"],
+                    fallback_dt=1.0e-4,
+                )
+
+            print(
+                f"Restart recovered from {restart_meta['source']}: "
+                f"step={restart_meta['step']}, "
+                f"time={restart_meta['time']:.6e}, "
+                f"dt={restart_meta['dt']:.6e}"
+            )
+
+        except Exception as exc:
+            print("Restart request could not be satisfied.")
+            print(f"Reason: {exc}")
+            print("Falling back to fresh transient start from steady state.")
+            copy_state(w, w_n)
+            restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
+
+    # if not restart_from_last_transient:
+    #     # Use Stokes initial guess for better convergene
+    #     print("Solving Stokes problem for initial guess...")
+    #     w_n = stokes_initial_guess(
+    #         experiment=experiment,
+    #         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+    #         W=W, w=w,
+    #         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+    #         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+    #         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+    #         w_n=w_n,
+    #         lambdas=( 0.05, 0.1, 0.3)
+    #     )
+    #     # theta_ambient = w_n.sub(2).vector().min()  # update ambient temperature based on initial guess
+    #     update_material_from_mixed_nondimensional_temperature(
+    #         fluid_material=fluid_material,
+    #         w_mixed=w_n,
+    #         scales=scales,
+    #         T_ambient=T_ambient,
+    #     )
+    
 
     print("Starting checks")
     w_t = w.copy(deepcopy=True)
@@ -1165,41 +1220,43 @@ def temperature_dependent_version(experiment: Experiment):
         OUTPUT_XDMF_PATH_AIR_V,
         OUTPUT_XDMF_PATH_AIR_T
     )
+    
+    if not restart_from_last_transient:
+        w, info = solve_ptc_temp_continuation(
+            experiment=experiment,
+            W=W,
+            w=w,
+            w_n=w_n,
+            T_ambient=T_ambient,
+            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+            fluid_material=fluid_material,
+            run_root=run_root,
+            save_obj=None,
+        )
+        update_material_from_mixed_nondimensional_temperature(
+            fluid_material=fluid_material,
+            w_mixed=w,
+            scales=scales,
+            T_ambient=T_ambient,
+        )
 
-    w, info = solve_ptc_temp_continuation(
-        experiment,
-        W, w, w_n,
-        psi_p, psi_u, psi_T,
-        mu, Pr, f_b, T_c, T_air_bc,
-        sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-        fluid_material=fluid_material,
-        run_root=run_root,
-        dtau_init=1e-4,
-        dtau_min=1e-8,
-        dtau_max=1e-2,
-        stage_max_steps=40,
-        final_stage_max_steps=2000,
-        update_tol=1e-8,
-        residual_tol=1e-8,
-        # save_obj=save_obj
-        save_obj=None
-    )
-
-    if info.get("status") == "continuation_failed":
-        print("failed_stage:", info.get("failed_stage"))
-        last = info.get("last_stage_info", {})
-        print("last_stage_status:", last.get("status"))
-        print("accepted_steps:", last.get("accepted_steps"))
-        print("rejected_steps:", last.get("rejected_steps"))
-        print("final_dtau:", last.get("final_dtau"))
-        print("final_rel_update:", last.get("final_rel_update"))
-        print("final_steady_residual:", last.get("final_steady_residual"))
-    else:
-        print("accepted_steps:", info.get("accepted_steps"))
-        print("rejected_steps:", info.get("rejected_steps"))
-        print("final_dtau:", info.get("final_dtau"))
-        print("final_rel_update:", info.get("final_rel_update"))
-        print("final_steady_residual:", info.get("final_steady_residual"))
+        if info.get("status") == "continuation_failed":
+            print("failed_stage:", info.get("failed_stage"))
+            last = info.get("last_stage_info", {})
+            print("last_stage_status:", last.get("status"))
+            print("accepted_steps:", last.get("accepted_steps"))
+            print("rejected_steps:", last.get("rejected_steps"))
+            print("final_dtau:", last.get("final_dtau"))
+            print("final_rel_update:", last.get("final_rel_update"))
+            print("final_steady_residual:", last.get("final_steady_residual"))
+        else:
+            print("accepted_steps:", info.get("accepted_steps"))
+            print("rejected_steps:", info.get("rejected_steps"))
+            print("final_dtau:", info.get("final_dtau"))
+            print("final_rel_update:", info.get("final_rel_update"))
+            print("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -1245,6 +1302,7 @@ def temperature_dependent_version(experiment: Experiment):
             sub_ft_dim=sub_ft_dim,
             sub_ds_dim=sub_ds_dim,
             scales=scales,
+            T_ambient=T_ambient,
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
@@ -1264,6 +1322,8 @@ def temperature_dependent_version(experiment: Experiment):
             steady_window=25,
             steady_rel_tol=5.0e-3,
             steady_update_tol=1.0e-4,
+            start_time=restart_meta["time"],
+            start_step=restart_meta["step"],
             history_csv_path=run_root + "/transient_history.csv",
         )
 
@@ -1560,7 +1620,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             psi_p, psi_u, psi_T,
             mu, Pr, f_b, T_c, T_air_bc,
             sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
-            dtau_init=1e-4,
+            dtau_init=1e-5,
             dtau_min=1e-8,
             dtau_max=1e-2,
             stage_max_steps=40,

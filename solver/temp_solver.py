@@ -204,15 +204,24 @@ def theta_to_dimensional_temperature(
     scales,
     T_ambient: float,
 ):
-    """Convert nondimensional theta on the air submesh to dimensional temperature."""
+    """
+    Convert nondimensional theta on the air submesh to dimensional temperature.
+
+    The mixed unknown stores theta = (T_dim - T_ambient)/dTref. The
+    material update must therefore receive dimensional temperature, not theta.
+    """
     T_dim = theta_src.copy(deepcopy=True)
     T_dim.rename("T_dim_material", "T_dim_material")
-    T_dim.vector()[:] = float(T_ambient) + float(scales.dTref) * theta_src.vector()[:]
+    T_dim.vector()[:] *= float(scales.dTref)
+
+    ones = theta_src.copy(deepcopy=True)
+    ones.vector()[:] = 1.0
+    T_dim.vector().axpy(float(T_ambient), ones.vector())
     T_dim.vector().apply("insert")
     return T_dim
 
 
-def update_material_from_mixed_temperature(
+def update_material_from_mixed_nondimensional_temperature(
     w_mixed: fenics.Function,
     fluid_material,
     scales,
@@ -284,6 +293,7 @@ def solve_ptc_temp_stage(
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
+    T_ambient: float,
     psi_p, psi_u, psi_T,
     mu, Pr, f_b, T_c, T_air_bc,
     sub_dx, sub_ds, sub_ft, qn_air,
@@ -374,7 +384,7 @@ def solve_ptc_temp_stage(
     copy_state(w_prev, w_n)
 
     # Initialize coefficient fields from the accepted state before forms are built.
-    update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+    update_material_from_mixed_nondimensional_temperature(w_n, fluid_material, scales, T_ambient)
 
     buoyancy_prefactor = build_temperature_dependent_buoyancy_prefactor(
         fluid_material=fluid_material,
@@ -744,6 +754,7 @@ def solve_ptc_temp_continuation(
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
+    T_ambient: float,
     psi_p, psi_u, psi_T,
     mu, Pr, f_b, T_c, T_air_bc,
     sub_dx, sub_ds, sub_ft, qn_air,
@@ -808,6 +819,7 @@ def solve_ptc_temp_continuation(
             W=W,
             w=w,
             w_n=w_n,
+            T_ambient=T_ambient,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
             mu=fluid_material.mu, Pr=fluid_material.Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
             sub_dx=sub_dx, sub_ds=sub_ds, sub_ft=sub_ft, qn_air=qn_air,
@@ -831,6 +843,13 @@ def solve_ptc_temp_continuation(
             ptc_max_newton_it=20,
             material_max_it=8,
             material_rtol=1.0e-6,
+        )
+
+        update_material_from_mixed_nondimensional_temperature(
+            fluid_material=fluid_material,
+            w_mixed=w_n,
+            scales=scales,
+            T_ambient=T_ambient,
         )
 
         continuation_history.append({
@@ -893,6 +912,7 @@ def run_post_temp_continuation_transient(
     W: fenics.FunctionSpace,
     w: fenics.Function,
     w_n: fenics.Function,
+    T_ambient: float,
     psi_p, psi_u, psi_T,
     mu, Pr, f_b, T_c, T_air_bc,
     sub_dx, sub_ds, sub_ft, qn_air,
@@ -929,6 +949,8 @@ def run_post_temp_continuation_transient(
     steady_rel_tol: float = 5.0e-3,
     steady_update_tol: float = 1.0e-4,
     diagnostic_every: int = 1,
+    start_time= 0.0,
+    start_step=0,
     history_csv_path: str = "",
 ):
     """
@@ -948,7 +970,7 @@ def run_post_temp_continuation_transient(
         step_max = int(n_steps)
 
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    update_material_from_mixed_temperature(w_n, fluid_material, scales, T_ambient)
+    update_material_from_mixed_nondimensional_temperature(w_n, fluid_material, scales, T_ambient)
 
     copy_state(w, w_n)
     w_prev = fenics.Function(W)
@@ -956,8 +978,8 @@ def run_post_temp_continuation_transient(
     copy_state(w_last_accepted, w_n)
 
     dt = float(dt_start)
-    t = 0.0
-    step = 0
+    t = float(start_time)
+    step = int(start_step)
     accepted_steps = 0
     rejected_steps = 0
     history = []
