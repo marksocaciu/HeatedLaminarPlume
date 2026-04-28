@@ -260,7 +260,7 @@ def material_outer_picard(
     rel = float("inf")
 
     for it in range(int(material_max_it)):
-        update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
+        update_material_from_mixed_nondimensional_temperature(w, fluid_material, scales, T_ambient)
 
         base_solver(
             F, w, boundary_conditions, JF,
@@ -277,12 +277,12 @@ def material_outer_picard(
         print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
         if rel < float(material_rtol):
-            update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
+            update_material_from_mixed_nondimensional_temperature(w, fluid_material, scales, T_ambient)
             return w, rel, it + 1
 
         theta_old.assign(theta_new)
 
-    update_material_from_mixed_temperature(w, fluid_material, scales, T_ambient)
+    update_material_from_mixed_nondimensional_temperature(w, fluid_material, scales, T_ambient)
     return w, rel, int(material_max_it)
 
 
