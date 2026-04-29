@@ -273,7 +273,8 @@ def compute_nondimensional_scales(experiment) -> NondimScales:
         raise ValueError("Computed QL is non-positive; check heating specification.")
 
     # --- current solver temperature scale (kept unchanged) ---
-    dTref = qsurf * experiment.dimensions.domain.x_max / k                    # = QL / (2*pi*k)
+    dTref = qsurf * Lref / k                    # = QL / (2*pi*k)
+    # dTref = qsurf * experiment.dimensions.domain.x_max / k                    # = QL / (2*pi*k)
     if dTref <= 0:
         raise ValueError("Computed dTref is non-positive; check heating/k/geometry.")
 
