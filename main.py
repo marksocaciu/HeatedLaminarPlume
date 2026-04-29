@@ -612,7 +612,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     print(f"Lplume = {scales.Lplume:.6e} m")
     print(f"dTref  = {scales.dTref:.6e} K")
     print(f"dTline = {scales.dTline:.6e} K")
-    return
+    
     # --- 3) conduction initial guess (dim parent mesh)
     print("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
