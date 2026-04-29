@@ -3,6 +3,8 @@ from email.mime import base
 import csv
 import json
 
+from matplotlib.pyplot import step
+
 from utils.imports import *
 from utils.geometry import *
 from utils.material import *
@@ -908,6 +910,10 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         scales.Uplume, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
+    k_air = fenics.Constant(experiment.fluid.properties["k"])
+    q_heat, q_mag = compute_heat_flux_dim(sub_mesh_dim, T_dim, k_air)
+    q_out = OUTPUT_XDMF_PATH_AIR_T.split(".xdmf")[0] + f"_heatflux.xdmf"
+    qmag_out = OUTPUT_XDMF_PATH_AIR_T.split(".xdmf")[0] + f"_heatflux_mag.xdmf"
 
     # on sub_mesh_star, with theta (nondim)
     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
@@ -932,6 +938,8 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh_dim, [p_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_dim, [u_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_dim, [T_dim])
+    save_experiment(q_out, sub_mesh_dim, [q_heat])
+    save_experiment(qmag_out, sub_mesh_dim, [q_mag])
     # save_experiment(OUTPUT_XDMF_PATH_AIR_PVT, sub_mesh, [p,u,T])
 
     # Example: Brodowicz-style heights 1, 4, 8 cm above wire center

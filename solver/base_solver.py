@@ -1,6 +1,8 @@
 from re import S
 import json
 
+from matplotlib.pyplot import step
+
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
@@ -1724,6 +1726,10 @@ def run_post_continuation_transient(
                 scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
+            k_air = fenics.Constant(experiment.fluid.properties["k"])
+            q_heat, q_mag = compute_heat_flux_dim(sub_mesh_dim, T_dim, k_air)
+            q_out = T_path.split(".xdmf")[0] + f"_heatflux_transient_{step:05d}.xdmf"
+            qmag_out = T_path.split(".xdmf")[0] + f"_heatflux_mag_transient_{step:05d}.xdmf"
 
             p_out = p_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
             u_out = u_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
@@ -1732,6 +1738,8 @@ def run_post_continuation_transient(
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
+            save_experiment(q_out, sub_mesh_dim, [q_heat])
+            save_experiment(qmag_out, sub_mesh_dim, [q_mag])
 
             plane_fluxes = compute_horizontal_plane_heat_fluxes(
                 u_dim=u_dim,
