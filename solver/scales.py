@@ -324,17 +324,21 @@ def compute_nondimensional_scales(experiment) -> NondimScales:
         fEc=fEc,
     )
 
-def compute_heat_flux_dim(sub_mesh_dim, T_dim, k_dim):
+def compute_heat_flux_dim(T_dim, k_dim):
     """
     Conductive heat flux q = -k grad(T) [W/m^2].
-    T_dim must be dimensional temperature on dimensional mesh.
-    k_dim may be Constant, Function, or Expression.
+
+    IMPORTANT:
+    The target function spaces are built on the mesh of T_dim.
+    Do not pass sub_mesh_dim here unless T_dim also lives on sub_mesh_dim.
     """
-    Vq = fenics.VectorFunctionSpace(sub_mesh_dim, "DG", 0)
+    mesh = T_dim.function_space().mesh()
+
+    Vq = fenics.VectorFunctionSpace(mesh, "DG", 0)
     q_heat = fenics.project(-k_dim * fenics.grad(T_dim), Vq)
     q_heat.rename("q_heat_dim", "q_heat_dim")
 
-    V0 = fenics.FunctionSpace(sub_mesh_dim, "DG", 0)
+    V0 = fenics.FunctionSpace(mesh, "DG", 0)
     q_mag = fenics.project(fenics.sqrt(fenics.dot(q_heat, q_heat)), V0)
     q_mag.rename("q_heat_mag_dim", "q_heat_mag_dim")
 
