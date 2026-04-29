@@ -800,7 +800,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             mu, Pr, f_b, T_c, T_air_bc,
             sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
             run_root=run_root,
-            dtau_init=1e-5,
+            dtau_init=1e-4,
             dtau_min=1e-8,
             dtau_max=1e-2,
             stage_max_steps=40,
