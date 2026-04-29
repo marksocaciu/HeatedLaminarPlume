@@ -579,7 +579,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
-        resolution=250,
+        resolution=100,
     )
     MSH_FILE = experiment.name + "/plume.msh"
     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
@@ -612,7 +612,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     print(f"Lplume = {scales.Lplume:.6e} m")
     print(f"dTref  = {scales.dTref:.6e} K")
     print(f"dTline = {scales.dTline:.6e} K")
-    
+    return
     # --- 3) conduction initial guess (dim parent mesh)
     print("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)

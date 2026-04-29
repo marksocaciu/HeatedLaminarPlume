@@ -21,7 +21,7 @@ lc_far  = 5e-4;
 lc_axis = 1e-6;
 lc_wire = 1e-7;
 resolution = resolution_placeholder;
-dist = R * 100;
+dist = R * 50;
 
 // -----------------------------------------------------------------------------
 // Points
@@ -70,7 +70,7 @@ Circle(9) = {0.0,  h/10 - 12*R + dist, 0.0, dist};   // right semicircle
 
 // Centerline
 Line(8) = {9, 12};      // wire - refinement internal split
-Line(10) = {12, 4};      // refinement - boundary internal split
+// Line(10) = {12, 4};      // refinement - boundary internal split
 // Line(9) = {7, 5};      // wire symmetry line
 // Line(11)    = {7, 9};       // internal vertical connector
 // Line(12)   = {5, 8};       // internal vertical connector
@@ -94,17 +94,19 @@ Plane Surface(2) = {2};
 Plane Surface(3) = {3};
 
 // Make the topology conformal: split all overlapping surfaces
-BooleanFragments{ Surface{1}; Delete; }{ Surface{2}; Surface{3}; Curve{8}; Curve{10}; Delete; }
+//BooleanFragments{ Surface{1}; Delete; }{ Surface{2}; Surface{3}; Curve{8}; Curve{10}; Delete; }
+BooleanFragments{ Surface{1}; Delete; }{ Surface{2}; Surface{3}; Curve{8}; Delete; }
 
 // -----------------------------------------------------------------------------
 // Physical groups
 // -----------------------------------------------------------------------------
 
 // No symmetry boundary anymore
-Physical Curve(101) = {20, 19, 18, 17, 16, 15};   // outer boundary of air domain
+//Physical Curve(101) = {20, 19, 18, 17, 16, 15};   // outer boundary of air domain
+Physical Curve(101) = {9, 10, 11, 13, 14, 12};   // outer boundary of air domain
 
 // Wire-air interface
-Physical Curve(102) = {13, 14};            // outer boundary of wire domain
+Physical Curve(102) = {17, 18};            // outer boundary of wire domain
 Physical Curve(103) = {11, 12};
 
 Physical Surface(10) = {2};           // wire domain
@@ -114,24 +116,24 @@ Physical Surface(11) = {4, 3};        // air domain
 // Mesh resolution
 // -----------------------------------------------------------------------------
 // Wire
-Transfinite Line{13}  = resolution * 1.5;
-Transfinite Line{14}  = resolution * 0.5;
+Transfinite Line{18}  = resolution * 2.5 * 1.5;
+Transfinite Line{17}  = resolution * 2.5 * 0.5;
 
 // Outer
-Transfinite Line{20}  = resolution * 0.2 Using Progression 1.008;
-Transfinite Line{19}  = resolution * 0.3;
-Transfinite Line{18}  = resolution * 0.2;
-Transfinite Line{17}  = resolution * 0.2;
-Transfinite Line{16}  = resolution * 0.3;
-Transfinite Line{15}  = resolution * 0.2 Using Progression 1.008;
+Transfinite Line{10}  = resolution * 0.2;
+Transfinite Line{11}  = resolution * 0.3;
+Transfinite Line{13}  = resolution * 0.2;
+Transfinite Line{14}  = resolution * 0.2;
+Transfinite Line{12}  = resolution * 0.3;
+Transfinite Line{9}  = resolution * 0.2;
 
 // Refinement
-Transfinite Line{11}  = resolution * 3 * 0.25;
-Transfinite Line{12}  = resolution * 3 * 0.75;
+Transfinite Line{16}  = resolution * 3 * 0.25;
+Transfinite Line{15}  = resolution * 3 * 0.75;
 
 // Centerline
 Transfinite Line{8}  = resolution * 3 Using Progression 1.006;
-Transfinite Line{10}  = resolution * 8 Using Progression 1.003;
+//Transfinite Line{10}  = resolution * 8 Using Progression 1.003;
 
 // Mesh
 Mesh 2;
