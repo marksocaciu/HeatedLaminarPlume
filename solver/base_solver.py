@@ -1735,6 +1735,29 @@ def run_post_continuation_transient(
             u_out = u_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
             t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
 
+            # --- Effective Grashof number diagnostic ---
+            theta_max = float(theta.vector().max())
+            theta_min = float(theta.vector().min())
+
+            dT_eff = scales.dTref * max(theta_max, 0.0)
+
+            props = experiment.fluid.properties
+            g = float(props.get("g", 9.81))
+            beta = float(props["beta"])
+            nu = float(scales.nu)
+
+            L_eff = float(scales.Lref)   # keep consistent with your reference Gr/Ra definition
+
+            Gr_eff = g * beta * dT_eff * L_eff**3 / (nu**2)
+            Ra_eff = Gr_eff * float(scales.Pr)
+
+            print(
+                f"  snapshot diagnostics: "
+                f"theta_min={theta_min:.6e}, theta_max={theta_max:.6e}, "
+                f"dT_eff={dT_eff:.6e} K, "
+                f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
+            )
+
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
