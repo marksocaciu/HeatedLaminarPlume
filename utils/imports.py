@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import csv, os
 import datetime
 
-from dolfin import MPI
+from mpi4py import MPI
 
 COMM = MPI.comm_world
 RANK = MPI.rank(COMM)
