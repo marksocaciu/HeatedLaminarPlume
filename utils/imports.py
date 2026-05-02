@@ -16,36 +16,36 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 import csv, os
 import datetime
+from dolfin import MPI
+from mpi4py import MPI as MPI4Py
 
-from mpi4py import MPI
-
-COMM = MPI.comm_world
-RANK = MPI.rank(COMM)
-SIZE = MPI.size(COMM)
+COMM = MPI4Py.COMM_WORLD
+RANK = COMM.Get_rank()
+SIZE = COMM.Get_size()
 
 def print0(*args, **kwargs):
     if RANK == 0:
         print(*args, **kwargs)
 
 def mpi_max(value):
-    return MPI.max(COMM, float(value))
+    return MPI4Py.COMM_WORLD.allreduce(float(value), op=MPI4Py.MAX)
 
 def mpi_min(value):
-    return MPI.min(COMM, float(value))
+    return MPI4Py.COMM_WORLD.allreduce(float(value), op=MPI4Py.MIN)
 
 def mpi_sum(value):
-    return MPI.sum(COMM, value)
+    return MPI4Py.COMM_WORLD.allreduce(float(value), op=MPI4Py.SUM)
 
 def mpi_barrier():
-    MPI.barrier(COMM)
+    MPI4Py.COMM_WORLD.Barrier()
 
 def is_rank0():
-    return COMM.rank == 0
+    return COMM.Get_rank() == 0
 
 def mkdir0(path):
     if path is None or path == "":
         return
-    if COMM.rank == 0:
+    if is_rank0():
         os.makedirs(path, exist_ok=True)
     COMM.Barrier()
 
