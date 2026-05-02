@@ -42,4 +42,4 @@ df = pd.DataFrame({
     "alpha_m2_s": np.round(alpha_T, 12)
 })
 df.to_csv("KF96_estimated_properties_0.65cSt_290-640K_step5.csv", index=False)
-print("Saved:", Path("KF96_estimated_properties_0.65cSt_290-640K_step5.csv").resolve())
+print0("Saved:", Path("KF96_estimated_properties_0.65cSt_290-640K_step5.csv").resolve())

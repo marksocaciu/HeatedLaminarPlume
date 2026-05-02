@@ -55,7 +55,7 @@ def biot(sub_mesh: fenics.Mesh, sub_ft: fenics.MeshFunction, T_full: fenics.Func
     h_eff_air.vector()[:] /= counts_arr
     Bi_air.vector()[:]    /= counts_arr
 
-    print("Biot number between air and solid: ", Bi_air.vector().min(), " to ", Bi_air.vector().max())
+    print0("Biot number between air and solid: ", Bi_air.vector().min(), " to ", Bi_air.vector().max())
 
     # save_experiment(
     #     "/base/air_biot.xdmf",
@@ -220,12 +220,12 @@ def biot_wrap(
         interface_tag=interface_tag,
     )
 
-    print("=== Biot diagnostic on air submesh ===")
-    print(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
-    print(f"Interface length         = {Lint:.6e} m")
-    print(f"Effective h              = {h_eff:.6e} W/m^2/K")
-    print(f"Average Biot number      = {Bi_avg:.6e}")
-    print("=====================================")
+    print0("=== Biot diagnostic on air submesh ===")
+    print0(f"Characteristic length Lc = {Lc:.6e} m ({characteristic_length})")
+    print0(f"Interface length         = {Lint:.6e} m")
+    print0(f"Effective h              = {h_eff:.6e} W/m^2/K")
+    print0(f"Average Biot number      = {Bi_avg:.6e}")
+    print0("=====================================")
 
     if not return_local_field:
         return h_eff, Bi_avg

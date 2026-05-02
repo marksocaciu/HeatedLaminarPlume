@@ -37,8 +37,8 @@ def solve_thermal_sign_check(
     w.vector().apply("insert")
 
     theta = w.sub(2, deepcopy=True)
-    print("Thermal sign check:")
-    print(f"  theta min/max = {theta.vector().min():.6e}, {theta.vector().max():.6e}")
+    print0("Thermal sign check:")
+    print0(f"  theta min/max = {theta.vector().min():.6e}, {theta.vector().max():.6e}")
 
     return w
 
@@ -61,8 +61,8 @@ def solve_buoyancy_sign_check(
     Vscal = fenics.FunctionSpace(u_chk.function_space().mesh(), "CG", 1)
     uy = fenics.project(u_chk[1], Vscal,solver_type="mumps")
 
-    print("Buoyancy sign check:")
-    print(f"  uy min/max = {uy.vector().min():.6e}, {uy.vector().max():.6e}")
+    print0("Buoyancy sign check:")
+    print0(f"  uy min/max = {uy.vector().min():.6e}, {uy.vector().max():.6e}")
 
     r = (experiment.dimensions.wire.diameter / 2) / compute_nondimensional_scales(experiment).Lref
     x_probe = 0.5 * r
@@ -75,14 +75,13 @@ def solve_buoyancy_sign_check(
         (x_probe, y0 + 8.0 * r),
     ]
 
-    print("Buoyancy sign check probes (uy):")
+    print0("Buoyancy sign check probes (uy):")
     for xp, yp in probe_points:
         try:
-            val = uy(xp, yp)
-            print(f"  uy({xp:.6e}, {yp:.6e}) = {val:.6e}")
+            val = mpi_probe_scalar(uy, xp, yp)
+            print0(f"  uy({xp:.6e}, {yp:.6e}) = {val:.6e}")
         except RuntimeError:
-            print(f"  probe failed at ({xp:.6e}, {yp:.6e})")
-
+            print0(f"  probe failed at ({xp:.6e}, {yp:.6e})")
 
     return w
 
@@ -185,18 +184,18 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     w_n.vector().apply("insert")
 
-    print("Init T min/max:",
+    print0("Init T min/max:",
         w_n.sub(2).vector().min(),
         w_n.sub(2).vector().max())
-    print("Init u min/max:",
+    print0("Init u min/max:",
         w_n.sub(1).vector().min(),
         w_n.sub(1).vector().max())
 
     # Now split for convenience (these are UFL objects / views; OK for variational forms)
     p_n, u_n, T_n = fenics.split(w_n)
 
-    print(f"Initial guess max theta (air): {w_n.sub(2).vector().max():.6e}")
-    print(f"Initial guess min theta (air): {w_n.sub(2).vector().min():.6e}")
+    print0(f"Initial guess max theta (air): {w_n.sub(2).vector().max():.6e}")
+    print0(f"Initial guess min theta (air): {w_n.sub(2).vector().min():.6e}")
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
@@ -279,8 +278,8 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
 
     qn_scale_c = fenics.Constant(float(qn_scale))
 
-    print("Max qn_air:", qn_air.vector().max())
-    print(f"Applied qn_scale: {float(qn_scale):.4f}")
+    print0("Max qn_air:", qn_air.vector().max())
+    print0(f"Applied qn_scale: {float(qn_scale):.4f}")
 
     F += - qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
@@ -290,7 +289,7 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
         k_inf * float(scales.dTref) / float(scales.Lref)
     )
     QL_half = fenics.assemble(qn_dim * sub_ds(INTERFACE_TAG)) * scales.Lref
-    print(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
+    print0(f"Heat flux from wire to fluid (half wire): QL_half = {QL_half:.6e} W/m")
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
 
@@ -458,15 +457,15 @@ def solve_linear_problem(a, L, w, boundary_conditions, linear_solver="mumps"):
 def solve_linear_problem_temp(a, L, w, boundary_conditions, linear_solver="mumps"):
     A, b = fenics.assemble_system(a, L, boundary_conditions)
 
-    print(f"  matrix size: {A.size(0)} x {A.size(1)}")
-    print(f"  rhs l2 norm: {b.norm('l2'):.6e}")
+    print0(f"  matrix size: {A.size(0)} x {A.size(1)}")
+    print0(f"  rhs l2 norm: {b.norm('l2'):.6e}")
 
     if fenics.has_lu_solver_method(linear_solver):
-        print(f"  using LU solver: {linear_solver}")
+        print0(f"  using LU solver: {linear_solver}")
         solver = fenics.LUSolver(A, linear_solver)
     else:
-        print(f"  requested LU solver '{linear_solver}' not available")
-        print(f"  available LU solvers: {fenics.lu_solver_methods()}")
+        print0(f"  requested LU solver '{linear_solver}' not available")
+        print0(f"  available LU solvers: {fenics.lu_solver_methods()}")
         solver = fenics.LUSolver(A, "default")
 
     solver.solve(w.vector(), b)
@@ -508,7 +507,7 @@ def stokes_initial_guess(
     w.vector().apply("insert")
 
     for lam in lambdas:
-        print(f"\n=== Linear startup lambda = {lam:.2f} ===")
+        print0(f"\n=== Linear startup lambda = {lam:.2f} ===")
 
         # scale reference thermal field for the current continuation level
         theta_lam.vector()[:] = theta_ref.vector()
@@ -521,7 +520,7 @@ def stokes_initial_guess(
         w.vector()[:] = w_n.vector()
         w.vector().apply("insert")
 
-        print("  -> Stage A: conduction-only solve")
+        print0("  -> Stage A: conduction-only solve")
         a_cond, L_cond = build_linear_startup_problem(
             experiment=experiment,
             W=W,
@@ -541,14 +540,14 @@ def stokes_initial_guess(
         Vmag = fenics.FunctionSpace(W.mesh(), "CG", 1)
         umag = fenics.project(fenics.sqrt(fenics.inner(u_chk, u_chk)), Vmag, solver_type="mumps")
 
-        print(f"  |u| min/max = {umag.vector().min():.6e}, {umag.vector().max():.6e}")
+        print0(f"  |u| min/max = {umag.vector().min():.6e}, {umag.vector().max():.6e}")
 
         theta_cond = w.sub(2, deepcopy=True)
 
         w_n.assign(w)
         w_n.vector().apply("insert")
 
-        print("  -> Stage B: frozen-temperature Stokes solve")
+        print0("  -> Stage B: frozen-temperature Stokes solve")
         a_stokes, L_stokes = build_linear_startup_problem(
             experiment=experiment,
             W=W,
@@ -667,7 +666,7 @@ def solve_temperature_only_startup(
 #     w.vector().apply("insert")
 
 #     for lam in lambdas:
-#         print(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
+#         print0(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
 
 #         theta_lam.vector()[:] = theta_ref.vector()
 #         theta_lam.vector()[:] *= float(lam)
@@ -679,7 +678,7 @@ def solve_temperature_only_startup(
 #         w.vector()[:] = w_n.vector()
 #         w.vector().apply("insert")
 
-#         print("  -> Stage A: conduction-only solve")
+#         print0("  -> Stage A: conduction-only solve")
 #         a_cond, L_cond = build_linear_startup_problem(
 #             experiment=experiment,
 #             W=W,
@@ -700,7 +699,7 @@ def solve_temperature_only_startup(
 #         w_n.vector().apply("insert")
 #         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
-#         print("  -> Stage B: frozen-temperature Stokes solve")
+#         print0("  -> Stage B: frozen-temperature Stokes solve")
 #         a_stokes, L_stokes = build_linear_startup_problem(
 #             experiment=experiment,
 #             W=W,
@@ -747,10 +746,10 @@ def stokes_initial_guess_temp(
 
     # Mixed BCs for Stage B
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
-    print("\nBC dof counts:")
+    print0("\nBC dof counts:")
     for i, bc in enumerate(boundary_conditions):
         vals = bc.get_boundary_values()
-        print(f"  bc[{i}] -> {len(vals)} dofs")
+        print0(f"  bc[{i}] -> {len(vals)} dofs")
 
     # Temperature-only space and assigner
     VT, assign_T = build_temperature_assigner(W)
@@ -761,10 +760,10 @@ def stokes_initial_guess_temp(
     W_pu = fenics.FunctionSpace(W.mesh(), fenics.MixedElement([p_el, u_el]))
     bcs_stokes = set_bcs_stokes_only(W_pu, experiment, scales)
 
-    print("\nStokes-only BC dof counts:")
+    print0("\nStokes-only BC dof counts:")
     for i, bc in enumerate(bcs_stokes):
         vals = bc.get_boundary_values()
-        print(f"  bc[{i}] -> {len(vals)} dofs")
+        print0(f"  bc[{i}] -> {len(vals)} dofs")
 
     # Temperature-only BCs for Stage A
     T_bcs = build_temperature_bcs(VT, sub_ft, T_air_bc, T_c, experiment, scales)
@@ -781,7 +780,7 @@ def stokes_initial_guess_temp(
     w.vector().apply("insert")
 
     for lam in lambdas:
-        print(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
+        print0(f"\n=== Linear startup lambda = {lam:.2f} (temp-dependent) ===")
 
         # scale the reference temperature for continuation
         theta_lam.vector()[:] = theta_ref.vector()
@@ -799,7 +798,7 @@ def stokes_initial_guess_temp(
         # --------------------------------------------------
         # Stage A: scalar temperature-only conduction solve
         # --------------------------------------------------
-        print("  -> Stage A: temperature-only conduction solve")
+        print0("  -> Stage A: temperature-only conduction solve")
 
         theta_cond = solve_temperature_only_startup(
             VT=VT,
@@ -824,8 +823,8 @@ def stokes_initial_guess_temp(
         # --------------------------------------------------
         # Stage B: frozen-temperature Stokes solve on W
         # --------------------------------------------------
-        # print("  -> Stage B: frozen-temperature Stokes solve")
-        print("  -> Stage B: frozen-temperature Stokes solve (reduced p-u system)")
+        # print0("  -> Stage B: frozen-temperature Stokes solve")
+        print0("  -> Stage B: frozen-temperature Stokes solve (reduced p-u system)")
 
         a_stokes, L_stokes = build_stokes_only_startup_problem(
             W_pu=W_pu,
@@ -849,16 +848,16 @@ def stokes_initial_guess_temp(
         update_material_from_mixed_temperature(fluid_material, w_n, scales, T_ambient)
 
         try:
-            print(f"  mu min/max: {fluid_material.mu.vector().min():.6e}, {fluid_material.mu.vector().max():.6e}")
+            print0(f"  mu min/max: {fluid_material.mu.vector().min():.6e}, {fluid_material.mu.vector().max():.6e}")
         except Exception:
             pass
 
         try:
-            print(f"  Pr min/max: {fluid_material.Pr.vector().min():.6e}, {fluid_material.Pr.vector().max():.6e}")
+            print0(f"  Pr min/max: {fluid_material.Pr.vector().min():.6e}, {fluid_material.Pr.vector().max():.6e}")
         except Exception:
             pass
 
-        print(f"  theta_cond min/max: {theta_cond.vector().min():.6e}, {theta_cond.vector().max():.6e}")
+        print0(f"  theta_cond min/max: {theta_cond.vector().min():.6e}, {theta_cond.vector().max():.6e}")
 
         a_stokes, L_stokes = build_linear_startup_problem(
             experiment=experiment,
@@ -1021,7 +1020,7 @@ def try_newton_stage_FJF_outside(
     last_error = None
 
     for relaxation in relaxation_schedule:
-        print(f"    Newton attempt [{stage_name}] with relaxation={relaxation:.3f}")
+        print0(f"    Newton attempt [{stage_name}] with relaxation={relaxation:.3f}")
 
         # always restart from last accepted state
         w.vector()[:] = w_n.vector()
@@ -1039,7 +1038,7 @@ def try_newton_stage_FJF_outside(
 
         except RuntimeError as err:
             last_error = err
-            print(f"    failed [{stage_name}] with relaxation={relaxation:.3f}")
+            print0(f"    failed [{stage_name}] with relaxation={relaxation:.3f}")
 
     return False, None, last_error
 
@@ -1105,7 +1104,7 @@ def advance_convection_monotone(
         if trial_conv <= accepted_conv + 1e-14:
             continue
 
-        print(
+        print0(
             f"  -> convection advance: accepted={accepted_conv:.4f} "
             f"target={trial_conv:.4f}"
         )
@@ -1148,7 +1147,7 @@ def advance_convection_monotone(
             accepted_conv = trial_conv
             F_accepted, JF_accepted = F, JF
 
-            print(
+            print0(
                 f"    accepted convection scale {accepted_conv:.4f} "
                 f"(relaxation={used_relax:.3f})"
             )
@@ -1163,7 +1162,7 @@ def advance_convection_monotone(
             )
 
         n_bisect += 1
-        print(
+        print0(
             f"    target {trial_conv:.4f} failed; "
             f"bisecting interval [{accepted_conv:.4f}, {trial_conv:.4f}] "
             f"-> {midpoint:.4f}"
@@ -1412,9 +1411,16 @@ def compute_cfl(sub_mesh, u, dt):
     u_loc = umag.vector().get_local()
 
     cfl_loc = dt * u_loc / np.maximum(h_loc, 1e-14)
-    cfl_max = float(np.max(cfl_loc))
-    cfl_mean = float(np.mean(cfl_loc))
 
+    comm = MPI.COMM_WORLD
+    local_max = float(np.max(cfl_loc)) if cfl_loc.size else 0.0
+    local_sum = float(np.sum(cfl_loc))
+    local_count = int(cfl_loc.size)
+    cfl_max = comm.allreduce(local_max, op=MPI.MAX)
+    global_sum = comm.allreduce(local_sum, op=MPI.SUM)
+    global_count = comm.allreduce(local_count, op=MPI.SUM)
+    cfl_mean = global_sum / max(global_count, 1)
+    
     cfl_fun = fenics.Function(V0, name="CFL")
     cfl_fun.vector()[:] = cfl_loc
     cfl_fun.vector().apply("insert")
@@ -1430,7 +1436,9 @@ def cfl_limited_dt(sub_mesh, u, cfl_target=1.0, safety=0.9, dt_min=1e-5, dt_max=
     u_loc = umag.vector().get_local()
 
     speed_over_h = u_loc / np.maximum(h_loc, 1e-14)
-    denom = np.max(speed_over_h)
+    comm = MPI.COMM_WORLD
+    local_denom = float(np.max(speed_over_h)) if speed_over_h.size else 0.0
+    denom = comm.allreduce(local_denom, op=MPI.MAX)
 
     if denom < 1e-14:
         return dt_max
@@ -1736,3 +1744,18 @@ def save_restart_checkpoint(checkpoint_dir, mesh_star, w_n, step, time_value, dt
     }
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
+
+def mpi_probe_scalar(f, x, y):
+    try:
+        local_val = float(f(x, y))
+        local_found = 1
+    except RuntimeError:
+        local_val = 0.0
+        local_found = 0
+
+    found = MPI.sum(COMM, local_found)
+    val = MPI.sum(COMM, local_val)
+
+    if found > 0:
+        return val / found
+    return float("nan")

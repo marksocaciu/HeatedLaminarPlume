@@ -46,7 +46,7 @@ def plot_mesh(mesh,  title="Mesh", cmap="", colorbar=False, mode="", figsize=(8,
 def create_mesh(mesh, cell_type, prune_z=False):
     cells = mesh.get_cells_type(cell_type)
     cell_data = mesh.get_cell_data("gmsh:physical", cell_type)
-    print(set(cell_data))
+    print0(set(cell_data))
     points = mesh.points[:, :2] if prune_z else mesh.points
     out_mesh = meshio.Mesh(points=points, cells={cell_type: cells}, cell_data={"name_to_read": [cell_data.astype(np.int32)]})
     return out_mesh
@@ -61,7 +61,7 @@ def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
         xdmf.write(sol)
 
     if MPI.comm_world.rank == 0:
-        print("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
+        print0("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
 
 def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
@@ -69,7 +69,7 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
 
     subprocess.run(f"gmsh {GEOM_FILE}", shell=True, check=True)
 
-    print("Converting MSH to XDMF...")
+    print0("Converting MSH to XDMF...")
     msh = meshio.read(MSH_FILE)
 
     element_mesh = create_mesh(msh, ELEM, prune_z=PRUNE_Z)
@@ -109,10 +109,10 @@ def read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH,
     # -------------------------
     if PRINT_TAG_SUMMARY and MPI.comm_world.rank == 0:
         ct = set(mc.array())
-        print("Cell tags in the mesh:", ct)
+        print0("Cell tags in the mesh:", ct)
         ft = set(mf.array())
         ft = ft - {18446744073709551615}  # remove default tag 18446744073709551615
-        print("Facet tags in the mesh:", ft)
+        print0("Facet tags in the mesh:", ft)
 
     return mesh, ct, ft, domains, dx, boundary_markers, mc, mf
 
@@ -123,7 +123,7 @@ def create_submesh(mesh, mc, mf, tag):
     # try:
     #     air_mesh = fenics.MeshView.create(mc, AIR_TAG)
     # except Exception:
-    #     print(" --- Fallback: SubMesh (works, but transferring facet tags is more manual")
+    #     print0(" --- Fallback: SubMesh (works, but transferring facet tags is more manual")
     #     air_mesh = fenics.SubMesh(mesh, mc, AIR_TAG)
     
     air_mesh = SubMesh(mesh, mc, AIR_TAG)
@@ -239,7 +239,7 @@ fenics.solve(a_T == L_T, T_full, bcs_T,
       })
 
 T_full.rename("T_conduction_full", "")
-print(max(T_full.vector()))
+print0(max(T_full.vector()))
 
 # -----------------------------------------
 # Save result
@@ -703,7 +703,7 @@ for it in range(max_it):
     norm = T_old.vector().norm("l2") + 1e-14
     rel  = diff / norm
 
-    print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+    print0(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
     if rel < rtol:
         break
@@ -761,7 +761,7 @@ counts_arr[counts_arr == 0.0] = 1.0
 h_eff_air.vector()[:] /= counts_arr
 Bi_air.vector()[:]    /= counts_arr
 
-print(set(Bi_air.vector()))
+print0(set(Bi_air.vector()))
 
 save_experiment(
     "data/t_dep_mat/air_biot.xdmf",
@@ -780,7 +780,7 @@ plot_mesh(T, title="Temperature field", cmap = "coolwarm", colorbar=True)
 plot_mesh(u, title="Velocity magnitude", cmap = "coolwarm", colorbar=True, mode="glyphs")
 plot_mesh(p, title="Pressure field", cmap = "coolwarm", colorbar=True)
 
-print(type(w.split()[0]))  # <class 'dolfin.function.function.Function'>
+print0(type(w.split()[0]))  # <class 'dolfin.function.function.Function'>
 save_experiment(OUTPUT_XDMF_PATH_AIR_P, sub_mesh, [p])
 save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh, [u])
 save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh, [T])

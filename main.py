@@ -218,10 +218,10 @@ def approximate_restart_from_last_saved_transient(
         'dt': float(dt_value),
         'source': 'approximate_xdmf_restart',
     }
-    print('Loaded approximate restart from transient snapshots:')
-    print(f"  step = {meta['step']}")
-    print(f"  time = {meta['time']:.6e}")
-    print(f"  dt   = {meta['dt']:.6e}")
+    print0('Loaded approximate restart from transient snapshots:')
+    print0(f"  step = {meta['step']}")
+    print0(f"  time = {meta['time']:.6e}")
+    print0(f"  dt   = {meta['dt']:.6e}")
     return w, w_n, meta
 
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
@@ -248,19 +248,19 @@ def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_
     # qsurf_avg = (QL_half / L_half) if L_half > 0 else float("nan")
     qsurf_avg = (QL_full / L_full) if L_full > 0 else float("nan")
 
-    print("=== Interface power conservation ===")
-    print(f"interface_tag = {interface_tag}")
-    # print(f"Interface length (half)  L_half  = {L_half:.6e} m")
-    print(f"Interface length (full)  L_full  = {L_full:.6e} m")
-    # print(f"Recovered power (half)   QL_half = {QL_half:.6e} W/m")
-    print(f"Recovered power (full)   QL_full = {QL_full:.6e} W/m")
-    print(f"Target power (paper)     QL      = {QL_target:.6e} W/m")
-    print(f"Relative error (full)    = {(QL_full-QL_target)/QL_target:.3%}")
+    print0("=== Interface power conservation ===")
+    print0(f"interface_tag = {interface_tag}")
+    # print0(f"Interface length (half)  L_half  = {L_half:.6e} m")
+    print0(f"Interface length (full)  L_full  = {L_full:.6e} m")
+    # print0(f"Recovered power (half)   QL_half = {QL_half:.6e} W/m")
+    print0(f"Recovered power (full)   QL_full = {QL_full:.6e} W/m")
+    print0(f"Target power (paper)     QL      = {QL_target:.6e} W/m")
+    print0(f"Relative error (full)    = {(QL_full-QL_target)/QL_target:.3%}")
 
-    print("--- Flux magnitude sanity ---")
-    print(f"Target mean q''          = {qsurf_target:.6e} W/m^2  (QL/(pi*d))")
-    print(f"Recovered mean q'' (half)= {qsurf_avg:.6e} W/m^2  (QL_half/L_half)")
-    print("===================================")
+    print0("--- Flux magnitude sanity ---")
+    print0(f"Target mean q''          = {qsurf_target:.6e} W/m^2  (QL/(pi*d))")
+    print0(f"Recovered mean q'' (half)= {qsurf_avg:.6e} W/m^2  (QL_half/L_half)")
+    print0("===================================")
 
 def under_relax_scalar(new_f, old_f, omega):
     out = fenics.Function(new_f.function_space(), name=new_f.name())
@@ -323,7 +323,7 @@ def relative_update(new_f, old_f):
 #     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
 
 #     scales = compute_nondimensional_scales(experiment)
-#     print(scales)
+#     print0(scales)
 
 #     T_ambient = float(experiment.initial_conditions.temperature)
 #     dTref = float(scales.dTref)
@@ -331,9 +331,9 @@ def relative_update(new_f, old_f):
 #     # ------------------------------------------------------------------
 #     # 1) Thermal initialization on FULL DIMENSIONAL parent mesh
 #     # ------------------------------------------------------------------
-#     print("Computing initial full-domain thermal field...")
+#     print0("Computing initial full-domain thermal field...")
 #     heat_volume = volume_heat_source(experiment)
-#     print(f"Using wire volumetric heating: {heat_volume:.6e} W/m^3")
+#     print0(f"Using wire volumetric heating: {heat_volume:.6e} W/m^3")
 
 #     T_full, k_func = solve_full_temperature(
 #         mesh=mesh,
@@ -358,8 +358,8 @@ def relative_update(new_f, old_f):
 #         dTref=dTref,
 #     )
 
-#     print(f"Initial T_full min/max [K]: {T_full.vector().min():.6e}, {T_full.vector().max():.6e}")
-#     print(f"Initial theta_air_dim min/max [-]: {theta_air_dim.vector().min():.6e}, {theta_air_dim.vector().max():.6e}")
+#     print0(f"Initial T_full min/max [K]: {T_full.vector().min():.6e}, {T_full.vector().max():.6e}")
+#     print0(f"Initial theta_air_dim min/max [-]: {theta_air_dim.vector().min():.6e}, {theta_air_dim.vector().max():.6e}")
 
 #     # ------------------------------------------------------------------
 #     # 2) Keep qn_air ONLY as diagnostic
@@ -377,8 +377,8 @@ def relative_update(new_f, old_f):
 #         experiment.dimensions.wire.diameter,
 #     )
 
-#     # print(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
-#     # print(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
+#     # print0(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
+#     # print0(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
 
 #     # ------------------------------------------------------------------
 #     # 3) Scale parent mesh to STAR coordinates
@@ -400,12 +400,12 @@ def relative_update(new_f, old_f):
 #         name="theta_air_star",
 #     )
 
-#     print(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
+#     print0(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
     
 #     # ------------------------------------------------------------------
 #     # 4) Air-flow startup (Stokes / no momentum convection)
 #     # ------------------------------------------------------------------
-#     print("Starting air-only Stokes startup...")
+#     print0("Starting air-only Stokes startup...")
 #     startup = solve_air_stokes_startup(
 #         sub_mesh_star=sub_mesh_star,
 #         sub_dx_star=sub_dx_star,
@@ -419,7 +419,7 @@ def relative_update(new_f, old_f):
 #     u_air = startup["u"]
 #     w_air = startup["w"]
 
-#     print(f"[startup] converged = {startup['converged']} | n_iter = {startup['n_iter']}")
+#     print0(f"[startup] converged = {startup['converged']} | n_iter = {startup['n_iter']}")
 
 #     # ------------------------------------------------------------------
 #     # 5) Outer segregated coupling loop
@@ -438,10 +438,10 @@ def relative_update(new_f, old_f):
 #     u_air_old.assign(u_air)
 
 #     for cscale in convection_schedule:
-#         print(f"\n=== Convection continuation: cscale = {cscale:.2f} ===")
+#         print0(f"\n=== Convection continuation: cscale = {cscale:.2f} ===")
 
 #         for outer_it in range(max_outer_it):
-#             print(f"\n--- Outer iteration {outer_it:02d} @ convection scale {cscale:.2f} ---")
+#             print0(f"\n--- Outer iteration {outer_it:02d} @ convection scale {cscale:.2f} ---")
 
 #             # ----------------------------------------------------------
 #             # A) Extend air velocity to the FULL STAR parent mesh
@@ -515,7 +515,7 @@ def relative_update(new_f, old_f):
 #             u_air_new = air_sol["u"]
 #             w_air_new = air_sol["w"]
 
-#             print(f"[air solve] converged = {air_sol['converged']} | n_iter = {air_sol['n_iter']}")
+#             print0(f"[air solve] converged = {air_sol['converged']} | n_iter = {air_sol['n_iter']}")
 
 #             # under-relax velocity only
 #             u_air_relaxed = under_relax_mixed_component(u_air_new, u_air_old, omega_u)
@@ -526,7 +526,7 @@ def relative_update(new_f, old_f):
 #             relT = relative_update(T_full_relaxed, T_full_old)
 #             relU = relative_update(u_air_relaxed, u_air_old)
 
-#             print(f"[outer] relT = {relT:.3e} | relU = {relU:.3e}")
+#             print0(f"[outer] relT = {relT:.3e} | relU = {relU:.3e}")
 
 #             # update accepted states
 #             T_full_old.assign(T_full_relaxed)
@@ -542,10 +542,10 @@ def relative_update(new_f, old_f):
 #                 qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
 #                 check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
 #             except Exception as err:
-#                 print(f"[diagnostic] qn_air update skipped: {err}")
+#                 print0(f"[diagnostic] qn_air update skipped: {err}")
 
 #             if max(relT, relU) < tol_outer:
-#                 print(f"[outer] converged at iteration {outer_it:02d} for cscale={cscale:.2f}")
+#                 print0(f"[outer] converged at iteration {outer_it:02d} for cscale={cscale:.2f}")
 #                 break
 
 #     # ------------------------------------------------------------------
@@ -564,7 +564,7 @@ def relative_update(new_f, old_f):
 #             xdmf_t.write(mesh)
 #             xdmf_t.write(T_full)
 #     except Exception as err:
-#         print(f"[output] warning: final write failed: {err}")
+#         print0(f"[output] warning: final write failed: {err}")
 
 #     return {
 #         "T_full": T_full,
@@ -575,6 +575,8 @@ def relative_update(new_f, old_f):
 #     }
 
 def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+    mkdir0(experiment.name)
+    mkdir0(experiment.name + "/base")
     run_root = make_run_root(experiment.name, "base", reuse_existing=existing_run_root)
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
@@ -606,19 +608,19 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
     
     scales = compute_nondimensional_scales(experiment)
-    print(scales)
-    print(f"Uref   = {scales.Uref:.6e} m/s")
-    print(f"Uplume = {scales.Uplume:.6e} m/s")
-    print(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
-    print(f"Lref   = {scales.Lref:.6e} m")
-    print(f"Lplume = {scales.Lplume:.6e} m")
-    print(f"dTref  = {scales.dTref:.6e} K")
-    print(f"dTline = {scales.dTline:.6e} K")
+    print0(scales)
+    print0(f"Uref   = {scales.Uref:.6e} m/s")
+    print0(f"Uplume = {scales.Uplume:.6e} m/s")
+    print0(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
+    print0(f"Lref   = {scales.Lref:.6e} m")
+    print0(f"Lplume = {scales.Lplume:.6e} m")
+    print0(f"dTref  = {scales.dTref:.6e} K")
+    print0(f"dTline = {scales.dTline:.6e} K")
     
     # --- 3) conduction initial guess (dim parent mesh)
-    print("Computing initial guess for temperature field...")
+    print0("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
-    print(f"Using heat volume: {heat_volume} W/m^3")
+    print0(f"Using heat volume: {heat_volume} W/m^3")
 
     T_full, k_func = initial_guess(mesh, mc, mf, OUTPUT_XDMF_PATH_TEMP,
                                     heat_volume, experiment, dx)
@@ -640,9 +642,9 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     theta_full_dim.vector().apply("insert")
     theta_full_dim.rename("theta_full", "theta_full")
 
-    print("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
-    print("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
-    print("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
+    print0("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
 
     # --- (still dimensional) compute qn_air using your current routine
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
@@ -657,10 +659,10 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         experiment.dimensions.wire.diameter
     )
 
-    print(f"Initial max temperature: {T_full.vector().max():.2f} K")
-    print(f"Initial min temperature: {T_full.vector().min():.2f} K")
-    print(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
-    print(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
+    print0(f"Initial max temperature: {T_full.vector().max():.2f} K")
+    print0(f"Initial min temperature: {T_full.vector().min():.2f} K")
+    print0(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
+    print0(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
 
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
@@ -668,23 +670,24 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     scale_mesh_inplace(sub_mesh_dim, Lref)
 
     # --- 6) recreate submesh + measures on scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = \
-    build_star_submesh_and_transfer(
-        mesh=mesh,
-        mc=mc,
-        mf=mf,
-        air_tag=AIR_TAG,
-        theta_full_dim=theta_full_dim,
-        qn_air=qn_air,
+    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = (
+        build_star_submesh_and_transfer(
+            mesh=mesh,
+            mc=mc,
+            mf=mf,
+            air_tag=AIR_TAG,
+            theta_full_dim=theta_full_dim,
+            qn_air=qn_air,
+        )
     )
 
-    print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
-    print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
-    print(f"Rho_air: {experiment.fluid.properties['rho']}")
-    print(f"Beta_air: {experiment.fluid.properties['beta']}")
+    print0(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
+    print0(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
+    print0(f"Rho_air: {experiment.fluid.properties['rho']}")
+    print0(f"Beta_air: {experiment.fluid.properties['beta']}")
     
     # Solving the problem
-    print("Starting solver...")
+    print0("Starting solver...")
     W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
         sub_mesh_star,
@@ -701,7 +704,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
         try:
             if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
-                print("Attempting restart from true checkpoint...")
+                print0("Attempting restart from true checkpoint...")
                 w, w_n, restart_meta = load_true_restart_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     W=W,
@@ -709,7 +712,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
                     w_n=w_n,
                 )
             else:
-                print("Attempting restart from last saved transient snapshot...")
+                print0("Attempting restart from last saved transient snapshot...")
                 w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
                     run_root=run_root,
                     mode_subdir="base",
@@ -724,7 +727,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
                     fallback_dt=1.0e-4,
                 )
 
-            print(
+            print0(
                 f"Restart recovered from {restart_meta['source']}: "
                 f"step={restart_meta['step']}, "
                 f"time={restart_meta['time']:.6e}, "
@@ -732,15 +735,15 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             )
 
         except Exception as exc:
-            print("Restart request could not be satisfied.")
-            print(f"Reason: {exc}")
-            print("Falling back to fresh transient start from steady state.")
+            print0("Restart request could not be satisfied.")
+            print0(f"Reason: {exc}")
+            print0("Falling back to fresh transient start from steady state.")
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
 
     if not restart_from_last_transient:
         # Use Stokes initial guess for better convergene
-        print("Solving Stokes problem for initial guess...")
+        print0("Solving Stokes problem for initial guess...")
         w_n = stokes_initial_guess(
             experiment=experiment,
             u_n=u_n, u=u, T_n=T_n, T=T, p=p,
@@ -753,7 +756,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         )
     
     # Solve the full nonlinear problem with previous initial guess
-    print("Starting checks")
+    print0("Starting checks")
     w_t = w.copy(deepcopy=True)
     w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
                                 mu=mu,Pr=Pr,
@@ -764,7 +767,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
                                   mu=mu,Pr=Pr,
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
-    print("Checks complete")
+    print0("Checks complete")
 
     # w = solve_steady_newton_continuation(
     #     experiment=experiment,
@@ -815,20 +818,20 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         )
 
         if info.get("status") == "continuation_failed":
-            print("failed_stage:", info.get("failed_stage"))
+            print0("failed_stage:", info.get("failed_stage"))
             last = info.get("last_stage_info", {})
-            print("last_stage_status:", last.get("status"))
-            print("accepted_steps:", last.get("accepted_steps"))
-            print("rejected_steps:", last.get("rejected_steps"))
-            print("final_dtau:", last.get("final_dtau"))
-            print("final_rel_update:", last.get("final_rel_update"))
-            print("final_steady_residual:", last.get("final_steady_residual"))
+            print0("last_stage_status:", last.get("status"))
+            print0("accepted_steps:", last.get("accepted_steps"))
+            print0("rejected_steps:", last.get("rejected_steps"))
+            print0("final_dtau:", last.get("final_dtau"))
+            print0("final_rel_update:", last.get("final_rel_update"))
+            print0("final_steady_residual:", last.get("final_steady_residual"))
         else:
-            print("accepted_steps:", info.get("accepted_steps"))
-            print("rejected_steps:", info.get("rejected_steps"))
-            print("final_dtau:", info.get("final_dtau"))
-            print("final_rel_update:", info.get("final_rel_update"))
-            print("final_steady_residual:", info.get("final_steady_residual"))
+            print0("accepted_steps:", info.get("accepted_steps"))
+            print0("rejected_steps:", info.get("rejected_steps"))
+            print0("final_dtau:", info.get("final_dtau"))
+            print0("final_rel_update:", info.get("final_rel_update"))
+            print0("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -855,10 +858,10 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+        print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
-        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
-    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+        print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
+    # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
     
     w, transient_info = run_post_continuation_transient(
             experiment=experiment,
@@ -898,8 +901,8 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             SUPG=SUPG,
         )
 
-    print("transient status:", transient_info["status"])
-    print("transient steps:", transient_info["n_steps"])
+    print0("transient status:", transient_info["status"])
+    print0("transient steps:", transient_info["n_steps"])
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -922,7 +925,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
 
     # Example: if facet tags exist for TOP and FAR boundaries
     Q_far  = -k_inf*dTref * fenics.assemble(fenics.dot(fenics.grad(theta), n) * sub_ds_star(OUTER_AIR_TAG))
-    print(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
+    print0(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
 
 
     # plotting + output
@@ -960,7 +963,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     )
 
     for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+        print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
         
     out_dir=Path.cwd()
@@ -1008,19 +1011,19 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
 
     scales = compute_nondimensional_scales(experiment)
-    print(scales)
-    print(f"Uref   = {scales.Uref:.6e} m/s")
-    print(f"Uplume = {scales.Uplume:.6e} m/s")
-    print(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
-    print(f"Lref   = {scales.Lref:.6e} m")
-    print(f"Lplume = {scales.Lplume:.6e} m")
-    print(f"dTref  = {scales.dTref:.6e} K")
-    print(f"dTline = {scales.dTline:.6e} K")
+    print0(scales)
+    print0(f"Uref   = {scales.Uref:.6e} m/s")
+    print0(f"Uplume = {scales.Uplume:.6e} m/s")
+    print0(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
+    print0(f"Lref   = {scales.Lref:.6e} m")
+    print0(f"Lplume = {scales.Lplume:.6e} m")
+    print0(f"dTref  = {scales.dTref:.6e} K")
+    print0(f"dTline = {scales.dTline:.6e} K")
 
     # --- 3) conduction initial guess (dim parent mesh)
-    print("Computing initial guess for temperature field...")
+    print0("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
-    print(f"Using heat volume: {heat_volume} W/m^3")
+    print0(f"Using heat volume: {heat_volume} W/m^3")
 
     T_full, k_func = initial_guess(mesh, mc, mf, OUTPUT_XDMF_PATH_TEMP,
                                     heat_volume, experiment, dx)
@@ -1043,9 +1046,9 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     theta_full_dim.vector().apply("insert")
     theta_full_dim.rename("theta_full", "theta_full")
 
-    print("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
-    print("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
-    print("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
+    print0("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
 
     # --- (still dimensional) compute qn_air using your current routine
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
@@ -1060,10 +1063,10 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
         experiment.dimensions.wire.diameter
     )
 
-    print(f"Initial max temperature: {T_full.vector().max():.2f} K")
-    print(f"Initial min temperature: {T_full.vector().min():.2f} K")
-    print(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
-    print(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
+    print0(f"Initial max temperature: {T_full.vector().max():.2f} K")
+    print0(f"Initial min temperature: {T_full.vector().min():.2f} K")
+    print0(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
+    print0(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
     theta_ambient=theta_full_dim.vector().min()
     
     # --- 5) scale parent mesh coordinates (dim→star)
@@ -1082,10 +1085,10 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
         qn_air=qn_air,
     )
 
-    print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
-    print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
-    print(f"Rho_air: {experiment.fluid.properties['rho']}")
-    print(f"Beta_air: {experiment.fluid.properties['beta']}")
+    print0(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
+    print0(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
+    print0(f"Rho_air: {experiment.fluid.properties['rho']}")
+    print0(f"Beta_air: {experiment.fluid.properties['beta']}")
 
     # Define temperature-dependent material model for air
     fluid_material = TemperatureDependentMaterial(
@@ -1102,7 +1105,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     
 
     # Solving the problem
-    print("Starting solver...")
+    print0("Starting solver...")
     W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
         sub_mesh_star,
@@ -1115,7 +1118,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
 
     
     # Use Stokes initial guess for better convergene
-    print("Solving Stokes problem for initial guess...")
+    print0("Solving Stokes problem for initial guess...")
     update_material_from_mixed_nondimensional_temperature(
         fluid_material=fluid_material,
         w_mixed=w_n,
@@ -1128,7 +1131,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
         try:
             if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
-                print("Attempting restart from true checkpoint...")
+                print0("Attempting restart from true checkpoint...")
                 w, w_n, restart_meta = load_true_restart_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     W=W,
@@ -1136,7 +1139,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
                     w_n=w_n,
                 )
             else:
-                print("Attempting restart from last saved transient snapshot...")
+                print0("Attempting restart from last saved transient snapshot...")
                 w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
                     run_root=run_root,
                     mode_subdir="base",
@@ -1151,7 +1154,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
                     fallback_dt=1.0e-4,
                 )
 
-            print(
+            print0(
                 f"Restart recovered from {restart_meta['source']}: "
                 f"step={restart_meta['step']}, "
                 f"time={restart_meta['time']:.6e}, "
@@ -1159,15 +1162,15 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
             )
 
         except Exception as exc:
-            print("Restart request could not be satisfied.")
-            print(f"Reason: {exc}")
-            print("Falling back to fresh transient start from steady state.")
+            print0("Restart request could not be satisfied.")
+            print0(f"Reason: {exc}")
+            print0("Falling back to fresh transient start from steady state.")
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
 
     # if not restart_from_last_transient:
     #     # Use Stokes initial guess for better convergene
-    #     print("Solving Stokes problem for initial guess...")
+    #     print0("Solving Stokes problem for initial guess...")
     #     w_n = stokes_initial_guess(
     #         experiment=experiment,
     #         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
@@ -1187,7 +1190,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     #     )
     
 
-    print("Starting checks")
+    print0("Starting checks")
     w_t = w.copy(deepcopy=True)
     w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
                                 mu=mu,Pr=Pr,
@@ -1198,7 +1201,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
                                   mu=mu,Pr=Pr,
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
-    print("Checks complete")
+    print0("Checks complete")
 
     # w = temp_dep_solver(F,w, boundary_conditions, JF, w_n, fluid_material)
     # w = solve_temp_newton_continuation(
@@ -1251,20 +1254,20 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
         )
 
         if info.get("status") == "continuation_failed":
-            print("failed_stage:", info.get("failed_stage"))
+            print0("failed_stage:", info.get("failed_stage"))
             last = info.get("last_stage_info", {})
-            print("last_stage_status:", last.get("status"))
-            print("accepted_steps:", last.get("accepted_steps"))
-            print("rejected_steps:", last.get("rejected_steps"))
-            print("final_dtau:", last.get("final_dtau"))
-            print("final_rel_update:", last.get("final_rel_update"))
-            print("final_steady_residual:", last.get("final_steady_residual"))
+            print0("last_stage_status:", last.get("status"))
+            print0("accepted_steps:", last.get("accepted_steps"))
+            print0("rejected_steps:", last.get("rejected_steps"))
+            print0("final_dtau:", last.get("final_dtau"))
+            print0("final_rel_update:", last.get("final_rel_update"))
+            print0("final_steady_residual:", last.get("final_steady_residual"))
         else:
-            print("accepted_steps:", info.get("accepted_steps"))
-            print("rejected_steps:", info.get("rejected_steps"))
-            print("final_dtau:", info.get("final_dtau"))
-            print("final_rel_update:", info.get("final_rel_update"))
-            print("final_steady_residual:", info.get("final_steady_residual"))
+            print0("accepted_steps:", info.get("accepted_steps"))
+            print0("rejected_steps:", info.get("rejected_steps"))
+            print0("final_dtau:", info.get("final_dtau"))
+            print0("final_rel_update:", info.get("final_rel_update"))
+            print0("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -1291,10 +1294,10 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+        print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
-        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
-    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+        print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
+    # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
     
     w, transient_info = run_post_temp_continuation_transient(
             experiment=experiment,
@@ -1335,8 +1338,8 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
             history_csv_path=run_root + "/transient_history.csv",
         )
 
-    print("transient status:", transient_info["status"])
-    print("transient steps:", transient_info["n_steps"])
+    print0("transient status:", transient_info["status"])
+    print0("transient steps:", transient_info["n_steps"])
 
 
     # Split nondimensional solution
@@ -1356,7 +1359,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
 
     # Example: if facet tags exist for TOP and FAR boundaries
     Q_far  = -k_inf*dTref * fenics.assemble(fenics.dot(fenics.grad(theta), n) * sub_ds_star(OUTER_AIR_TAG))
-    print(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
+    print0(f"Heat flux through outer air boundary: Q_far = {Q_far:.6e} W/m")
 
 
     # plotting + output
@@ -1391,7 +1394,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     )
 
     for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+        print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
         
     out_dir=Path.cwd()
@@ -1439,12 +1442,12 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
 
     scales = compute_nondimensional_scales(experiment)
-    print(scales)
+    print0(scales)
 
     # --- 3) conduction initial guess (dim parent mesh)
-    print("Computing initial guess for temperature field...")
+    print0("Computing initial guess for temperature field...")
     heat_volume = volume_heat_source(experiment)
-    print(f"Using heat volume: {heat_volume} W/m^3")
+    print0(f"Using heat volume: {heat_volume} W/m^3")
 
     T_full, k_func = initial_guess(mesh, mc, mf, OUTPUT_XDMF_PATH_TEMP,
                                     heat_volume, experiment, dx)
@@ -1466,9 +1469,9 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     theta_full_dim.vector().apply("insert")
     theta_full_dim.rename("theta_full", "theta_full")
 
-    print("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
-    print("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
-    print("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
+    print0("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
 
     # --- (still dimensional) compute qn_air using your current routine
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
@@ -1483,10 +1486,10 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
         experiment.dimensions.wire.diameter
     )
 
-    print(f"Initial max temperature: {T_full.vector().max():.2f} K")
-    print(f"Initial min temperature: {T_full.vector().min():.2f} K")
-    print(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
-    print(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
+    print0(f"Initial max temperature: {T_full.vector().max():.2f} K")
+    print0(f"Initial min temperature: {T_full.vector().min():.2f} K")
+    print0(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
+    print0(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
 
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
@@ -1504,13 +1507,13 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
         qn_air=qn_air,
     )
 
-    print(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
-    print(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
-    print(f"Rho_air: {experiment.fluid.properties['rho']}")
-    print(f"Beta_air: {experiment.fluid.properties['beta']}")
+    print0(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
+    print0(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
+    print0(f"Rho_air: {experiment.fluid.properties['rho']}")
+    print0(f"Beta_air: {experiment.fluid.properties['beta']}")
     
     # Solving the problem
-    print("Starting solver...")
+    print0("Starting solver...")
     W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
     mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
         sub_mesh_star,
@@ -1527,7 +1530,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
         checkpoint_dir = os.path.join(run_root, "abs", "restart_checkpoint")
         try:
             if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
-                print("Attempting restart from true checkpoint...")
+                print0("Attempting restart from true checkpoint...")
                 w, w_n, restart_meta = load_true_restart_checkpoint(
                     checkpoint_dir=checkpoint_dir,
                     W=W,
@@ -1535,7 +1538,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
                     w_n=w_n,
                 )
             else:
-                print("Attempting restart from last saved transient snapshot...")
+                print0("Attempting restart from last saved transient snapshot...")
                 w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
                     run_root=run_root,
                     mode_subdir="base",
@@ -1550,7 +1553,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
                     fallback_dt=1.0e-4,
                 )
 
-            print(
+            print0(
                 f"Restart recovered from {restart_meta['source']}: "
                 f"step={restart_meta['step']}, "
                 f"time={restart_meta['time']:.6e}, "
@@ -1558,15 +1561,15 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             )
 
         except Exception as exc:
-            print("Restart request could not be satisfied.")
-            print(f"Reason: {exc}")
-            print("Falling back to fresh transient start from steady state.")
+            print0("Restart request could not be satisfied.")
+            print0(f"Reason: {exc}")
+            print0("Falling back to fresh transient start from steady state.")
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
 
     if not restart_from_last_transient:
         # Use Stokes initial guess for better convergene
-        print("Solving Stokes problem for initial guess...")
+        print0("Solving Stokes problem for initial guess...")
         w_n = stokes_initial_guess(
             experiment=experiment,
             u_n=u_n, u=u, T_n=T_n, T=T, p=p,
@@ -1579,7 +1582,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
         )
 
     # Solve the full nonlinear problem with previous initial guess
-    print("Starting checks")
+    print0("Starting checks")
     w_t = w.copy(deepcopy=True)
     w_t =solve_thermal_sign_check(experiment=experiment,W=W,w=w_t,
                                 mu=mu,Pr=Pr,
@@ -1590,7 +1593,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
                                   mu=mu,Pr=Pr,
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
-    print("Checks complete")
+    print0("Checks complete")
 
     # w = solve_ABE_newton_continuation(
     #     experiment=experiment,
@@ -1640,20 +1643,20 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
         )
 
         if info.get("status") == "continuation_failed":
-            print("failed_stage:", info.get("failed_stage"))
+            print0("failed_stage:", info.get("failed_stage"))
             last = info.get("last_stage_info", {})
-            print("last_stage_status:", last.get("status"))
-            print("accepted_steps:", last.get("accepted_steps"))
-            print("rejected_steps:", last.get("rejected_steps"))
-            print("final_dtau:", last.get("final_dtau"))
-            print("final_rel_update:", last.get("final_rel_update"))
-            print("final_steady_residual:", last.get("final_steady_residual"))
+            print0("last_stage_status:", last.get("status"))
+            print0("accepted_steps:", last.get("accepted_steps"))
+            print0("rejected_steps:", last.get("rejected_steps"))
+            print0("final_dtau:", last.get("final_dtau"))
+            print0("final_rel_update:", last.get("final_rel_update"))
+            print0("final_steady_residual:", last.get("final_steady_residual"))
         else:
-            print("accepted_steps:", info.get("accepted_steps"))
-            print("rejected_steps:", info.get("rejected_steps"))
-            print("final_dtau:", info.get("final_dtau"))
-            print("final_rel_update:", info.get("final_rel_update"))
-            print("final_steady_residual:", info.get("final_steady_residual"))
+            print0("accepted_steps:", info.get("accepted_steps"))
+            print0("rejected_steps:", info.get("rejected_steps"))
+            print0("final_dtau:", info.get("final_dtau"))
+            print0("final_rel_update:", info.get("final_rel_update"))
+            print0("final_steady_residual:", info.get("final_steady_residual"))
     
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -1680,10 +1683,10 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             characteristic_length="radius",
             return_local_field=True
         )
-        print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+        print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
     except Exception:
-        print("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
-    # print(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+        print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
+    # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
     
     w, transient_info = run_post_abe_continuation_transient(
             experiment=experiment,
@@ -1722,8 +1725,8 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             history_csv_path=run_root + "/transient_history.csv",
         )
 
-    print("transient status:", transient_info["status"])
-    print("transient steps:", transient_info["n_steps"])
+    print0("transient status:", transient_info["status"])
+    print0("transient steps:", transient_info["n_steps"])
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
@@ -1767,7 +1770,7 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     )
 
     for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-        print(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+        print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
             f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
     
     out_dir=Path.cwd()
@@ -1798,7 +1801,7 @@ def main():
     args.experiment_index = max(0, args.experiment_index)
     experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
     experiment = experiment_list[args.experiment_index]
-    print(f"Running experiment: {experiment.name}")
+    print0(f"Running experiment: {experiment.name}")
 
     base_version(
         experiment,

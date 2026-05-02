@@ -381,19 +381,19 @@ def parser(experiments_json_path: str, schema_json_path: Optional[str] = None, )
         strict_schema=False,
     )
 
-    print(f"config_version: {cfg_version}")
-    print(f"defaults.gravity: {defaults.gravity}")
-    print(f"loaded experiments: {len(exps)}")
+    print0(f"config_version: {cfg_version}")
+    print0(f"defaults.gravity: {defaults.gravity}")
+    print0(f"loaded experiments: {len(exps)}")
 
     if schema_errors:
-        print("\nSchema validation issues (parsing continued):")
+        print0("\nSchema validation issues (parsing continued):")
         for e in schema_errors:
-            print(f" - {e}")
+            print0(f" - {e}")
 
     for i, e in enumerate(exps, start=1):
         d = e.dimensions.domain
         w = e.dimensions.wire
-        print(
+        print0(
             f"[{i}] {e.name} ({e.author}) | domain={d.type} "
             f"| x:[{d.x_min}, {d.x_max}] y:[{d.y_min}, {d.y_max}] | wire_d={w.diameter}"
         )

@@ -38,7 +38,7 @@ def build_nonlinear_ABE_problem(
         + 2.0 * mu * inner(sym(grad(psi_u)), sym(grad(u)))
     )
     if SUPG:
-        print("Using SUPG stabilization for convection.")
+        print0("Using SUPG stabilization for convection.")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,
@@ -96,7 +96,7 @@ def solve_ABE_newton_continuation(
     conv_targets = conv_stage_sequence()
 
     for lam in lambdas:
-        print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+        print0(f"\n=== Newton continuation lambda = {lam:.2f} ===")
         # optional output of current accepted state before advancing lambda
         if sub_mesh_star is not None and sub_mesh_dim is not None:
             p_star, u_star, theta = w_n.split(deepcopy=True)
@@ -118,7 +118,7 @@ def solve_ABE_newton_continuation(
         # ------------------------------------------------------------
         # Stage 1: Stokes / zero momentum convection
         # ------------------------------------------------------------
-        print("  --- stage: stokes ---")
+        print0("  --- stage: stokes ---")
         F_stokes, JF_stokes = build_nonlinear_ABE_problem(
             W=W, w=w,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
@@ -148,7 +148,7 @@ def solve_ABE_newton_continuation(
             )
 
         accept_current_state(w, w_n)
-        print(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
+        print0(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
 
         # ------------------------------------------------------------
         # Stage 2: monotone convection advance
@@ -170,7 +170,7 @@ def solve_ABE_newton_continuation(
                 max_local_bisections=3,
             )
 
-        print(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
+        print0(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
 
         # keep working function synchronized with accepted state
         w.vector()[:] = w_n.vector()
@@ -225,7 +225,7 @@ def build_ptc_abe_problem(
 
     gvec = fenics.Constant((0.0, -1.0))
     if SUPG:
-        print("Using SUPG stabilization for convection.")
+        print0("Using SUPG stabilization for convection.")
         energy = thermal_galerkin_supg_form(
             mesh=W.mesh(),
             T=T,
@@ -376,19 +376,19 @@ def solve_abe_ptc_stage(
     )
     csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
-    print("\n" + "-" * 72)
-    print(f"Starting PTC stage: {stage_name}")
-    print(f"  buoyancy_scale   = {float(buoyancy_scale):.3f}")
-    print(f"  qn_scale         = {float(qn_scale):.3f}")
-    print(f"  convection_scale = {float(convection_scale):.3f}")
-    print(f"  strict_steady    = {strict_steady}")
-    print("-" * 72)
+    print0("\n" + "-" * 72)
+    print0(f"Starting PTC stage: {stage_name}")
+    print0(f"  buoyancy_scale   = {float(buoyancy_scale):.3f}")
+    print0(f"  qn_scale         = {float(qn_scale):.3f}")
+    print0(f"  convection_scale = {float(convection_scale):.3f}")
+    print0(f"  strict_steady    = {strict_steady}")
+    print0("-" * 72)
 
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
         copy_state(w, w_n)
 
-        print(f"\n=== {stage_name} | step {step:04d} | dtau={dtau:.3e} ===")
+        print0(f"\n=== {stage_name} | step {step:04d} | dtau={dtau:.3e} ===")
 
         try:
             base_solver(
@@ -403,8 +403,8 @@ def solve_abe_ptc_stage(
             dtau = max(dtau_min, shrink_factor * dtau)
             dtau_c.assign(dtau)
 
-            print(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
-            print(f"Failure reason: {err}")
+            print0(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
+            print0(f"Failure reason: {err}")
 
             if dtau <= dtau_min * (1.0 + 1e-12):
                 info["status"] = "failed_dtau_min"
@@ -452,7 +452,7 @@ def solve_abe_ptc_stage(
         res_hist.append(steady_res if np.isfinite(steady_res) else np.nan)
         T_hist.append(diag["T_l2"] if np.isfinite(diag["T_l2"]) else np.nan)
 
-        print(
+        print0(
             f"Accepted {stage_name} step {step:04d}: "
             f"rel_update={rel_update:.3e}, "
             f"steady_residual={steady_res:.3e}, "
@@ -518,7 +518,7 @@ def solve_abe_ptc_stage(
             )
 
         if stage_converged:
-            print(f"{stage_name}: stage convergence criterion satisfied.")
+            print0(f"{stage_name}: stage convergence criterion satisfied.")
 
             if strict_steady and steady_polish:
                 ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -537,9 +537,9 @@ def solve_abe_ptc_stage(
                 if ok:
                     copy_state(w_n, w)
                     info["steady_polished"] = True
-                    print(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
+                    print0(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
                 else:
-                    print(f"Final steady polish failed: {last_error}")
+                    print0(f"Final steady polish failed: {last_error}")
 
             info["status"] = "steady" if strict_steady else "stage_relaxed"
             info["n_steps"] = step
@@ -578,7 +578,7 @@ def solve_abe_ptc_stage(
                     steady_res <= relaxed_abs_cap and
                     residual_plateaued
                 ):
-                    print(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
+                    print0(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
                     info["status"] = "stage_relaxed"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
@@ -601,7 +601,7 @@ def solve_abe_ptc_stage(
                 T_is_rising = history_window_nondecreasing(finite_T, window=drift_window)
 
                 if no_real_residual_drop and rel_is_rising and T_is_rising:
-                    print(f"{stage_name}: drifting instead of relaxing to steady state.")
+                    print0(f"{stage_name}: drifting instead of relaxing to steady state.")
                     info["status"] = "drifting_or_not_steady"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
@@ -623,7 +623,7 @@ def solve_abe_ptc_stage(
                 if initial_res > 0.0:
                     plateau_band = (rmax - rmin) / initial_res
                     if rmin > 0.95 * initial_res and plateau_band < 0.02:
-                        print(f"{stage_name}: steady residual plateau detected; aborting final stage.")
+                        print0(f"{stage_name}: steady residual plateau detected; aborting final stage.")
                         info["status"] = "steady_residual_plateau"
                         info["n_steps"] = step
                         info["accepted_steps"] = accepted_steps
@@ -652,19 +652,19 @@ def solve_abe_ptc_stage(
                 if worsened:
                     dtau = max(dtau_min, shrink_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
+                    print0(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
                 elif improved:
                     dtau = min(dtau_max, growth_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
+                    print0(f"Steady residual improved -> grow dtau to {dtau:.3e}")
                 elif strict_steady and plateauing:
                     dtau = min(dtau_max, growth_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual plateau with shrinking updates -> grow dtau to {dtau:.3e}")
+                    print0(f"Steady residual plateau with shrinking updates -> grow dtau to {dtau:.3e}")
                 else:
-                    print("Keeping dtau unchanged.")
+                    print0("Keeping dtau unchanged.")
             else:
-                print("Keeping dtau unchanged.")
+                print0("Keeping dtau unchanged.")
 
         if np.isfinite(steady_res):
             prev_steady_res = steady_res
@@ -729,12 +729,12 @@ def solve_ptc_abe_continuation(
         conv = float(stage["conv"])
         strict = bool(stage.get("strict", False))
 
-        print("\n" + "=" * 72)
-        print(f"PTC continuation stage {k}/{len(stages)}: {stage_name}")
-        print(f"  lambda            = {lam:.3f}")
-        print(f"  convection_scale  = {conv:.3f}")
-        print(f"  strict_steady     = {strict}")
-        print("=" * 72)
+        print0("\n" + "=" * 72)
+        print0(f"PTC continuation stage {k}/{len(stages)}: {stage_name}")
+        print0(f"  lambda            = {lam:.3f}")
+        print0(f"  convection_scale  = {conv:.3f}")
+        print0(f"  strict_steady     = {strict}")
+        print0("=" * 72)
 
         stage_steps = final_stage_max_steps if strict else stage_max_steps
 
@@ -777,7 +777,7 @@ def solve_ptc_abe_continuation(
             "accepted_steps": stage_info.get("accepted_steps"),
         })
 
-        print(
+        print0(
             f"Stage {stage_name} finished with status={stage_info['status']}, "
             f"rel_update={stage_info.get('final_rel_update')}, "
             f"steady_residual={stage_info.get('final_steady_residual')}"
@@ -1011,18 +1011,18 @@ def run_post_abe_continuation_transient(
         max_drift = max(drifts)
         return (max_drift < steady_rel_tol and np.isfinite(mean_update) and mean_update < steady_update_tol), max_drift
 
-    print("\n" + "=" * 72)
-    print("Starting post-continuation transient branch")
-    print(f"  dt_start   = {dt_start:.3e}")
-    print(f"  dt_min     = {dt_min:.3e}")
-    print(f"  dt_max     = {dt_max:.3e}")
-    print(f"  dt_growth  = {dt_growth:.3e}")
-    print(f"  dt_cut     = {dt_cut:.3e}")
-    print(f"  t_end      = {t_end:.3e}")
-    print(f"  step_max   = {step_max}")
-    print(f"  save_every = {save_every}")
-    print("  target     = full coupled transient (lambda=1, convection=1)")
-    print("=" * 72)
+    print0("\n" + "=" * 72)
+    print0("Starting post-continuation transient branch")
+    print0(f"  dt_start   = {dt_start:.3e}")
+    print0(f"  dt_min     = {dt_min:.3e}")
+    print0(f"  dt_max     = {dt_max:.3e}")
+    print0(f"  dt_growth  = {dt_growth:.3e}")
+    print0(f"  dt_cut     = {dt_cut:.3e}")
+    print0(f"  t_end      = {t_end:.3e}")
+    print0(f"  step_max   = {step_max}")
+    print0(f"  save_every = {save_every}")
+    print0("  target     = full coupled transient (lambda=1, convection=1)")
+    print0("=" * 72)
 
     while step < int(step_max) and t < float(t_end):
         trial_success = False
@@ -1033,7 +1033,7 @@ def run_post_abe_continuation_transient(
             copy_state(w_prev, w_n)
             copy_state(w, w_n)
 
-            print(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
+            print0(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
 
             F_tr, JF_tr = build_ptc_abe_problem(
                 W=W,
@@ -1083,8 +1083,8 @@ def run_post_abe_continuation_transient(
                 copy_state(w_prev, w_n)
 
                 dt = max(float(dt_min), float(dt) * float(dt_cut))
-                print(f"Rejected transient step {step + 1:04d}: {err}")
-                print(f"  -> rolling back to last accepted state and reducing dt to {dt:.3e}")
+                print0(f"Rejected transient step {step + 1:04d}: {err}")
+                print0(f"  -> rolling back to last accepted state and reducing dt to {dt:.3e}")
 
                 if dt <= float(dt_min) + 1.0e-30:
                     status = "dt_underflow"
@@ -1094,9 +1094,9 @@ def run_post_abe_continuation_transient(
                     break
 
         if not trial_success:
-            print(f"Transient branch stopping with status={status}")
+            print0(f"Transient branch stopping with status={status}")
             if last_error is not None:
-                print(f"  last_error={last_error}")
+                print0(f"  last_error={last_error}")
             break
 
         copy_state(w_n, w_last_accepted)
@@ -1120,12 +1120,12 @@ def run_post_abe_continuation_transient(
             f"{k}={v:.3e}" for k, v in row.items()
             if k.startswith("uy_") or k.startswith("theta_")
         )
-        print(
+        print0(
             f"Accepted transient step {step:04d}: rel_update={rel_update:.3e}, "
             f"newton_iterations={n_newton}, t={t:.6e}"
         )
         if probe_str:
-            print(f"  probes: {probe_str}")
+            print0(f"  probes: {probe_str}")
 
         if history_csv_path:
             _write_history_csv(history_csv_path, history)
@@ -1198,14 +1198,14 @@ def run_post_abe_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+                    print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
                 except Exception as err:
-                    print(f"Biot diagnostic skipped at step {step:04d}: {err}")
+                    print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
         is_steady, max_drift = _statistically_steady(history)
         if is_steady:
             status = "statistically_steady"
-            print(
+            print0(
                 f"Transient stopping criterion satisfied: statistically steady "
                 f"(max window drift={max_drift:.3e})."
             )

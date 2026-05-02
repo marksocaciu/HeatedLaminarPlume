@@ -86,7 +86,7 @@ def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, 
     W_u = W.sub(1)
     W_T = W.sub(2)
 
-    print("Setting boundary conditions...")
+    print0("Setting boundary conditions...")
 
     boundary_conditions = [
         fenics.DirichletBC(W_u, fenics.Constant((0.0, 0.0)), hot_wall),   # wire no-slip

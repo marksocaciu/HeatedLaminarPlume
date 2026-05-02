@@ -15,26 +15,26 @@ def mark_bad_cells(mesh, thresholds=(0.20, 0.10, 0.05), output="mesh_quality.xdm
     Lower radius ratio = worse cell quality.
     """
 
-    print("=== Basic mesh info ===")
-    print(f"Topological dim : {mesh.topology().dim()}")
-    print(f"Geometric dim   : {mesh.geometry().dim()}")
-    print(f"# cells         : {mesh.num_cells()}")
-    print(f"# vertices      : {mesh.num_vertices()}")
-    print(f"hmin            : {mesh.hmin():.6e}")
-    print(f"hmax            : {mesh.hmax():.6e}")
+    print0("=== Basic mesh info ===")
+    print0(f"Topological dim : {mesh.topology().dim()}")
+    print0(f"Geometric dim   : {mesh.geometry().dim()}")
+    print0(f"# cells         : {mesh.num_cells()}")
+    print0(f"# vertices      : {mesh.num_vertices()}")
+    print0(f"hmin            : {mesh.hmin():.6e}")
+    print0(f"hmax            : {mesh.hmax():.6e}")
 
     rr = MeshQuality.radius_ratios(mesh).array()
     qmin, qmax = MeshQuality.radius_ratio_min_max(mesh)
 
-    print("\n=== Radius ratio stats ===")
-    print(f"min    : {qmin:.6e}")
-    print(f"max    : {qmax:.6e}")
-    print(f"mean   : {np.mean(rr):.6e}")
-    print(f"median : {np.median(rr):.6e}")
+    print0("\n=== Radius ratio stats ===")
+    print0(f"min    : {qmin:.6e}")
+    print0(f"max    : {qmax:.6e}")
+    print0(f"mean   : {np.mean(rr):.6e}")
+    print0(f"median : {np.median(rr):.6e}")
 
     for t in thresholds:
         nbad = np.sum(rr < t)
-        print(f"cells with radius_ratio < {t:4.2f}: {nbad} / {len(rr)}")
+        print0(f"cells with radius_ratio < {t:4.2f}: {nbad} / {len(rr)}")
 
     # Cell markers for visualization
     cell_markers = MeshFunction("size_t", mesh, mesh.topology().dim(), 0)
@@ -57,11 +57,11 @@ def mark_bad_cells(mesh, thresholds=(0.20, 0.10, 0.05), output="mesh_quality.xdm
             marker = 3
         cell_markers[cell] = marker
 
-    print("\n=== Marker legend ===")
-    print("0 : good")
-    print(f"1 : radius_ratio < {t1}")
-    print(f"2 : radius_ratio < {t2}")
-    print(f"3 : radius_ratio < {t3}")
+    print0("\n=== Marker legend ===")
+    print0("0 : good")
+    print0(f"1 : radius_ratio < {t1}")
+    print0(f"2 : radius_ratio < {t2}")
+    print0(f"3 : radius_ratio < {t3}")
 
     # Write both the markers and the raw radius ratio field
     with XDMFFile(mesh.mpi_comm(), output) as xdmf:
@@ -71,7 +71,7 @@ def mark_bad_cells(mesh, thresholds=(0.20, 0.10, 0.05), output="mesh_quality.xdm
         xdmf.write(cell_markers)
         xdmf.write(rr_fun, 0.0)
 
-    print(f"\nWrote mesh quality data to: {output}")
+    print0(f"\nWrote mesh quality data to: {output}")
 
     return cell_markers, rr_fun
 
@@ -84,7 +84,7 @@ if __name__ == "__main__":
 
     # XDMF:
     mesh = Mesh()
-    with XDMFFile("PlumeCase_Brodowicz_Air_resolution_100/runs/base_20260410_183749_pid10485/plume.xdmf") as infile:
+    with XDMFFile("PlumeCase_Fuji_Air/runs/base_20260422_125618_pid21155/plume.xdmf") as infile:
         infile.read(mesh)
 
     mark_bad_cells(

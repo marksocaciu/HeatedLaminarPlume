@@ -42,7 +42,7 @@ def pseudo_transient_rescue(
 
     ptc_step = 0
     for dtau in dtau_schedule:
-        print(f"    -> PTC block with dtau={dtau:.3e}")
+        print0(f"    -> PTC block with dtau={dtau:.3e}")
         for _ in range(steps_per_dtau):
             ptc_step += 1
             copy_state(w_prev, w)
@@ -72,22 +72,22 @@ def pseudo_transient_rescue(
                     rtol=1e-8,
                 )
             except RuntimeError as err:
-                print(f"    PTC step failed at dtau={dtau:.3e}: {err}")
+                print0(f"    PTC step failed at dtau={dtau:.3e}: {err}")
                 return False
 
             delta = w.vector().copy()
             delta.axpy(-1.0, w_prev.vector())
             rel_update = delta.norm("l2") / (w.vector().norm("l2") + 1e-14)
-            print(f"    PTC step {ptc_step:03d}: rel_update={rel_update:.3e}")
+            print0(f"    PTC step {ptc_step:03d}: rel_update={rel_update:.3e}")
 
             copy_state(w_n, w)
 
             if rel_update < update_tol:
-                print("    PTC update is small; handing control back to steady Newton.")
+                print0("    PTC update is small; handing control back to steady Newton.")
                 return True
 
             if (ptc_step % retry_newton_every) == 0:
-                print("    PTC block produced a new seed; retry steady Newton now.")
+                print0("    PTC block produced a new seed; retry steady Newton now.")
                 return True
 
     return True
@@ -133,7 +133,7 @@ def solve_steady_newton_continuation(
     conv_targets = conv_stage_sequence()
 
     for lam in lambdas[:1]:
-        print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+        print0(f"\n=== Newton continuation lambda = {lam:.2f} ===")
 
         # optional output of current accepted state before advancing lambda
         if sub_mesh_star is not None and sub_mesh_dim is not None:
@@ -156,7 +156,7 @@ def solve_steady_newton_continuation(
         # ------------------------------------------------------------
         # Stage 1: Stokes / zero momentum convection
         # ------------------------------------------------------------
-        print("  --- stage: stokes ---")
+        print0("  --- stage: stokes ---")
 
         F_stokes, JF_stokes = build_nonlinear_problem(
             W=W, w=w,
@@ -191,7 +191,7 @@ def solve_steady_newton_continuation(
             )
 
         accept_current_state(w, w_n)
-        print(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
+        print0(f"  stokes accepted at lambda={lam:.2f} (relaxation={used_relax:.3f})")
 
         # ------------------------------------------------------------
         # Stage 2: monotone convection advance
@@ -213,7 +213,7 @@ def solve_steady_newton_continuation(
                 max_local_bisections=3,
             )
 
-        print(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
+        print0(f"  lambda={lam:.2f} completed with accepted conv_scale={accepted_conv:.4f}")
 
         # keep working function synchronized with accepted state
         w.vector()[:] = w_n.vector()
@@ -265,7 +265,7 @@ def solve_steady_newton_continuation_with_pts(
     max_bisection_depth = 3
 
     for lam in lambdas:
-        print(f"\n=== Newton continuation lambda = {lam:.2f} ===")
+        print0(f"\n=== Newton continuation lambda = {lam:.2f} ===")
         
         if sub_mesh_star is not None and sub_mesh_dim is not None and p_path and u_path and T_path:
             p_star, u_star, theta = w.split(deepcopy=True)
@@ -290,9 +290,9 @@ def solve_steady_newton_continuation_with_pts(
             include_convection = target_conv_scale > 0.0
 
             if i == 0 and target_conv_scale == 0.0:
-                print("  --- stage: Stokes / zero-convection stage ---")
+                print0("  --- stage: Stokes / zero-convection stage ---")
             else:
-                print(f"  --- stage: convection_scale = {target_conv_scale:.6f} ---")
+                print0(f"  --- stage: convection_scale = {target_conv_scale:.6f} ---")
 
             stage_seed = fenics.Function(W)
             copy_state(stage_seed, w_n)
@@ -321,14 +321,14 @@ def solve_steady_newton_continuation_with_pts(
             if ok:
                 copy_state(w_n, w)
                 accepted_conv_scale = target_conv_scale
-                print(
+                print0(
                     f"  accepted stage at lambda={lam:.2f}, conv_scale={target_conv_scale:.6f}, "
                     f"relaxation={used_relax:.3f}"
                 )
                 i += 1
                 continue
 
-            print(
+            print0(
                 f"  steady Newton stalled between conv_scale={accepted_conv_scale:.6f} "
                 f"and {target_conv_scale:.6f} at lambda={lam:.2f}."
             )
@@ -339,7 +339,7 @@ def solve_steady_newton_continuation_with_pts(
             right = target_conv_scale
             while depth < max_bisection_depth and (right - left) > 1e-2:
                 mid = 0.5 * (left + right)
-                print(f"  trying adaptive midpoint conv_scale={mid:.6f}")
+                print0(f"  trying adaptive midpoint conv_scale={mid:.6f}")
 
                 ok_mid, used_relax_mid, err_mid = try_newton_stage_FJF_outside(
                     F=F, JF =JF, w=w, w_n=stage_seed,
@@ -354,7 +354,7 @@ def solve_steady_newton_continuation_with_pts(
                     copy_state(w_n, w)
                     accepted_conv_scale = mid
                     stage_grid.insert(i, mid)
-                    print(
+                    print0(
                         f"  inserted successful midpoint conv_scale={mid:.6f} "
                         f"with relaxation={used_relax_mid:.3f}"
                     )
@@ -367,7 +367,7 @@ def solve_steady_newton_continuation_with_pts(
             if inserted:
                 continue
 
-            print("  launching pseudo-transient rescue...")
+            print0("  launching pseudo-transient rescue...")
             rescued = pseudo_transient_rescue(
                 experiment=experiment,
                 W=W,
@@ -404,7 +404,7 @@ def solve_steady_newton_continuation_with_pts(
             if ok_retry:
                 copy_state(w_n, w)
                 accepted_conv_scale = target_conv_scale
-                print(
+                print0(
                     f"  stage recovered after PTC at lambda={lam:.2f}, "
                     f"conv_scale={target_conv_scale:.6f}, relaxation={used_relax_retry:.3f}"
                 )
@@ -541,7 +541,7 @@ def solve_pseudo_transient_continuation_problem(
         copy_state(w_prev, w_n)
         copy_state(w, w_n)
 
-        print(f"\n=== PTC step {step:04d} | dtau={dtau:.3e} ===")
+        print0(f"\n=== PTC step {step:04d} | dtau={dtau:.3e} ===")
 
 
         try:
@@ -556,8 +556,8 @@ def solve_pseudo_transient_continuation_problem(
             rejected_steps += 1
             dtau = max(dtau_min, shrink_factor * dtau)
             dtau_c.assign(dtau)
-            print(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
-            print(f"Failure reason: {err}")
+            print0(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
+            print0(f"Failure reason: {err}")
 
             if dtau <= dtau_min * (1.0 + 1e-12):
                 info["status"] = "failed_dtau_min"
@@ -595,7 +595,7 @@ def solve_pseudo_transient_continuation_problem(
         res_hist.append(steady_res)
         T_hist.append(obs["T_l2"])
 
-        print(
+        print0(
             f"Accepted PTC step {step:04d}: "
             f"rel_update={rel_update:.3e}, "
             f"steady_residual={steady_res:.3e}, "
@@ -626,7 +626,7 @@ def solve_pseudo_transient_continuation_problem(
 
         # Main steady-state criterion
         if rel_update < update_tol and steady_res < residual_tol:
-            print("PTC reached steady-state tolerances.")
+            print0("PTC reached steady-state tolerances.")
 
             if steady_polish:
                 F_steady, JF_steady = build_nonlinear_problem(
@@ -661,9 +661,9 @@ def solve_pseudo_transient_continuation_problem(
                 if ok:
                     copy_state(w_n, w)
                     info["steady_polished"] = True
-                    print(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
+                    print0(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
                 else:
-                    print(f"Final steady polish failed: {last_error}")
+                    print0(f"Final steady polish failed: {last_error}")
 
             info["status"] = "steady"
             info["n_steps"] = step
@@ -683,7 +683,7 @@ def solve_pseudo_transient_continuation_problem(
             T_is_rising = history_window_nondecreasing(T_hist, window=drift_window)
 
             if no_real_residual_drop and rel_is_rising and T_is_rising:
-                print("PTC appears to be drifting instead of relaxing to a steady state.")
+                print0("PTC appears to be drifting instead of relaxing to a steady state.")
                 info["status"] = "drifting_or_not_steady"
                 info["n_steps"] = step
                 info["accepted_steps"] = accepted_steps
@@ -709,15 +709,15 @@ def solve_pseudo_transient_continuation_problem(
                 if worsened:
                     dtau = max(dtau_min, shrink_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
+                    print0(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
                 elif improved:
                     dtau = min(dtau_max, growth_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
+                    print0(f"Steady residual improved -> grow dtau to {dtau:.3e}")
                 else:
-                    print("Keeping dtau unchanged.")
+                    print0("Keeping dtau unchanged.")
             else:
-                print("Keeping dtau unchanged.")
+                print0("Keeping dtau unchanged.")
 
         prev_steady_res = steady_res
         prev_rel_update = rel_update
@@ -812,7 +812,7 @@ def _material_outer_picard(
         diff = (theta_new.vector() - theta_old.vector()).norm("l2")
         norm = theta_old.vector().norm("l2") + 1.0e-14
         rel = diff / norm
-        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+        print0(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
         if rel < float(material_rtol):
             return w, rel, it + 1
@@ -959,19 +959,19 @@ def solve_ptc_stage(
     )
     csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
-    print("\n" + "-" * 72)
-    print(f"Starting PTC stage: {stage_name}")
-    print(f"  buoyancy_scale   = {float(buoyancy_scale):.3f}")
-    print(f"  qn_scale         = {float(qn_scale):.3f}")
-    print(f"  convection_scale = {float(convection_scale):.3f}")
-    print(f"  strict_steady    = {strict_steady}")
-    print("-" * 72)
+    print0("\n" + "-" * 72)
+    print0(f"Starting PTC stage: {stage_name}")
+    print0(f"  buoyancy_scale   = {float(buoyancy_scale):.3f}")
+    print0(f"  qn_scale         = {float(qn_scale):.3f}")
+    print0(f"  convection_scale = {float(convection_scale):.3f}")
+    print0(f"  strict_steady    = {strict_steady}")
+    print0("-" * 72)
 
     for step in range(1, max_steps + 1):
         copy_state(w_prev, w_n)
         copy_state(w, w_n)
 
-        print(f"\n=== {stage_name} | step {step:04d} | dtau={dtau:.3e} ===")
+        print0(f"\n=== {stage_name} | step {step:04d} | dtau={dtau:.3e} ===")
 
         try:
             base_solver(
@@ -986,8 +986,8 @@ def solve_ptc_stage(
             dtau = max(dtau_min, shrink_factor * dtau)
             dtau_c.assign(dtau)
 
-            print(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
-            print(f"Failure reason: {err}")
+            print0(f"PTC Newton failed. Shrinking dtau -> {dtau:.3e}")
+            print0(f"Failure reason: {err}")
 
             if dtau <= dtau_min * (1.0 + 1e-12):
                 info["status"] = "failed_dtau_min"
@@ -1035,7 +1035,7 @@ def solve_ptc_stage(
         res_hist.append(steady_res if np.isfinite(steady_res) else np.nan)
         T_hist.append(diag["T_l2"] if np.isfinite(diag["T_l2"]) else np.nan)
 
-        print(
+        print0(
             f"Accepted {stage_name} step {step:04d}: "
             f"rel_update={rel_update:.3e}, "
             f"steady_residual={steady_res:.3e}, "
@@ -1096,7 +1096,7 @@ def solve_ptc_stage(
             )
 
         if stage_converged:
-            print(f"{stage_name}: stage convergence criterion satisfied.")
+            print0(f"{stage_name}: stage convergence criterion satisfied.")
 
             if strict_steady and steady_polish:
                 ok, used_relax, last_error = try_newton_stage_FJF_outside(
@@ -1115,9 +1115,9 @@ def solve_ptc_stage(
                 if ok:
                     copy_state(w_n, w)
                     info["steady_polished"] = True
-                    print(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
+                    print0(f"Final steady polish succeeded with relaxation={used_relax:.3f}")
                 else:
-                    print(f"Final steady polish failed: {last_error}")
+                    print0(f"Final steady polish failed: {last_error}")
 
             info["status"] = "steady" if strict_steady else "stage_relaxed"
             info["n_steps"] = step
@@ -1152,7 +1152,7 @@ def solve_ptc_stage(
                     steady_res <= relaxed_abs_cap and
                     residual_plateaued
                 ):
-                    print(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
+                    print0(f"{stage_name}: relaxed-stage residual plateau detected; accepting stage as usable seed.")
                     info["status"] = "stage_relaxed"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
@@ -1175,7 +1175,7 @@ def solve_ptc_stage(
                 T_is_rising = history_window_nondecreasing(finite_T, window=drift_window)
 
                 if no_real_residual_drop and rel_is_rising and T_is_rising:
-                    print(f"{stage_name}: drifting instead of relaxing to steady state.")
+                    print0(f"{stage_name}: drifting instead of relaxing to steady state.")
                     info["status"] = "drifting_or_not_steady"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
@@ -1196,7 +1196,7 @@ def solve_ptc_stage(
                 plateau_band_abs = rmax - rmin
                 plateau_ref = max(abs(steady_res), 1.0)
                 if steady_res > 1.0 and plateau_band_abs <= 0.01 * plateau_ref:
-                    print(f"{stage_name}: steady residual plateau detected; accepting current state.")
+                    print0(f"{stage_name}: steady residual plateau detected; accepting current state.")
                     info["status"] = "steady_residual_plateau_accept"
                     info["n_steps"] = step
                     info["accepted_steps"] = accepted_steps
@@ -1224,19 +1224,19 @@ def solve_ptc_stage(
                 if worsened:
                     dtau = max(dtau_min, shrink_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
+                    print0(f"Steady residual worsened -> shrink dtau to {dtau:.3e}")
                 elif improved:
                     dtau = min(dtau_max, growth_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual improved -> grow dtau to {dtau:.3e}")
+                    print0(f"Steady residual improved -> grow dtau to {dtau:.3e}")
                 elif strict_steady and plateauing:
                     dtau = max(dtau_min, shrink_factor * dtau)
                     dtau_c.assign(dtau)
-                    print(f"Steady residual plateau with shrinking updates -> shrink dtau to {dtau:.3e}")
+                    print0(f"Steady residual plateau with shrinking updates -> shrink dtau to {dtau:.3e}")
                 else:
-                    print("Keeping dtau unchanged.")
+                    print0("Keeping dtau unchanged.")
             else:
-                print("Keeping dtau unchanged.")
+                print0("Keeping dtau unchanged.")
 
         if np.isfinite(steady_res):
             prev_steady_res = steady_res
@@ -1308,12 +1308,12 @@ def solve_ptc_continuation(
         conv = float(stage["conv"])
         strict = bool(stage.get("strict", False))
 
-        print("\n" + "=" * 72)
-        print(f"PTC continuation stage {k}/{len(stages)}: {stage_name}")
-        print(f"  lambda            = {lam:.3f}")
-        print(f"  convection_scale  = {conv:.3f}")
-        print(f"  strict_steady     = {strict}")
-        print("=" * 72)
+        print0("\n" + "=" * 72)
+        print0(f"PTC continuation stage {k}/{len(stages)}: {stage_name}")
+        print0(f"  lambda            = {lam:.3f}")
+        print0(f"  convection_scale  = {conv:.3f}")
+        print0(f"  strict_steady     = {strict}")
+        print0("=" * 72)
 
         stage_steps = final_stage_max_steps if strict else stage_max_steps
 
@@ -1357,7 +1357,7 @@ def solve_ptc_continuation(
             "accepted_steps": stage_info.get("accepted_steps"),
         })
 
-        print(
+        print0(
             f"Stage {stage_name} finished with status={stage_info['status']}, "
             f"rel_update={stage_info.get('final_rel_update')}, "
             f"steady_residual={stage_info.get('final_steady_residual')}"
@@ -1592,18 +1592,18 @@ def run_post_continuation_transient(
         max_drift = max(drifts)
         return (max_drift < steady_rel_tol and np.isfinite(mean_update) and mean_update < steady_update_tol), max_drift
 
-    print("\n" + "=" * 72)
-    print("Starting post-continuation transient branch")
-    print(f"  dt_start   = {dt_start:.3e}")
-    print(f"  dt_min     = {dt_min:.3e}")
-    print(f"  dt_max     = {dt_max:.3e}")
-    print(f"  dt_growth  = {dt_growth:.3e}")
-    print(f"  dt_cut     = {dt_cut:.3e}")
-    print(f"  t_end      = {t_end:.3e}")
-    print(f"  step_max   = {step_max}")
-    print(f"  save_every = {save_every}")
-    print("  target     = full coupled transient (lambda=1, convection=1)")
-    print("=" * 72)
+    print0("\n" + "=" * 72)
+    print0("Starting post-continuation transient branch")
+    print0(f"  dt_start   = {dt_start:.3e}")
+    print0(f"  dt_min     = {dt_min:.3e}")
+    print0(f"  dt_max     = {dt_max:.3e}")
+    print0(f"  dt_growth  = {dt_growth:.3e}")
+    print0(f"  dt_cut     = {dt_cut:.3e}")
+    print0(f"  t_end      = {t_end:.3e}")
+    print0(f"  step_max   = {step_max}")
+    print0(f"  save_every = {save_every}")
+    print0("  target     = full coupled transient (lambda=1, convection=1)")
+    print0("=" * 72)
 
     while step < int(step_max) and t < float(t_end):
         trial_success = False
@@ -1614,7 +1614,7 @@ def run_post_continuation_transient(
             copy_state(w_prev, w_n)
             copy_state(w, w_n)
 
-            print(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
+            print0(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
 
             F_tr, JF_tr = build_ptc_problem(
                 W=W,
@@ -1668,8 +1668,8 @@ def run_post_continuation_transient(
                 copy_state(w_prev, w_n)
 
                 dt = max(float(dt_min), float(dt) * float(dt_cut))
-                print(f"Rejected transient step {step + 1:04d}: {err}")
-                print(f"  -> rolling back to last accepted state and reducing dt to {dt:.3e}")
+                print0(f"Rejected transient step {step + 1:04d}: {err}")
+                print0(f"  -> rolling back to last accepted state and reducing dt to {dt:.3e}")
 
                 if dt <= float(dt_min) + 1.0e-30:
                     status = "dt_underflow"
@@ -1679,9 +1679,9 @@ def run_post_continuation_transient(
                     break
 
         if not trial_success:
-            print(f"Transient branch stopping with status={status}")
+            print0(f"Transient branch stopping with status={status}")
             if last_error is not None:
-                print(f"  last_error={last_error}")
+                print0(f"  last_error={last_error}")
             break
 
         copy_state(w_n, w_last_accepted)
@@ -1705,12 +1705,12 @@ def run_post_continuation_transient(
             f"{k}={v:.3e}" for k, v in row.items()
             if k.startswith("uy_") or k.startswith("theta_")
         )
-        print(
+        print0(
             f"Accepted transient step {step:04d}: rel_update={rel_update:.3e}, "
             f"newton_iterations={n_newton}, t={t:.6e}"
         )
         if probe_str:
-            print(f"  probes: {probe_str}")
+            print0(f"  probes: {probe_str}")
 
         if history_csv_path:
             _write_history_csv(history_csv_path, history)
@@ -1751,7 +1751,7 @@ def run_post_continuation_transient(
             Gr_eff = g * beta * dT_eff * L_eff**3 / (nu**2)
             Ra_eff = Gr_eff * float(scales.Pr)
 
-            print(
+            print0(
                 f"  snapshot diagnostics: "
                 f"theta_min={theta_min:.6e}, theta_max={theta_max:.6e}, "
                 f"dT_eff={dT_eff:.6e} K, "
@@ -1812,14 +1812,14 @@ def run_post_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+                    print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
                 except Exception as err:
-                    print(f"Biot diagnostic skipped at step {step:04d}: {err}")
+                    print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
         is_steady, max_drift = _statistically_steady(history)
         if is_steady:
             status = "statistically_steady"
-            print(
+            print0(
                 f"Transient stopping criterion satisfied: statistically steady "
                 f"(max window drift={max_drift:.3e})."
             )

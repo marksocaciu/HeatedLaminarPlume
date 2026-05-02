@@ -94,7 +94,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
         norm = T_full.vector().norm("l2") + 1e-14
         rel  = diff / norm
 
-        print(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
+        print0(f"[material loop {it}] rel ||ΔT|| = {rel:.3e}")
 
         T_full.assign(T_full_new)
         if rel < rtol:
@@ -104,7 +104,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
 
 
     T_full.rename("T_conduction_full", "")
-    print(max(T_full.vector()))
+    print0(max(T_full.vector()))
 
     # -----------------------------------------
     # Save result
@@ -119,81 +119,56 @@ def flux_continuity(T_full: fenics.Function,
                     mesh: fenics.Mesh,
                     sub_mesh: fenics.Mesh,
                     sub_ft: fenics.MeshFunction,
-                    mc: fenics.MeshFunction, 
+                    mc: fenics.MeshFunction,
                     sc: NondimScales) -> fenics.Function:
-    # -----------------------------------------
-    # preparing for flux continuity
-    # -----------------------------------------
-    Vg = fenics.VectorFunctionSpace(mesh, "DG", 0)
-    gradT_DG0 = fenics.project(grad(T_full), Vg)   # T_full from your conduction solve
+    """
+    MPI-safer interface flux projection onto DG0 air cells.
 
-    wire_mesh = fenics.SubMesh(mesh, mc, WIRE_TAG)
-    bbt_wire = fenics.BoundingBoxTree()
-    bbt_wire.build(wire_mesh)
+    Returns qn_air in nondimensional form:
+        qn_star = qn_dim * Lref / (k_air * dTref)
 
-    V0_air = FunctionSpace(sub_mesh, "DG", 0)
-    qn_air = Function(V0_air)
-    qn_air.vector().zero()
+    Sign convention is kept compatible with your weak form:
+        F += - qn_air * psi_T * ds(INTERFACE_TAG)
+    """
 
-    # To average if a cell touches the interface via multiple facets
-    counts = qn_air.vector().copy()
-    counts.zero()
+    V_air = fenics.FunctionSpace(sub_mesh, "CG", 1)
+    V0_air = fenics.FunctionSpace(sub_mesh, "DG", 0)
 
-    tdim = sub_mesh.topology().dim()
-    sub_mesh.init(tdim-1, tdim)
-    mesh.init(tdim-1, tdim)
+    T_full.set_allow_extrapolation(True)
+    T_air = fenics.interpolate(T_full, V_air)
 
-    for f in facets(sub_mesh):
-        if sub_ft[f] != INTERFACE_TAG:
-            continue
+    q_trial = fenics.TrialFunction(V0_air)
+    v = fenics.TestFunction(V0_air)
 
-        c_air = list(cells(f))[0]
-        c_air_idx = c_air.index()
+    n = fenics.FacetNormal(sub_mesh)
+    ds_air = fenics.Measure("ds", domain=sub_mesh, subdomain_data=sub_ft)
+    dx_air = fenics.Measure("dx", domain=sub_mesh)
 
-        # Air outward normal on this interface facet (points from air to wire if your submesh is air-only)
-        n_air = f.normal().array()
-        n_air /= np.linalg.norm(n_air)
+    k_air_val = float(sc.qsurf * sc.Lref / sc.dTref) if hasattr(sc, "qsurf") else float(k_air)
+    k_air_c = fenics.Constant(k_air_val)
 
-        x = f.midpoint().array()
+    qscale = fenics.Constant(float(sc.Lref) / (k_air_val * float(sc.dTref)))
 
-        # Shift slightly into the wire side to avoid ambiguity exactly on the interface
-        # Use a tiny length scale based on air cell diameter
-        eps = 1e-6 * float(c_air.circumradius())
-        x_in_wire = x + eps * n_air  # outward from air
+    # Air-side outward normal points out of the air domain.
+    # For the wire interface this points into the solid.
+    # This matches your previous convention qn_dim = k * grad(T) · n_air.
+    qn_expr = k_air_c * fenics.dot(fenics.grad(T_air), n) * qscale
 
-        # Find which wire cell contains this shifted point
-        # (returns (cell_id, distance); if not found, it may return a large distance)
-        cid = bbt_wire.compute_first_entity_collision(Point(*x_in_wire))
+    # Boundary-only projection is singular for cells not touching the interface.
+    # Add tiny volume regularization so the matrix is invertible.
+    eps = fenics.Constant(1.0e-30)
 
-        if cid < 0:
-            # If normal orientation is opposite, try the other side
-            x_in_wire = x - eps * n_air
-            cid = bbt_wire.compute_first_entity_collision(Point(*x_in_wire))
-            if cid < 0:
-                continue  # give up on this facet
+    a = q_trial * v * ds_air(INTERFACE_TAG) + eps * q_trial * v * dx_air
+    L = qn_expr * v * ds_air(INTERFACE_TAG)
 
-        c_wire = Cell(wire_mesh, cid)
+    qn_air = fenics.Function(V0_air, name="qn_air")
+    fenics.solve(
+        a == L,
+        qn_air,
+        solver_parameters={"linear_solver": "mumps"},
+    )
+    qn_air.vector().apply("insert")
 
-        # Map wire submesh cell back to parent mesh cell index
-        parent_wire = wire_mesh.data().array("parent_cell_indices", mesh.topology().dim())
-        parent_cid = int(parent_wire[c_wire.index()])
-        c_parent = Cell(mesh, parent_cid)
-
-        # Evaluate cellwise grad(T) and k in that parent cell (DG0 values)
-        gT = gradT_DG0(c_parent.midpoint())
-        k_w = k_func(c_parent.midpoint())
-
-        # qn = -k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
-        qn_dim = k_w * (gT[0]*n_air[0] + gT[1]*n_air[1])
-        qn_star = qn_dim * (sc.Lref / (k_air * sc.dTref))
-        qn = qn_star
-
-        # Accumulate into the adjacent air cell (DG0)
-        qn_air.vector()[c_air_idx] += qn
-        counts[c_air_idx] += 1.0
-
-    # Average per cell
-    qn_air.vector()[:] = qn_air.vector().get_local() / np.maximum(counts.get_local(), 1.0)
     return qn_air
 
 # initial.py
@@ -380,7 +355,7 @@ def solve_full_temperature(
         diff.axpy(-1.0, T_old.vector())
         rel = diff.norm("l2") / (T_full.vector().norm("l2") + 1.0e-14)
 
-        print(f"[full thermal] material iter {it:02d} | rel_update = {rel:.3e}")
+        print0(f"[full thermal] material iter {it:02d} | rel_update = {rel:.3e}")
 
         if rel < material_tol:
             break
@@ -393,6 +368,6 @@ def solve_full_temperature(
                 xdmf.write(mesh)
                 xdmf.write(T_full)
         except Exception as err:
-            print(f"[full thermal] warning: could not write XDMF output: {err}")
+            print0(f"[full thermal] warning: could not write XDMF output: {err}")
 
     return T_full, k_func

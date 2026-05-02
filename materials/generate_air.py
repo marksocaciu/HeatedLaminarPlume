@@ -53,4 +53,4 @@ df = pd.DataFrame({
 # Save to CSV
 df.to_csv("air_properties_Cengel.csv", index=False)
 
-print(df.head())
+print0(df.head())

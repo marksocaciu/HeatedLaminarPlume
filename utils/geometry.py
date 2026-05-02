@@ -3,7 +3,7 @@ from utils.imports import *
 def create_mesh(mesh, cell_type, prune_z=False):
     cells = mesh.get_cells_type(cell_type)
     cell_data = mesh.get_cell_data("gmsh:physical", cell_type)
-    print(set(cell_data))
+    print0(set(cell_data))
     points = mesh.points[:, :2] if prune_z else mesh.points
     out_mesh = meshio.Mesh(points=points, cells={cell_type: cells}, cell_data={"name_to_read": [cell_data.astype(np.int32)]})
     return out_mesh
@@ -19,22 +19,32 @@ def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
         xdmf.write(sol)
 
     if MPI.comm_world.rank == 0:
-        print("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
+        print0("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
 
 def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
                   ELEM="triangle", PRUNE_Z=True):
 
-    subprocess.run(f"gmsh -nopopup -nt 12 {GEOM_FILE}", shell=True, check=True)
+    comm = MPI.COMM_WORLD
+    rank = comm.rank
 
-    print("Converting MSH to XDMF...")
-    msh = meshio.read(MSH_FILE)
+    if rank == 0:
+        subprocess.run(
+            f"gmsh -nopopup -nt 1 {GEOM_FILE}",
+            shell=True,
+            check=True
+        )
 
-    element_mesh = create_mesh(msh, ELEM, prune_z=PRUNE_Z)
-    facet_mesh   = create_mesh(msh, "line", prune_z=PRUNE_Z)
+        print0("Converting MSH to XDMF...")
+        msh = meshio.read(MSH_FILE)
 
-    meshio.write(TRIG_XDMF_PATH, element_mesh)
-    meshio.write(FACETS_XDMF_PATH, facet_mesh)
+        element_mesh = create_mesh(msh, ELEM, prune_z=PRUNE_Z)
+        facet_mesh   = create_mesh(msh, "line", prune_z=PRUNE_Z)
+
+        meshio.write(TRIG_XDMF_PATH, element_mesh)
+        meshio.write(FACETS_XDMF_PATH, facet_mesh)
+
+    comm.Barrier()
 
 def read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH,
               MESH_NAME="mesh", PRINT_TAG_SUMMARY=True):
@@ -67,10 +77,10 @@ def read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH,
     # -------------------------
     if PRINT_TAG_SUMMARY and MPI.comm_world.rank == 0:
         ct = set(mc.array())
-        print("Cell tags in the mesh:", ct)
+        print0("Cell tags in the mesh:", ct)
         ft = set(mf.array())
         ft = ft - {18446744073709551615}  # remove default tag 18446744073709551615
-        print("Facet tags in the mesh:", ft)
+        print0("Facet tags in the mesh:", ft)
 
     return mesh, ct, ft, domains, dx, boundary_markers, mc, mf
 
@@ -81,7 +91,7 @@ def create_submesh(mesh, mc, mf, tag):
     # try:
     #     air_mesh = fenics.MeshView.create(mc, AIR_TAG)
     # except Exception:
-    #     print(" --- Fallback: SubMesh (works, but transferring facet tags is more manual")
+    #     print0(" --- Fallback: SubMesh (works, but transferring facet tags is more manual")
     #     air_mesh = fenics.SubMesh(mesh, mc, AIR_TAG)
     
     air_mesh = SubMesh(mesh, mc, tag)
@@ -113,7 +123,7 @@ def create_submesh(mesh, mc, mf, tag):
     dx_air = Measure("dx", domain=air_mesh)
     ds_air = Measure("ds", domain=air_mesh, subdomain_data=air_mf)
 
-    print(f"Submesh with tag {tag}: and facet tags {set(air_mf.array())}")
+    print0(f"Submesh with tag {tag}: and facet tags {set(air_mf.array())}")
 
     return air_mesh, air_mf, dx_air, ds_air
 
@@ -159,7 +169,7 @@ def geometry_template(
 
     # Template is next to this script
     template_path = Path.cwd()/ template_geo_name
-    print(template_path)
+    print0(template_path)
     if not template_path.exists():
         raise FileNotFoundError(f"Template .geo not found: {template_path}")
 
@@ -186,19 +196,19 @@ def geometry_template(
             raise ValueError("Could not uniquely replace 'resolution_placeholder = ...;' in the .geo template.")
 
     if xmax is not None and xmax != 0.0:
-        print(f"Replacing xmax... {xmax}")
+        print0(f"Replacing xmax... {xmax}")
         geo, n3 = re.subn(
             r"(?m)^\s*w =\s*[0-9]+ \* R;",
             f"w = {float(xmax)};",
             geo,
             count=1,
         )
-        # print(n3)
+        # print0(n3)
         if n3 != 1:
             raise ValueError("Could not uniquely replace 'w = ...;' in the .geo template.")
 
     if ymax is not None and ymax != 0.0:
-        print(f"Replacing ymax... {ymax}")
+        print0(f"Replacing ymax... {ymax}")
         geo, n4 = re.subn(
             r"(?m)^\s*h =\s*[0-9]+ \* R;",
             f"h = {float(ymax)};",
@@ -215,7 +225,7 @@ def geometry_template(
     # geo = re.sub(r"(?m)^\s*Exit\s*;\s*$", "", geo)
 
     output_path = Path.cwd()/ output_path / "geom.geo"
-    print(output_path)
+    print0(output_path)
     # Decide where to write the modified .geo
     if output_path.suffix.lower() == ".geo":
         modified_geo_path = output_path

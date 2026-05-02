@@ -17,7 +17,38 @@ from dataclasses import dataclass
 import csv, os
 import datetime
 
-# import gmsh
+from dolfin import MPI
+
+COMM = MPI.comm_world
+RANK = MPI.rank(COMM)
+SIZE = MPI.size(COMM)
+
+def print0(*args, **kwargs):
+    if RANK == 0:
+        print(*args, **kwargs)
+
+def mpi_max(value):
+    return MPI.max(COMM, float(value))
+
+def mpi_min(value):
+    return MPI.min(COMM, float(value))
+
+def mpi_sum(value):
+    return MPI.sum(COMM, value)
+
+def mpi_barrier():
+    MPI.barrier(COMM)
+
+def is_rank0():
+    return COMM.rank == 0
+
+def mkdir0(path):
+    if path is None or path == "":
+        return
+    if COMM.rank == 0:
+        os.makedirs(path, exist_ok=True)
+    COMM.Barrier()
+
 
 EXPERIMENTS_JSON_PATH = "experiments.json"
 SCHEMA_JSON_PATH = "experiments.schema.json"

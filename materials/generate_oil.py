@@ -112,5 +112,5 @@ if __name__ == "__main__":
     # Save to CSV
     out_path = Path("spindle_oil_estimated_table.csv")
     df.to_csv(out_path, index=False)
-    print("Saved table to:", out_path)
-    print(df.head(10))
+    print0("Saved table to:", out_path)
+    print0(df.head(10))

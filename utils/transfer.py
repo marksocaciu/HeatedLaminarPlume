@@ -5,6 +5,7 @@ import fenics
 
 def scale_mesh_inplace(mesh, Lref):
     mesh.coordinates()[:] /= float(Lref)
+    mesh.bounding_box_tree().build(mesh)
 
 
 def transfer_cg1_function(src_fun, dst_mesh):
