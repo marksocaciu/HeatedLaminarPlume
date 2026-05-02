@@ -25,7 +25,7 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
                   TRIG_XDMF_PATH, FACETS_XDMF_PATH,
                   ELEM="triangle", PRUNE_Z=True):
 
-    comm = MPI.COMM_WORLD
+    comm = COMM
     rank = comm.rank
 
     if rank == 0:

@@ -1412,7 +1412,7 @@ def compute_cfl(sub_mesh, u, dt):
 
     cfl_loc = dt * u_loc / np.maximum(h_loc, 1e-14)
 
-    comm = MPI.COMM_WORLD
+    comm = COMM
     local_max = float(np.max(cfl_loc)) if cfl_loc.size else 0.0
     local_sum = float(np.sum(cfl_loc))
     local_count = int(cfl_loc.size)
@@ -1436,7 +1436,7 @@ def cfl_limited_dt(sub_mesh, u, cfl_target=1.0, safety=0.9, dt_min=1e-5, dt_max=
     u_loc = umag.vector().get_local()
 
     speed_over_h = u_loc / np.maximum(h_loc, 1e-14)
-    comm = MPI.COMM_WORLD
+    comm = COMM
     local_denom = float(np.max(speed_over_h)) if speed_over_h.size else 0.0
     denom = comm.allreduce(local_denom, op=MPI.MAX)
 
