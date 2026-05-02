@@ -29,11 +29,11 @@ def generate_mesh(GEOM_FILE, MSH_FILE,
     rank = comm.rank
 
     if rank == 0:
-        subprocess.run(
-            f"gmsh -nopopup -nt 1 {GEOM_FILE}",
-            shell=True,
-            check=True
-        )
+        # subprocess.run(
+        #     f"gmsh -nopopup -nt 1 {GEOM_FILE}",
+        #     shell=True,
+        #     check=True
+        # )
 
         print0("Converting MSH to XDMF...")
         msh = meshio.read(MSH_FILE)
