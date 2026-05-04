@@ -813,8 +813,16 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         subdomain_data=sub_ft_star,
     )
 
-    theta_full_star = theta_full_dim
     qn_air_star = qn_air
+
+    theta_full_star = solve_air_initial_theta(
+        air_mesh=sub_mesh_star,
+        air_facet_markers=sub_ft_star,
+        air_ds=sub_ds_star,
+        qn_air=qn_air_star,
+        interface_tag=INTERFACE_TAG,
+        cold_tags=(101, 103),
+    )
 
     print0(f"Initial max theta (star-submesh): {global_vec_max(theta_full_star):.6e}")
     print0(f"Initial min theta (star-submesh): {global_vec_min(theta_full_star):.6e}")

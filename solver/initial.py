@@ -371,3 +371,51 @@ def solve_full_temperature(
             print0(f"[full thermal] warning: could not write XDMF output: {err}")
 
     return T_full, k_func
+
+def solve_air_initial_theta(
+    air_mesh,
+    air_facet_markers,
+    air_ds,
+    qn_air,
+    interface_tag,
+    cold_tags=(101, 103),
+):
+    """
+    MPI-safe initial temperature solve on the AIR-only mesh.
+
+    Solves:
+        ∫ grad(theta)·grad(v) dx = ∫ qn_air v ds(interface_tag)
+
+    with theta = 0 on selected cold/far-field boundaries.
+
+    This avoids transferring temperature from the full mesh to the air mesh.
+    """
+    V = fenics.FunctionSpace(air_mesh, "CG", 1)
+
+    theta = fenics.TrialFunction(V)
+    v = fenics.TestFunction(V)
+
+    a = fenics.inner(fenics.grad(theta), fenics.grad(v)) * fenics.dx
+    L = qn_air * v * air_ds(interface_tag)
+
+    bcs = []
+    for tag in cold_tags:
+        bcs.append(
+            fenics.DirichletBC(
+                V,
+                fenics.Constant(0.0),
+                air_facet_markers,
+                int(tag),
+            )
+        )
+
+    theta_sol = fenics.Function(V, name="theta_initial_air")
+    fenics.solve(a == L, theta_sol, bcs)
+
+    print0(
+        "Air initial theta min/max:",
+        global_vec_min(theta_sol),
+        global_vec_max(theta_sol),
+    )
+
+    return theta_sol
