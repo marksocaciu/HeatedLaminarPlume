@@ -1882,8 +1882,8 @@ def run_post_continuation_transient(
             t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
 
             # --- Effective Grashof number diagnostic ---
-            theta_max = float(global_vec_max(theta.vector()))
-            theta_min = float(global_vec_min(theta.vector()))
+            theta_max = float(global_vec_max(theta))
+            theta_min = float(global_vec_min(theta))
 
             dT_eff = scales.dTref * max(theta_max, 0.0)
 
@@ -1958,7 +1958,7 @@ def run_post_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print0(f"Biot number stats: min={global_vec_min(biots.vector()):.6e}, max={global_vec_max(biots.vector()):.6e}")
+                    print0(f"Biot number stats: min={float(global_vec_min(biots)):.6e}, max={float(global_vec_max(biots)):.6e}")
                 except Exception as err:
                     print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
