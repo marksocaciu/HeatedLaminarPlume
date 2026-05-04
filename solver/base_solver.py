@@ -1446,6 +1446,8 @@ def run_post_continuation_transient(
     SUPG=False,
     start_time: float = 0.0,
     start_step: int = 0,
+    restart_recovered=False,
+    restart_step:int = 0,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -1479,6 +1481,7 @@ def run_post_continuation_transient(
     status = "transient_complete"
 
     x_probe = max(1.0e-8, 2.0 * float(sub_mesh_star.hmin())) if sub_mesh_star is not None else 1.0e-8
+    
     if sub_mesh_star is not None:
         for comp in w_n.split(deepcopy=False):
             try:
@@ -1654,7 +1657,12 @@ def run_post_continuation_transient(
                 mixed_norm = _safe_float_norm(w.vector())
                 finite_ok = np.isfinite(mixed_norm)
 
-                if (not finite_ok) or (not np.isfinite(rel_update)) or (rel_update > rel_update_reject):
+                if restart_recovered and step == restart_step + 1:
+                    rel_update_limit = 5e-2
+                else:
+                    rel_update_limit = rel_update_reject
+
+                if (not finite_ok) or (not np.isfinite(rel_update)) or (rel_update > rel_update_limit):
                     raise RuntimeError(
                         f"transient step rejected by sanity check: rel_update={rel_update:.3e}, "
                         f"||w||={mixed_norm}"

@@ -1058,6 +1058,8 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             start_step=restart_meta["step"],
             history_csv_path=run_root + "/transient_history.csv",
             SUPG=SUPG,
+            restart_recovered=restart_from_last_transient,
+            restart_step=restart_meta["step"],
         )
 
     print0("transient status:", transient_info["status"])
@@ -1073,7 +1075,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         experiment.fluid.properties["rho"]
     )
     k_air = fenics.Constant(experiment.fluid.properties["k"])
-    q_heat, q_mag = compute_heat_flux_dim(sub_mesh_dim, T_dim, k_air)
+    q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
     q_out = OUTPUT_XDMF_PATH_AIR_T.split(".xdmf")[0] + f"_heatflux.xdmf"
     qmag_out = OUTPUT_XDMF_PATH_AIR_T.split(".xdmf")[0] + f"_heatflux_mag.xdmf"
 
