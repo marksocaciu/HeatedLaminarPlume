@@ -47,7 +47,8 @@ def migrate(old_checkpoint_dir, air_cells_xdmf, new_checkpoint_dir):
         old_checkpoint_dir
     )
 
-    new_mesh = read_new_air_mesh(air_cells_xdmf)
+    new_mesh = read_new_air_mesh(args.air_cells)
+    scale_mesh_inplace(new_mesh, args.Lref)
 
     Q_new = fenics.FunctionSpace(new_mesh, "CG", 1)
     V_new = fenics.VectorFunctionSpace(new_mesh, "CG", 2)
@@ -87,12 +88,16 @@ def migrate(old_checkpoint_dir, air_cells_xdmf, new_checkpoint_dir):
     print(f"  new checkpoint: {new_checkpoint_dir}")
     print(f"  theta min/max:  {theta_new.vector().min()} {theta_new.vector().max()}")
 
+def scale_mesh_inplace(mesh, Lref):
+    mesh.coordinates()[:] /= float(Lref)
+    mesh.bounding_box_tree().build(mesh)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--old-checkpoint", required=True)
     parser.add_argument("--air-cells", required=True)
     parser.add_argument("--new-checkpoint", required=True)
+    parser.add_argument("--Lref", type=float, required=True)
     args = parser.parse_args()
 
     migrate(
