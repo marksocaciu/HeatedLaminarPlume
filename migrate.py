@@ -53,9 +53,17 @@ def migrate(old_checkpoint_dir, air_cells_xdmf, new_checkpoint_dir):
     Q_new = fenics.FunctionSpace(new_mesh, "CG", 1)
     V_new = fenics.VectorFunctionSpace(new_mesh, "CG", 2)
 
-    p_new = fenics.interpolate(old_p, Q_new)
-    u_new = fenics.interpolate(old_u, V_new)
-    theta_new = fenics.interpolate(old_theta, Q_new)
+    old_p.set_allow_extrapolation(True)
+    old_u.set_allow_extrapolation(True)
+    old_theta.set_allow_extrapolation(True)
+
+    p_new = fenics.Function(Q_new, name="p_star")
+    u_new = fenics.Function(V_new, name="u_star")
+    theta_new = fenics.Function(Q_new, name="theta_star")
+
+    fenics.LagrangeInterpolator.interpolate(p_new, old_p)
+    fenics.LagrangeInterpolator.interpolate(u_new, old_u)
+    fenics.LagrangeInterpolator.interpolate(theta_new, old_theta)
 
     os.makedirs(new_checkpoint_dir, exist_ok=True)
 
