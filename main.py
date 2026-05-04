@@ -656,17 +656,28 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     #   full_cells.xdmf/full_facets.xdmf
     #   air_cells.xdmf/air_facets.xdmf
     # All ranks wait at the barrier inside generate_mesh().
-    generate_mesh(
-        GEOM_FILE,
-        MSH_FILE,
-        TRIG_XDMF_PATH,
-        FACETS_XDMF_PATH,
-        AIR_TRIG_XDMF_PATH=AIR_TRIG_XDMF_PATH,
-        AIR_FACETS_XDMF_PATH=AIR_FACETS_XDMF_PATH,
-        AIR_TAG_VALUE=AIR_TAG,
-        ELEM=ELEM,
-        PRUNE_Z=True,
+    mesh_files_exist = (
+        os.path.exists(TRIG_XDMF_PATH)
+        and os.path.exists(FACETS_XDMF_PATH)
+        and os.path.exists(AIR_TRIG_XDMF_PATH)
+        and os.path.exists(AIR_FACETS_XDMF_PATH)
     )
+
+    if existing_run_root and mesh_files_exist:
+        print0("Using existing mesh files; not regenerating gmsh mesh.")
+        COMM.Barrier()
+    else:
+        generate_mesh(
+            GEOM_FILE,
+            MSH_FILE,
+            TRIG_XDMF_PATH,
+            FACETS_XDMF_PATH,
+            AIR_TRIG_XDMF_PATH=AIR_TRIG_XDMF_PATH,
+            AIR_FACETS_XDMF_PATH=AIR_FACETS_XDMF_PATH,
+            AIR_TAG_VALUE=AIR_TAG,
+            ELEM=ELEM,
+            PRUNE_Z=True,
+        )
 
     # Full dimensional mesh.
     # Keep this for your full-domain initial thermal solve.
@@ -1005,6 +1016,11 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     except Exception:
         print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+
+    dt_start=1.0e-4
+    if restart_from_last_transient:
+        dt_start = restart_meta["dt"]
+        print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
     
     w, transient_info = run_post_continuation_transient(
             experiment=experiment,
@@ -1022,7 +1038,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-4,
+            dt_start=dt_start,
             dt_growth=1.1,
             dt_cut=0.8,
             dt_hard_cut=0.5,
