@@ -49,6 +49,71 @@ def mkdir0(path):
         os.makedirs(path, exist_ok=True)
     COMM.Barrier()
 
+def global_vec_max(f):
+    local = float(f.vector().max())
+    return COMM.allreduce(local, op=MPI4Py.MAX)
+
+
+def global_vec_min(f):
+    local = float(f.vector().min())
+    return COMM.allreduce(local, op=MPI4Py.MIN)
+
+def mpi_probe_scalar(f, x, y):
+    try:
+        local_val = float(f(x, y))
+        local_found = 1
+    except RuntimeError:
+        local_val = 0.0
+        local_found = 0
+
+    found = MPI.sum(COMM, local_found)
+    val = MPI.sum(COMM, local_val)
+
+    if found > 0:
+        return val / found
+    return float("nan")
+
+def safe_eval_scalar(f, x, y, default=np.nan):
+    local_value = np.nan
+    try:
+        local_value = float(f(x, y))
+
+    except Exception:
+        pass
+
+    valid = 0 if np.isnan(local_value) else 1
+    valid_sum = COMM.allreduce(valid, op=MPI4Py.SUM)
+
+    if valid_sum == 0:
+        return default
+
+    value_sum = COMM.allreduce(
+        0.0 if np.isnan(local_value) else local_value,
+        op=MPI4Py.SUM,
+    )
+
+    return value_sum / valid_sum
+
+def safe_eval_vector_component(f, x, y, comp=0, default=np.nan):
+    local_value = np.nan
+    try:
+        local_value = float(f(x, y)[comp])
+
+    except Exception:
+        pass
+
+    valid = 0 if np.isnan(local_value) else 1
+    valid_sum = COMM.allreduce(valid, op=MPI4Py.SUM)
+
+    if valid_sum == 0:
+        return default
+
+    value_sum = COMM.allreduce(
+        0.0 if np.isnan(local_value) else local_value,
+        op=MPI4Py.SUM,
+    )
+    
+    return value_sum / valid_sum
 
 EXPERIMENTS_JSON_PATH = "experiments.json"
 SCHEMA_JSON_PATH = "experiments.schema.json"

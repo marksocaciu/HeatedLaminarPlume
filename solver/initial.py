@@ -72,9 +72,9 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
 
     for it in range(max_it):
         T_full_new =  fenics.Function(V_T_full)
-        h.assign(h_of_T(T_full.vector().max(),T_ambient,D_wire))
-
-        k_vals[mc.array() == WIRE_TAG] = k_of_T(T_full.vector().max())   # updates DG0 mu/Pr/... on sub_mesh
+        Tmax_global = global_vec_max(T_full)
+        h.assign(h_of_T(Tmax_global, T_ambient, experiment.dimensions.wire.diameter))
+        k_vals[mc.array() == WIRE_TAG] = k_of_T(Tmax_global)   # updates DG0 mu/Pr/... on sub_mesh
         k_func.vector()[:] = k_vals
 
         a_T = (k_func * inner(grad(T), grad(v))) * dx \
@@ -104,7 +104,7 @@ def initial_guess(mesh,mc,mf, OUTPUT_XDMF_PATH_TEMP, heat_volume, experiment,dx)
 
 
     T_full.rename("T_conduction_full", "")
-    print0(max(T_full.vector()))
+    print0(global_vec_max(T_full))
 
     # -----------------------------------------
     # Save result

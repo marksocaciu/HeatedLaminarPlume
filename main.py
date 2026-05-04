@@ -21,19 +21,58 @@ from solver.base_solver import *
 from solver.abe_solver import *
 from solver.temp_solver import *
 
+from dataclasses import dataclass
+from pathlib import Path
+
+@dataclass
+class MeshPaths:
+    run_root: Path
+    geo: Path
+    msh: Path
+    full_cells: Path
+    full_facets: Path
+    air_cells: Path
+    air_facets: Path
+
+
+def make_mesh_paths(run_root):
+    run_root = Path(run_root)
+    return MeshPaths(
+        run_root=run_root,
+        geo=run_root / "geom.geo",
+        msh=run_root / "plume.msh",
+        full_cells=run_root / "full_cells.xdmf",
+        full_facets=run_root / "full_facets.xdmf",
+        air_cells=run_root / "air_cells.xdmf",
+        air_facets=run_root / "air_facets.xdmf",
+    )
 
 def make_run_root(experiment_name: str, mode: str, reuse_existing: str = "") -> str:
     """
-    Create a unique per-run output directory, unless ``reuse_existing`` is given.
-    This allows transient restarts to keep writing into the original run folder.
+    Create one shared run directory for all MPI ranks.
+
+    Rank 0 chooses the directory name, then broadcasts it.
     """
     if reuse_existing:
-        os.makedirs(reuse_existing, exist_ok=True)
-        return reuse_existing
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    pid = os.getpid()
-    run_root = os.path.join(experiment_name, "runs", f"{mode}_{stamp}_pid{pid}")
-    os.makedirs(run_root, exist_ok=True)
+        run_root = reuse_existing
+    else:
+        if is_rank0():
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            pid = os.getpid()
+            run_root = os.path.join(
+                experiment_name,
+                "runs",
+                f"{mode}_{stamp}_pid{pid}",
+            )
+        else:
+            run_root = None
+
+        run_root = COMM.bcast(run_root, root=0)
+
+    if is_rank0():
+        os.makedirs(run_root, exist_ok=True)
+
+    COMM.Barrier()
     return run_root
 
 def _infer_xdmf_attribute_name(xdmf_path: str) -> str:
@@ -576,36 +615,88 @@ def relative_update(new_f, old_f):
 
 def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
     mkdir0(experiment.name)
-    mkdir0(experiment.name + "/base")
-    run_root = make_run_root(experiment.name, "base", reuse_existing=existing_run_root)
+
+    run_root = make_run_root(
+        experiment.name,
+        "base",
+        reuse_existing=existing_run_root,
+    )
+
+    if is_rank0():
+        os.makedirs(os.path.join(run_root, "base"), exist_ok=True)
+    COMM.Barrier()
+
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
-        output_path=experiment.name,
+        output_path=run_root,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
         resolution=100,
     )
-    MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
-    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+
+    MSH_FILE = run_root + "/plume.msh"
+
+    TRIG_XDMF_PATH = run_root + "/full_cells.xdmf"
+    FACETS_XDMF_PATH = run_root + "/full_facets.xdmf"
+
+    AIR_TRIG_XDMF_PATH = run_root + "/air_cells.xdmf"
+    AIR_FACETS_XDMF_PATH = run_root + "/air_facets.xdmf"
+
     OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
     OUTPUT_XDMF_PATH_TEMP = run_root + "/base/temperature.xdmf"
     OUTPUT_XDMF_PATH_AIR_T = run_root + "/base/air_temperature.xdmf"
     OUTPUT_XDMF_PATH_AIR_P = run_root + "/base/air_pressure.xdmf"
     OUTPUT_XDMF_PATH_AIR_V = run_root + "/base/air_velocity.xdmf"
     OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/base/air_pvt.xdmf"
+
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
-    # Generate and read mesh
-    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
-    # --- 1) read mesh (dim)  [already]
-    mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
-        TRIG_XDMF_PATH, FACETS_XDMF_PATH, MESH_NAME, PRINT_TAG_SUMMARY
+    # Rank 0 generates:
+    #   full_cells.xdmf/full_facets.xdmf
+    #   air_cells.xdmf/air_facets.xdmf
+    # All ranks wait at the barrier inside generate_mesh().
+    generate_mesh(
+        GEOM_FILE,
+        MSH_FILE,
+        TRIG_XDMF_PATH,
+        FACETS_XDMF_PATH,
+        AIR_TRIG_XDMF_PATH=AIR_TRIG_XDMF_PATH,
+        AIR_FACETS_XDMF_PATH=AIR_FACETS_XDMF_PATH,
+        AIR_TAG_VALUE=AIR_TAG,
+        ELEM=ELEM,
+        PRUNE_Z=True,
     )
-    
-    # --- 2) create submesh (dim)
-    sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
+
+    # Full dimensional mesh.
+    # Keep this for your full-domain initial thermal solve.
+    mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
+        TRIG_XDMF_PATH,
+        FACETS_XDMF_PATH,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+
+    # Air-only dimensional mesh.
+    # This replaces:
+    #     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(...)
+    sub_mesh_dim, air_ct, air_ft, _, sub_dx_dim, _, sub_mc_dim, sub_ft_dim = read_mesh(
+        AIR_TRIG_XDMF_PATH,
+        AIR_FACETS_XDMF_PATH,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+
+    sub_dx_dim = fenics.Measure(
+        "dx",
+        domain=sub_mesh_dim,
+        subdomain_data=sub_mc_dim,
+    )
+    sub_ds_dim = fenics.Measure(
+        "ds",
+        domain=sub_mesh_dim,
+        subdomain_data=sub_ft_dim,
+    )
     
     scales = compute_nondimensional_scales(experiment)
     print0(scales)
@@ -642,12 +733,42 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     theta_full_dim.vector().apply("insert")
     theta_full_dim.rename("theta_full", "theta_full")
 
-    print0("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
-    print0("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
-    print0("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("theta min/max:", global_vec_min(theta_full_dim), global_vec_max(theta_full_dim))
+    print0("T_dim  min/max:", global_vec_min(T_air_dim), global_vec_max(T_air_dim))
+    print0("T_nondim min/max:", global_vec_min(theta_full_dim), global_vec_max(theta_full_dim))
 
     # --- (still dimensional) compute qn_air using your current routine
-    qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
+    # MPI-safe interface heat flux.
+    #
+    # The old flux_continuity(...) path internally creates a wire SubMesh,
+    # which is not robust under MPI. For the MPI base path, impose the
+    # equivalent uniform heat flux on the air-side wire interface.
+    #
+    # For a full circular wire per unit length:
+    #     Q_L = q'' * pi * d
+    # so:
+    #     q'' = Q_L / (pi*d)
+    #
+    # Nondimensional:
+    #     qn_star = q'' * Lref / (k_air*dTref)
+    q_line = float(experiment.initial_conditions.heat_length)
+    wire_d = float(experiment.dimensions.wire.diameter)
+    k_air_dim = float(experiment.fluid.properties["k"])
+
+    qsurf_dim = q_line / (math.pi * wire_d)
+    qn_star_value = qsurf_dim * float(scales.Lref) / (
+        k_air_dim * float(scales.dTref)
+    )
+
+    V0_air = fenics.FunctionSpace(sub_mesh_dim, "DG", 0)
+    qn_air = fenics.Function(V0_air, name="qn_air")
+    qn_air.vector()[:] = qn_star_value
+    qn_air.vector().apply("insert")
+
+    print0("Using MPI-safe uniform interface heat flux:")
+    print0(f"  q_line    = {q_line:.6e} W/m")
+    print0(f"  qsurf_dim = {qsurf_dim:.6e} W/m^2")
+    print0(f"  qn_star   = {qn_star_value:.6e}")
 
     # Diagnostic: power conservation on DIMENSIONAL interface measure
     check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
@@ -659,30 +780,44 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         experiment.dimensions.wire.diameter
     )
 
-    print0(f"Initial max temperature: {T_full.vector().max():.2f} K")
-    print0(f"Initial min temperature: {T_full.vector().min():.2f} K")
-    print0(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
-    print0(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
+    print0(f"Initial max temperature: {global_vec_max(T_full):.2f} K")
+    print0(f"Initial min temperature: {global_vec_min(T_full):.2f} K")
+    print0(f"Initial max theta (dim-submesh): {global_vec_max(theta_full_dim):.6e}")
+    print0(f"Initial min theta (dim-submesh): {global_vec_min(theta_full_dim):.6e}")
 
-    # --- 5) scale parent mesh coordinates (dim→star)
+        # --- 5) scale mesh coordinates dim -> star
     Lref = float(scales.Lref)
     scale_mesh_inplace(mesh, Lref)
     scale_mesh_inplace(sub_mesh_dim, Lref)
 
-    # --- 6) recreate submesh + measures on scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = (
-        build_star_submesh_and_transfer(
-            mesh=mesh,
-            mc=mc,
-            mf=mf,
-            air_tag=AIR_TAG,
-            theta_full_dim=theta_full_dim,
-            qn_air=qn_air,
-        )
+    try:
+        mesh.bounding_box_tree().build(mesh)
+        sub_mesh_dim.bounding_box_tree().build(sub_mesh_dim)
+    except Exception:
+        pass
+
+    COMM.Barrier()
+
+    # The air mesh has been scaled in place, so it is now the star mesh.
+    # No SubMesh reconstruction is needed.
+    sub_mesh_star = sub_mesh_dim
+    sub_ft_star = sub_ft_dim
+    sub_dx_star = fenics.Measure(
+        "dx",
+        domain=sub_mesh_star,
+        subdomain_data=sub_mc_dim,
+    )
+    sub_ds_star = fenics.Measure(
+        "ds",
+        domain=sub_mesh_star,
+        subdomain_data=sub_ft_star,
     )
 
-    print0(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
-    print0(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
+    theta_full_star = theta_full_dim
+    qn_air_star = qn_air
+
+    print0(f"Initial max theta (star-submesh): {global_vec_max(theta_full_star):.6e}")
+    print0(f"Initial min theta (star-submesh): {global_vec_min(theta_full_star):.6e}")
     print0(f"Rho_air: {experiment.fluid.properties['rho']}")
     print0(f"Beta_air: {experiment.fluid.properties['beta']}")
     
@@ -858,7 +993,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             characteristic_length="radius",
             return_local_field=True
         )
-        print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+        print0(f"Biot number stats: min={global_vec_min(biots):.6e}, max={global_vec_max(biots):.6e}")
     except Exception:
         print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
@@ -970,13 +1105,23 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     csv_path = os.path.join(out_dir,run_root, "base", "plane_fluxes.csv")
     write_header = not os.path.exists(csv_path)
 
-    with open(csv_path, "a", newline="") as f:
-        wcsv = csv.writer(f)
-        if write_header:
-            wcsv.writerow(["time", "y0_m", "Qconv_W_per_m", "Qcond_W_per_m", "Qtot_W_per_m", "mdot_kg_per_s_per_m"])
-        t=0
-        for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-            wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
+    if is_rank0():
+        with open(csv_path, "a", newline="") as f:
+            wcsv = csv.writer(f)
+            if write_header:
+                wcsv.writerow([
+                    "time",
+                    "y0_m",
+                    "Qconv_W_per_m",
+                    "Qcond_W_per_m",
+                    "Qtot_W_per_m",
+                    "mdot_kg_per_s_per_m",
+                ])
+            t = 0
+            for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+                wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
+
+    COMM.Barrier()
 
 def temperature_dependent_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
     run_root = make_run_root(experiment.name, "temp", reuse_existing=existing_run_root)

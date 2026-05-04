@@ -5,17 +5,6 @@ from solver.scales import *
 from utils.plot import *
 from utils.geometry import *
 
-class RestrictToAir(fenics.UserExpression):
-    def __init__(self, T_full, **kwargs):
-        super().__init__(**kwargs)
-        self.T_full = T_full
-
-    def eval(self, values, x):
-        # Evaluate full-mesh temperature at point x
-        values[0] = self.T_full(x)
-
-    def value_shape(self):
-        return ()
 
 def solve_thermal_sign_check(
     experiment: Experiment,
@@ -38,7 +27,7 @@ def solve_thermal_sign_check(
 
     theta = w.sub(2, deepcopy=True)
     print0("Thermal sign check:")
-    print0(f"  theta min/max = {theta.vector().min():.6e}, {theta.vector().max():.6e}")
+    print0(f"  theta min/max = {global_vec_min(theta):.6e}, {global_vec_max(theta):.6e}")
 
     return w
 
@@ -62,7 +51,7 @@ def solve_buoyancy_sign_check(
     uy = fenics.project(u_chk[1], Vscal,solver_type="mumps")
 
     print0("Buoyancy sign check:")
-    print0(f"  uy min/max = {uy.vector().min():.6e}, {uy.vector().max():.6e}")
+    print0(f"  uy min/max = {global_vec_min(uy):.6e}, {global_vec_max(uy):.6e}")
 
     r = (experiment.dimensions.wire.diameter / 2) / compute_nondimensional_scales(experiment).Lref
     x_probe = 0.5 * r
@@ -1326,21 +1315,6 @@ def assembled_residual_norm(F_form, boundary_conditions):
         bc.apply(r)
     return r.norm("l2")
 
-def safe_eval_scalar(f, x, y):
-    try:
-        val = f(x, y)
-        if isinstance(val, (tuple, list)):
-            return float(val[0])
-        return float(val)
-    except Exception:
-        return float("nan")
-
-def safe_eval_vector_component(f, x, y, comp=1):
-    try:
-        val = f(x, y)
-        return float(val[comp])
-    except Exception:
-        return float("nan")
 
 def collect_ptc_probe_diagnostics(w, sub_dx, probe_ys, x_probe=0.0):
     """
@@ -1723,7 +1697,8 @@ def extend_air_velocity_to_parent_mesh_by_point_eval(
 
 def save_restart_checkpoint(checkpoint_dir, mesh_star, w_n, step, time_value, dt_value):
     import json
-    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    mkdir0(checkpoint_dir)
 
     p_star, u_star, theta_star = w_n.split(deepcopy=True)
 
@@ -1737,25 +1712,15 @@ def save_restart_checkpoint(checkpoint_dir, mesh_star, w_n, step, time_value, dt
     h5.write(theta_star, "/theta_star")
     h5.close()
 
-    meta = {
-        "step": int(step),
-        "time": float(time_value),
-        "dt": float(dt_value),
-    }
-    with open(meta_path, "w") as f:
-        json.dump(meta, f, indent=2)
+    if is_rank0():
+        meta = {
+            "step": int(step),
+            "time": float(time_value),
+            "dt": float(dt_value),
+        }
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
 
-def mpi_probe_scalar(f, x, y):
-    try:
-        local_val = float(f(x, y))
-        local_found = 1
-    except RuntimeError:
-        local_val = 0.0
-        local_found = 0
+    COMM.Barrier()
 
-    found = MPI.sum(COMM, local_found)
-    val = MPI.sum(COMM, local_val)
 
-    if found > 0:
-        return val / found
-    return float("nan")

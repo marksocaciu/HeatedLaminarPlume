@@ -253,12 +253,12 @@ def main() -> int:
     time_regex = re.compile(args.time_regex) if args.time_regex else None
 
     if not input_dir.is_dir():
-        print0(f"ERROR: input_dir does not exist or is not a directory: {input_dir}", file=sys.stderr)
+        print(f"ERROR: input_dir does not exist or is not a directory: {input_dir}", file=sys.stderr)
         return 2
 
     files = collect_files(input_dir, args.pattern)
     if not files:
-        print0(f"ERROR: no .xdmf files matched pattern {args.pattern!r} in {input_dir}", file=sys.stderr)
+        print(f"ERROR: no .xdmf files matched pattern {args.pattern!r} in {input_dir}", file=sys.stderr)
         return 2
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -281,14 +281,14 @@ def main() -> int:
                     if grid is not None:
                         time_value = parse_time_from_grid(grid)
                 except ET.ParseError as exc:
-                    print0(f"ERROR: failed to parse {path}: {exc}", file=sys.stderr)
+                    print(f"ERROR: failed to parse {path}: {exc}", file=sys.stderr)
                     return 2
 
             if time_value is None:
                 time_value = parse_time_from_filename(path, time_regex)
 
             if time_value is None:
-                print0(
+                print(
                     f"ERROR: could not determine time for {path.name}. "
                     f"Use --time-regex, --prefer-source-time, or --dt.",
                     file=sys.stderr,
@@ -304,16 +304,16 @@ def main() -> int:
         try:
             grids.append(make_temporal_grid_from_source(src_xdmf, output, time_value))
         except Exception as exc:
-            print0(f"ERROR while processing {src_xdmf}: {exc}", file=sys.stderr)
+            print(f"ERROR while processing {src_xdmf}: {exc}", file=sys.stderr)
             return 2
 
     out_tree = build_output_tree(grids)
     out_tree.write(output, encoding="utf-8", xml_declaration=True)
 
-    print0(f"Wrote temporal XDMF collection: {output}")
-    print0("Included files:")
+    print(f"Wrote temporal XDMF collection: {output}")
+    print("Included files:")
     for t, p in time_file_pairs:
-        print0(f"  t={t:.16g}  <-  {p.name}")
+        print(f"  t={t:.16g}  <-  {p.name}")
 
     return 0
 

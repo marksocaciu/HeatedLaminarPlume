@@ -951,13 +951,13 @@ def solve_ptc_stage(
         backflow_beta=5.0e-1,
     )
 
-    safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
-    log_path = os.path.join(
-        run_root,
-        "base",
-        f"ptc_history_{safe_stage_name}.csv",
-    )
-    csv_fieldnames = init_ptc_csv(log_path, probe_ys)
+    # safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
+    # log_path = os.path.join(
+    #     run_root,
+    #     "base",
+    #     f"ptc_history_{safe_stage_name}.csv",
+    # )
+    # csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
     print0("\n" + "-" * 72)
     print0(f"Starting PTC stage: {stage_name}")
@@ -1057,7 +1057,7 @@ def solve_ptc_stage(
                 "steady_residual": steady_res,
                 **diag,
             }
-            append_ptc_csv(log_path, csv_fieldnames, row)
+            # append_ptc_csv(log_path, csv_fieldnames, row)
 
         # stage acceptance
         # For intermediate continuation stages, do not accept merely because the
@@ -1501,9 +1501,9 @@ def run_post_continuation_transient(
 
                 y_star = float(y_m) / float(scales.Lref)
                 try:
-                    u_val = u_star(x_probe, y_star)
-                    theta_val = theta_star(x_probe, y_star)
-                    probes[f"uy_{y_m:.3f}m"] = float(u_val[1])
+                    u_val = safe_eval_vector_component(u_star, x_probe, y_star, comp=1)
+                    theta_val = safe_eval_scalar(theta_star, x_probe, y_star)
+                    probes[f"uy_{y_m:.3f}m"] = float(u_val)
                     probes[f"theta_{y_m:.3f}m"] = float(theta_val)
                 except Exception:
                     probes[f"uy_{y_m:.3f}m"] = float("nan")
@@ -1543,11 +1543,11 @@ def run_post_continuation_transient(
             diag["Q_far_W_per_m"] = Q_far
             if abs(Q_interface) > 1.0e-14:
                 diag["heat_imbalance_rel"] = abs(Q_interface - Q_far) / abs(Q_interface)
-            diag["theta_max"] = float(theta.vector().max())
+            diag["theta_max"] = global_vec_max(theta)
             try:
                 Vmag = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
                 umag = fenics.project(fenics.sqrt(fenics.inner(u_star, u_star)), Vmag, solver_type="mumps")
-                diag["u_max"] = float(umag.vector().max())
+                diag["u_max"] = global_vec_max(umag)
             except Exception:
                 diag["u_max"] = float("nan")
         except Exception:
@@ -1563,10 +1563,13 @@ def run_post_continuation_transient(
             for key in row.keys():
                 if key not in fieldnames:
                     fieldnames.append(key)
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        if is_rank0():
+            with open(path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        COMM.Barrier()
 
     def _window_mean(values):
         vals = [float(v) for v in values if np.isfinite(v)]

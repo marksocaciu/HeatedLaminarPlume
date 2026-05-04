@@ -26,7 +26,7 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     T_air_bc = fenics.Function(VTa)
     T_air_bc.interpolate(T_full)
 
-    hot_wall_temperature = float(T_air_bc.vector().max())
+    hot_wall_temperature = float(global_vec_max(T_full))
     T_h = fenics.Constant(hot_wall_temperature)
     T_c = fenics.Constant(0.0)
 

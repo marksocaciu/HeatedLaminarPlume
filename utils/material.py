@@ -118,6 +118,11 @@ class TemperatureDependentMaterial:
         self.rho.vector()[:]  = self.rho_ref
         self.beta.vector()[:] = self.beta_ref
         self.Pr.vector()[:]   = self.cp_ref * self.mu_ref / self.k_ref
+        self.mu.vector().apply("insert")
+        self.k.vector().apply("insert")
+        self.rho.vector().apply("insert")
+        self.beta.vector().apply("insert")
+        self.Pr.vector().apply("insert")
 
     # -------------------------------------------------------
 
@@ -152,4 +157,9 @@ class TemperatureDependentMaterial:
         self.k.vector()[:]  = k_vals
         self.mu.vector()[:] = mu_vals
         self.Pr.vector()[:] = Pr_vals
+        
+        self.rho.vector().apply("insert")
+        self.k.vector().apply("insert")
+        self.mu.vector().apply("insert")
+        self.Pr.vector().apply("insert")
 

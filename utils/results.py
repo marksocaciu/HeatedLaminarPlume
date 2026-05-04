@@ -1,3 +1,4 @@
+from utils.imports import *
 import fenics
 import numpy as np
 import os
@@ -202,10 +203,10 @@ def compute_horizontal_plane_heat_fluxes(
 
         for x in xs:
             try:
-                u_val = u_dim(x, y)
-                T0    = T_dim(x, y)
-                Tp    = T_dim(x, y + dy_fd)
-                Tm    = T_dim(x, y - dy_fd)
+                u_val = safe_eval_vector_component(u_dim, x, y, comp=1)  # uy
+                T0    = safe_eval_scalar(T_dim, x, y)
+                Tp    = safe_eval_scalar(T_dim, x, y + dy_fd)
+                Tm    = safe_eval_scalar(T_dim, x, y - dy_fd)
 
                 uy = float(u_val[1])
                 dTdy = (Tp - Tm) / (2.0 * dy_fd)
@@ -246,11 +247,14 @@ def compute_horizontal_plane_heat_fluxes(
 
 
 def append_plane_flux_csv(csv_path, row):
-    file_exists = os.path.exists(csv_path)
-    fieldnames = list(row.keys())
+    if is_rank0():
+        file_exists = os.path.exists(csv_path)
+        fieldnames = list(row.keys())
 
-    with open(csv_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
+        with open(csv_path, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(row)
+
+    COMM.Barrier()

@@ -1,3 +1,5 @@
+from operator import is_
+
 from utils.imports import *
 
 def create_mesh(mesh, cell_type, prune_z=False):
@@ -7,6 +9,81 @@ def create_mesh(mesh, cell_type, prune_z=False):
     points = mesh.points[:, :2] if prune_z else mesh.points
     out_mesh = meshio.Mesh(points=points, cells={cell_type: cells}, cell_data={"name_to_read": [cell_data.astype(np.int32)]})
     return out_mesh
+
+def create_tagged_submesh_from_msh(
+    msh,
+    domain_tag,
+    cell_type="triangle",
+    facet_type="line",
+    prune_z=True,
+):
+    """
+    Extract a standalone meshio mesh for one physical cell tag.
+
+    This is the MPI-safe replacement for doing
+
+        fenics.SubMesh(mesh, mc, AIR_TAG)
+
+    after the mesh has already been distributed by FEniCS.
+
+    Rank 0 extracts the air mesh from the serial .msh file, writes it to XDMF,
+    and then all MPI ranks collectively read the resulting standalone air mesh.
+    """
+    cells = msh.get_cells_type(cell_type)
+    cell_tags = msh.get_cell_data("gmsh:physical", cell_type).astype(np.int32)
+
+    keep_cells = cell_tags == int(domain_tag)
+    if not np.any(keep_cells):
+        raise RuntimeError(
+            f"No {cell_type} cells found with physical tag {domain_tag}"
+        )
+
+    kept_cells_old = cells[keep_cells]
+    kept_cell_tags = cell_tags[keep_cells]
+
+    used_points = np.unique(kept_cells_old.reshape(-1))
+
+    old_to_new = -np.ones(msh.points.shape[0], dtype=np.int64)
+    old_to_new[used_points] = np.arange(len(used_points), dtype=np.int64)
+
+    points = msh.points[used_points]
+    if prune_z:
+        points = points[:, :2]
+
+    kept_cells_new = old_to_new[kept_cells_old]
+
+    cell_mesh = meshio.Mesh(
+        points=points,
+        cells={cell_type: kept_cells_new},
+        cell_data={"name_to_read": [kept_cell_tags]},
+    )
+
+    facet_cells = msh.get_cells_type(facet_type)
+    facet_tags = msh.get_cell_data("gmsh:physical", facet_type).astype(np.int32)
+
+    mapped_facets = old_to_new[facet_cells]
+    keep_facets = np.all(mapped_facets >= 0, axis=1)
+
+    kept_facets_new = mapped_facets[keep_facets]
+    kept_facet_tags = facet_tags[keep_facets]
+
+    if kept_facets_new.size == 0:
+        raise RuntimeError(
+            f"No {facet_type} facets retained for physical cell tag {domain_tag}. "
+            "Check that your .geo defines Physical Line groups on the air boundary."
+        )
+
+    facet_mesh = meshio.Mesh(
+        points=points,
+        cells={facet_type: kept_facets_new},
+        cell_data={"name_to_read": [kept_facet_tags]},
+    )
+
+    print0(f"Extracted physical cell tag {domain_tag}:")
+    print0(f"  cell tags  = {set(kept_cell_tags.tolist())}")
+    print0(f"  facet tags = {set(kept_facet_tags.tolist())}")
+
+    return cell_mesh, facet_mesh
 
 def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
     encoding = XDMFFile.Encoding.ASCII
@@ -21,65 +98,126 @@ def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
     if MPI.comm_world.rank == 0:
         print0("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
 
-def generate_mesh(GEOM_FILE, MSH_FILE,
-                  TRIG_XDMF_PATH, FACETS_XDMF_PATH,
-                  ELEM="triangle", PRUNE_Z=True):
+def generate_mesh(
+    GEOM_FILE,
+    MSH_FILE,
+    TRIG_XDMF_PATH,
+    FACETS_XDMF_PATH,
+    AIR_TRIG_XDMF_PATH=None,
+    AIR_FACETS_XDMF_PATH=None,
+    AIR_TAG_VALUE=None,
+    ELEM="triangle",
+    PRUNE_Z=True,
+):
+    """
+    MPI-safe mesh generation.
 
+    Rank 0:
+      - runs gmsh
+      - converts full .msh to XDMF
+      - optionally writes an AIR_TAG-only XDMF mesh
+
+    All ranks:
+      - wait at the final barrier before collective FEniCS reading.
+    """
     comm = COMM
     rank = comm.rank
 
     if rank == 0:
-        # subprocess.run(
-        #     f"gmsh -nopopup -nt 1 {GEOM_FILE}",
-        #     shell=True,
-        #     check=True
-        # )
+        os.makedirs(os.path.dirname(str(MSH_FILE)), exist_ok=True)
+
+        print0("Running gmsh...")
+        subprocess.run(
+            [
+                "gmsh",
+                "-2",
+                str(GEOM_FILE),
+                "-format",
+                "msh2",
+                "-o",
+                str(MSH_FILE),
+            ],
+            check=True,
+        )
 
         print0("Converting MSH to XDMF...")
         msh = meshio.read(MSH_FILE)
 
         element_mesh = create_mesh(msh, ELEM, prune_z=PRUNE_Z)
-        facet_mesh   = create_mesh(msh, "line", prune_z=PRUNE_Z)
+        facet_mesh = create_mesh(msh, "line", prune_z=PRUNE_Z)
 
+        os.makedirs(os.path.dirname(str(TRIG_XDMF_PATH)), exist_ok=True)
         meshio.write(TRIG_XDMF_PATH, element_mesh)
         meshio.write(FACETS_XDMF_PATH, facet_mesh)
 
+        if AIR_TRIG_XDMF_PATH is not None or AIR_FACETS_XDMF_PATH is not None:
+            if AIR_TRIG_XDMF_PATH is None or AIR_FACETS_XDMF_PATH is None:
+                raise ValueError(
+                    "Both AIR_TRIG_XDMF_PATH and AIR_FACETS_XDMF_PATH must be provided."
+                )
+            if AIR_TAG_VALUE is None:
+                raise ValueError("AIR_TAG_VALUE must be provided for air mesh extraction.")
+
+            print0(f"Extracting air-only mesh with AIR_TAG={AIR_TAG_VALUE}...")
+            air_element_mesh, air_facet_mesh = create_tagged_submesh_from_msh(
+                msh,
+                domain_tag=AIR_TAG_VALUE,
+                cell_type=ELEM,
+                facet_type="line",
+                prune_z=PRUNE_Z,
+            )
+
+            os.makedirs(os.path.dirname(str(AIR_TRIG_XDMF_PATH)), exist_ok=True)
+            meshio.write(AIR_TRIG_XDMF_PATH, air_element_mesh)
+            meshio.write(AIR_FACETS_XDMF_PATH, air_facet_mesh)
+
     comm.Barrier()
-
-def read_mesh(TRIG_XDMF_PATH, FACETS_XDMF_PATH,
-              MESH_NAME="mesh", PRINT_TAG_SUMMARY=True):
-
-    # -------------------------
-    # Read cell mesh
-    # -------------------------
-    mesh = fenics.Mesh()
-    with fenics.XDMFFile(MPI.comm_world, TRIG_XDMF_PATH) as xdmf:
-        xdmf.read(mesh)  # reads geometry + topology
-
-    # create cell MeshFunction
-    tdim = mesh.topology().dim()
-    mvc_ct = fenics.MeshValueCollection("size_t", mesh, tdim)
-    mvc_ft = fenics.MeshValueCollection("size_t", mesh, tdim)
-    with fenics.XDMFFile(MPI.comm_world, TRIG_XDMF_PATH) as xdmf:
-        xdmf.read(mvc_ct)  # reads geometry + topology
-
-    with fenics.XDMFFile(MPI.comm_world, FACETS_XDMF_PATH) as xdmf:
-        xdmf.read(mvc_ft)  # reads facet tags
-        
-    mf = fenics.cpp.mesh.MeshFunctionSizet(mesh, mvc_ft)
-    mc = fenics.cpp.mesh.MeshFunctionSizet(mesh, mvc_ct)
-    domains = fenics.MeshFunction("size_t", mesh, tdim)
-    dx = fenics.Measure("dx",domain=mesh, subdomain_data=mf)
-    boundary_markers = fenics.MeshFunction("size_t", mesh, tdim - 1)
     
-    # -------------------------
-    # Print summary
-    # -------------------------
-    if PRINT_TAG_SUMMARY and MPI.comm_world.rank == 0:
-        ct = set(mc.array())
+def read_mesh(
+    TRIG_XDMF_PATH,
+    FACETS_XDMF_PATH,
+    MESH_NAME="mesh",
+    PRINT_TAG_SUMMARY=True,
+):
+    mesh = fenics.Mesh()
+
+    with fenics.XDMFFile(MPI.comm_world, TRIG_XDMF_PATH) as xdmf:
+        xdmf.read(mesh)
+
+    tdim = mesh.topology().dim()
+
+    mvc_ct = fenics.MeshValueCollection("size_t", mesh, tdim)
+    with fenics.XDMFFile(MPI.comm_world, TRIG_XDMF_PATH) as xdmf:
+        try:
+            xdmf.read(mvc_ct, "name_to_read")
+        except Exception:
+            xdmf.read(mvc_ct)
+
+    mvc_ft = fenics.MeshValueCollection("size_t", mesh, tdim - 1)
+    with fenics.XDMFFile(MPI.comm_world, FACETS_XDMF_PATH) as xdmf:
+        try:
+            xdmf.read(mvc_ft, "name_to_read")
+        except Exception:
+            xdmf.read(mvc_ft)
+
+    mc = fenics.cpp.mesh.MeshFunctionSizet(mesh, mvc_ct)
+    mf = fenics.cpp.mesh.MeshFunctionSizet(mesh, mvc_ft)
+
+    domains = fenics.MeshFunction("size_t", mesh, tdim)
+    dx = fenics.Measure("dx", domain=mesh, subdomain_data=mc)
+    boundary_markers = fenics.MeshFunction("size_t", mesh, tdim - 1)
+
+    local_cell_tags = set(mc.array())
+    local_facet_tags = set(mf.array()) - {18446744073709551615}
+
+    all_cell_tags = COMM.allgather(local_cell_tags)
+    all_facet_tags = COMM.allgather(local_facet_tags)
+
+    ct = set().union(*all_cell_tags)
+    ft = set().union(*all_facet_tags)
+
+    if PRINT_TAG_SUMMARY and is_rank0():
         print0("Cell tags in the mesh:", ct)
-        ft = set(mf.array())
-        ft = ft - {18446744073709551615}  # remove default tag 18446744073709551615
         print0("Facet tags in the mesh:", ft)
 
     return mesh, ct, ft, domains, dx, boundary_markers, mc, mf
@@ -128,7 +266,79 @@ def create_submesh(mesh, mc, mf, tag):
     return air_mesh, air_mf, dx_air, ds_air
 
 
+def create_tagged_submesh_from_msh(
+    msh,
+    domain_tag,
+    cell_type="triangle",
+    facet_type="line",
+    prune_z=True,
+):
+    """
+    MPI-safe mesh extraction using meshio.
 
+    Extracts all cells with physical tag == domain_tag from the serial gmsh mesh,
+    preserves line facets whose endpoints belong to that extracted cell mesh,
+    and returns two standalone meshio meshes:
+      - cell mesh
+      - facet mesh
+
+    This is the replacement for FEniCS SubMesh(...) in MPI runs.
+    """
+    cells = msh.get_cells_type(cell_type)
+    cell_tags = msh.get_cell_data("gmsh:physical", cell_type).astype(np.int32)
+
+    keep_cells = cell_tags == int(domain_tag)
+    if not np.any(keep_cells):
+        raise RuntimeError(
+            f"No {cell_type} cells found with physical tag {domain_tag}"
+        )
+
+    kept_cells_old = cells[keep_cells]
+    kept_cell_tags = cell_tags[keep_cells]
+
+    used_points = np.unique(kept_cells_old.reshape(-1))
+
+    old_to_new = -np.ones(msh.points.shape[0], dtype=np.int64)
+    old_to_new[used_points] = np.arange(len(used_points), dtype=np.int64)
+
+    points = msh.points[used_points]
+    if prune_z:
+        points = points[:, :2]
+
+    kept_cells_new = old_to_new[kept_cells_old]
+
+    cell_mesh = meshio.Mesh(
+        points=points,
+        cells={cell_type: kept_cells_new},
+        cell_data={"name_to_read": [kept_cell_tags]},
+    )
+
+    facet_cells = msh.get_cells_type(facet_type)
+    facet_tags = msh.get_cell_data("gmsh:physical", facet_type).astype(np.int32)
+
+    mapped_facets = old_to_new[facet_cells]
+    keep_facets = np.all(mapped_facets >= 0, axis=1)
+
+    kept_facets_new = mapped_facets[keep_facets]
+    kept_facet_tags = facet_tags[keep_facets]
+
+    if kept_facets_new.size == 0:
+        raise RuntimeError(
+            f"No {facet_type} facets retained for physical cell tag {domain_tag}. "
+            "Check that your .geo defines Physical Line groups on the air boundary."
+        )
+
+    facet_mesh = meshio.Mesh(
+        points=points,
+        cells={facet_type: kept_facets_new},
+        cell_data={"name_to_read": [kept_facet_tags]},
+    )
+
+    print0(f"Extracted physical cell tag {domain_tag}:")
+    print0(f"  cell tags  = {set(kept_cell_tags.tolist())}")
+    print0(f"  facet tags = {set(kept_facet_tags.tolist())}")
+
+    return cell_mesh, facet_mesh
 
 def geometry_template(
     wire_radius: float,
@@ -167,72 +377,81 @@ def geometry_template(
     """
     output_path = Path(output_path)
 
-    # Template is next to this script
-    template_path = Path.cwd()/ template_geo_name
-    print0(template_path)
-    if not template_path.exists():
-        raise FileNotFoundError(f"Template .geo not found: {template_path}")
+    if is_rank0():
+        # Template is next to this script
+        template_path = Path.cwd()/ template_geo_name
+        print0(template_path)
+        if not template_path.exists():
+            raise FileNotFoundError(f"Template .geo not found: {template_path}")
 
-    geo = template_path.read_text(encoding="utf-8")
+        geo = template_path.read_text(encoding="utf-8")
 
-    # Replace placeholders (anchored to beginning of line for safety)
-    geo, n1 = re.subn(
-        r"(?m)^\s*R_placeholder\s*=\s*[^;]*;",
-        f"R_placeholder = {wire_radius};",
-        geo,
-        count=1,
-    )
-    if n1 != 1:
-        raise ValueError("Could not uniquely replace 'R_placeholder = ...;' in the .geo template.")
-
-    if resolution is not None:
-        geo, n2 = re.subn(
-            r"(?m)^\s*resolution_placeholder\s*=\s*[^;]*;",
-            f"resolution_placeholder = {int(resolution)};",
+        # Replace placeholders (anchored to beginning of line for safety)
+        geo, n1 = re.subn(
+            r"(?m)^\s*R_placeholder\s*=\s*[^;]*;",
+            f"R_placeholder = {wire_radius};",
             geo,
             count=1,
         )
-        if n2 != 1:
-            raise ValueError("Could not uniquely replace 'resolution_placeholder = ...;' in the .geo template.")
+        if n1 != 1:
+            raise ValueError("Could not uniquely replace 'R_placeholder = ...;' in the .geo template.")
 
-    if xmax is not None and xmax != 0.0:
-        print0(f"Replacing xmax... {xmax}")
-        geo, n3 = re.subn(
-            r"(?m)^\s*w =\s*[0-9]+ \* R;",
-            f"w = {float(xmax)};",
-            geo,
-            count=1,
-        )
-        # print0(n3)
-        if n3 != 1:
-            raise ValueError("Could not uniquely replace 'w = ...;' in the .geo template.")
+        if resolution is not None:
+            geo, n2 = re.subn(
+                r"(?m)^\s*resolution_placeholder\s*=\s*[^;]*;",
+                f"resolution_placeholder = {int(resolution)};",
+                geo,
+                count=1,
+            )
+            if n2 != 1:
+                raise ValueError("Could not uniquely replace 'resolution_placeholder = ...;' in the .geo template.")
 
-    if ymax is not None and ymax != 0.0:
-        print0(f"Replacing ymax... {ymax}")
-        geo, n4 = re.subn(
-            r"(?m)^\s*h =\s*[0-9]+ \* R;",
-            f"h = {float(ymax)};",
-            geo,
-            count=1,
-        )
-        if n4 != 1:
-            raise ValueError("Could not uniquely replace 'h = ...;' in the .geo template.")
+        if xmax is not None and xmax != 0.0:
+            print0(f"Replacing xmax... {xmax}")
+            geo, n3 = re.subn(
+                r"(?m)^\s*w =\s*[0-9]+ \* R;",
+                f"w = {float(xmax)};",
+                geo,
+                count=1,
+            )
+            # print0(n3)
+            if n3 != 1:
+                raise ValueError("Could not uniquely replace 'w = ...;' in the .geo template.")
 
-    # Strip directives that are inconvenient/dangerous when using the Python API
-    # (we will generate and write from Python)
-    # geo = re.sub(r"(?m)^\s*Mesh\s+\d+\s*;\s*$", "", geo)
-    # geo = re.sub(r'(?m)^\s*Save\s+"[^"]*"\s*;\s*$', "", geo)
-    # geo = re.sub(r"(?m)^\s*Exit\s*;\s*$", "", geo)
+        if ymax is not None and ymax != 0.0:
+            print0(f"Replacing ymax... {ymax}")
+            geo, n4 = re.subn(
+                r"(?m)^\s*h =\s*[0-9]+ \* R;",
+                f"h = {float(ymax)};",
+                geo,
+                count=1,
+            )
+            if n4 != 1:
+                raise ValueError("Could not uniquely replace 'h = ...;' in the .geo template.")
 
-    output_path = Path.cwd()/ output_path / "geom.geo"
-    print0(output_path)
-    # Decide where to write the modified .geo
-    if output_path.suffix.lower() == ".geo":
-        modified_geo_path = output_path
+        # Strip directives that are inconvenient/dangerous when using the Python API
+        # (we will generate and write from Python)
+        # geo = re.sub(r"(?m)^\s*Mesh\s+\d+\s*;\s*$", "", geo)
+        # geo = re.sub(r'(?m)^\s*Save\s+"[^"]*"\s*;\s*$', "", geo)
+        # geo = re.sub(r"(?m)^\s*Exit\s*;\s*$", "", geo)
+
+        output_path = Path.cwd()/ output_path / "geom.geo"
+        print0(output_path)
+        # Decide where to write the modified .geo
+        if output_path.suffix.lower() == ".geo":
+            modified_geo_path = output_path
+        else:
+            raise ValueError("output_path must end with '.geo'")
+
+        modified_geo_path.parent.mkdir(parents=True, exist_ok=True)
+        modified_geo_path.write_text(geo, encoding="utf-8")
+
+        result = modified_geo_path
     else:
-        raise ValueError("output_path must end with '.geo'")
+        result = None
 
-    modified_geo_path.parent.mkdir(parents=True, exist_ok=True)
-    modified_geo_path.write_text(geo, encoding="utf-8")
+    result = COMM.bcast(result, root=0)
 
-    return modified_geo_path
+    COMM.Barrier()
+
+    return result
