@@ -1657,7 +1657,7 @@ def run_post_continuation_transient(
                 mixed_norm = _safe_float_norm(w.vector())
                 finite_ok = np.isfinite(mixed_norm)
 
-                if restart_recovered and step == restart_step + 1:
+                if restart_recovered and step == restart_step:
                     rel_update_limit = 5e-2
                 else:
                     rel_update_limit = rel_update_reject
