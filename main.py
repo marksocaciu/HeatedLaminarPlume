@@ -686,7 +686,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
         MESH_NAME,
         PRINT_TAG_SUMMARY,
     )
-
+    
     sub_dx_dim = fenics.Measure(
         "dx",
         domain=sub_mesh_dim,
