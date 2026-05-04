@@ -774,11 +774,11 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
     
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-    biot_air_h_eff, biot_air_Bi = biot(
-        sub_mesh_dim, sub_ft_dim, T_full, qn_air,
-        T_ambient, experiment.wire.properties["k"],
-        experiment.dimensions.wire.diameter
-    )
+    # biot_air_h_eff, biot_air_Bi = biot(
+    #     sub_mesh_dim, sub_ft_dim, T_full, qn_air,
+    #     T_ambient, experiment.wire.properties["k"],
+    #     experiment.dimensions.wire.diameter
+    # )
 
     print0(f"Initial max temperature: {global_vec_max(T_full):.2f} K")
     print0(f"Initial min temperature: {global_vec_min(T_full):.2f} K")
