@@ -1479,6 +1479,13 @@ def run_post_continuation_transient(
     rejected_steps = 0
     history = []
     status = "transient_complete"
+    restart_settle_steps = 10
+    restart_rel_update_reject = 5.0e-2
+    restart_rel_u_reject = 2.0e-1
+    restart_rel_theta_reject = 1.0e-1
+    restart_u_abs_max = 1.0e3
+    restart_theta_min = -1.0
+    restart_theta_max = 20.0
 
     x_probe = max(1.0e-8, 2.0 * float(sub_mesh_star.hmin())) if sub_mesh_star is not None else 1.0e-8
     
@@ -1523,6 +1530,51 @@ def run_post_continuation_transient(
         except Exception:
             return float("nan")
         return val if np.isfinite(val) else float("nan")
+
+    def _relative_function_update(new_f, old_f):
+        delta_f = new_f.vector().copy()
+        delta_f.axpy(-1.0, old_f.vector())
+        return delta_f.norm("l2") / (new_f.vector().norm("l2") + 1.0e-14)
+
+
+    def _candidate_component_diagnostics(w_candidate, w_old):
+        diag = {
+            "rel_p": float("nan"),
+            "rel_u": float("nan"),
+            "rel_theta": float("nan"),
+            "p_min": float("nan"),
+            "p_max": float("nan"),
+            "u_max": float("nan"),
+            "theta_min": float("nan"),
+            "theta_max": float("nan"),
+        }
+
+        try:
+            p_new, u_new, theta_new = w_candidate.split(deepcopy=True)
+            p_old, u_old, theta_old = w_old.split(deepcopy=True)
+
+            diag["rel_p"] = _relative_function_update(p_new, p_old)
+            diag["rel_u"] = _relative_function_update(u_new, u_old)
+            diag["rel_theta"] = _relative_function_update(theta_new, theta_old)
+
+            diag["p_min"] = global_vec_min(p_new)
+            diag["p_max"] = global_vec_max(p_new)
+            diag["theta_min"] = global_vec_min(theta_new)
+            diag["theta_max"] = global_vec_max(theta_new)
+
+            if sub_mesh_star is not None:
+                Vmag = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
+                u_mag = fenics.project(
+                    fenics.sqrt(fenics.inner(u_new, u_new)),
+                    Vmag,
+                    solver_type="mumps",
+                )
+                diag["u_max"] = global_vec_max(u_mag)
+
+        except Exception as err:
+            print0(f"Candidate diagnostic failed: {err}")
+
+        return diag
 
     def _compute_integral_diagnostics(sol_w):
         diag = {
@@ -1657,16 +1709,93 @@ def run_post_continuation_transient(
                 mixed_norm = _safe_float_norm(w.vector())
                 finite_ok = np.isfinite(mixed_norm)
 
-                if restart_recovered and step == restart_step:
-                    rel_update_limit = 5e-2
-                else:
-                    rel_update_limit = rel_update_reject
+                in_restart_settle = (
+                    bool(restart_recovered)
+                    and restart_step is not None
+                    and step < int(restart_step) + int(restart_settle_steps)
+                )
 
-                if (not finite_ok) or (not np.isfinite(rel_update)) or (rel_update > rel_update_limit):
+                rel_update_limit = restart_rel_update_reject if in_restart_settle else rel_update_reject
+
+                candidate_diag = _candidate_component_diagnostics(w, w_n)
+
+                print0(
+                    "candidate diagnostics: "
+                    f"rel_mix={rel_update:.3e}, "
+                    f"rel_p={candidate_diag['rel_p']:.3e}, "
+                    f"rel_u={candidate_diag['rel_u']:.3e}, "
+                    f"rel_theta={candidate_diag['rel_theta']:.3e}, "
+                    f"p=[{candidate_diag['p_min']:.3e}, {candidate_diag['p_max']:.3e}], "
+                    f"|u|max={candidate_diag['u_max']:.3e}, "
+                    f"theta=[{candidate_diag['theta_min']:.3e}, {candidate_diag['theta_max']:.3e}], "
+                    f"limit={rel_update_limit:.3e}, "
+                    f"restart_settle={in_restart_settle}"
+                )
+
+                if not finite_ok or not np.isfinite(rel_update):
                     raise RuntimeError(
-                        f"transient step rejected by sanity check: rel_update={rel_update:.3e}, "
+                        f"transient step rejected by sanity check: non-finite state, "
+                        f"rel_update={rel_update:.3e}, ||w||={mixed_norm}"
+                    )
+
+                if rel_update > rel_update_limit:
+                    raise RuntimeError(
+                        f"transient step rejected by sanity check: "
+                        f"rel_update={rel_update:.3e}, "
+                        f"limit={rel_update_limit:.3e}, "
                         f"||w||={mixed_norm}"
                     )
+
+                if in_restart_settle:
+                    if (
+                        np.isfinite(candidate_diag["rel_u"])
+                        and candidate_diag["rel_u"] > restart_rel_u_reject
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"rel_u={candidate_diag['rel_u']:.3e}, "
+                            f"limit={restart_rel_u_reject:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["rel_theta"])
+                        and candidate_diag["rel_theta"] > restart_rel_theta_reject
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"rel_theta={candidate_diag['rel_theta']:.3e}, "
+                            f"limit={restart_rel_theta_reject:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["u_max"])
+                        and candidate_diag["u_max"] > restart_u_abs_max
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"|u|max={candidate_diag['u_max']:.3e}, "
+                            f"limit={restart_u_abs_max:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["theta_min"])
+                        and candidate_diag["theta_min"] < restart_theta_min
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"theta_min={candidate_diag['theta_min']:.3e}, "
+                            f"limit={restart_theta_min:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["theta_max"])
+                        and candidate_diag["theta_max"] > restart_theta_max
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"theta_max={candidate_diag['theta_max']:.3e}, "
+                            f"limit={restart_theta_max:.3e}"
+                        )
 
                 trial_success = True
                 copy_state(w_last_accepted, w)
@@ -1706,6 +1835,12 @@ def run_post_continuation_transient(
             "dt": dt,
             "newton_iterations": int(n_newton) if n_newton is not None else -1,
             "rel_update": float(rel_update),
+            "rel_p": float(candidate_diag.get("rel_p", float("nan"))),
+            "rel_u": float(candidate_diag.get("rel_u", float("nan"))),
+            "rel_theta": float(candidate_diag.get("rel_theta", float("nan"))),
+            "candidate_u_max": float(candidate_diag.get("u_max", float("nan"))),
+            "candidate_theta_min": float(candidate_diag.get("theta_min", float("nan"))),
+            "candidate_theta_max": float(candidate_diag.get("theta_max", float("nan"))),
         }
         row.update(_sample_probes(w_n))
         if diagnostic_every > 0 and (step % diagnostic_every == 0):
@@ -1747,8 +1882,8 @@ def run_post_continuation_transient(
             t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
 
             # --- Effective Grashof number diagnostic ---
-            theta_max = float(theta.vector().max())
-            theta_min = float(theta.vector().min())
+            theta_max = float(global_vec_max(theta.vector()))
+            theta_min = float(global_vec_min(theta.vector()))
 
             dT_eff = scales.dTref * max(theta_max, 0.0)
 
@@ -1823,7 +1958,7 @@ def run_post_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+                    print0(f"Biot number stats: min={global_vec_min(biots.vector()):.6e}, max={global_vec_max(biots.vector()):.6e}")
                 except Exception as err:
                     print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
@@ -1844,13 +1979,28 @@ def run_post_continuation_transient(
             dt_min=dt_min,
             dt_max=dt_max
         )
-        if n_newton is not None and n_newton <= int(newton_easy_iters) and rel_update <= float(rel_update_easy):
-            dt = min(float(dt_max), float(dt) * float(dt_growth))
-        elif n_newton is not None and (n_newton >= int(newton_hard_iters) or rel_update >= float(rel_update_hard)):
-            dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+
+        in_restart_settle_after_accept = (
+            bool(restart_recovered)
+            and restart_step is not None
+            and step <= int(restart_step) + int(restart_settle_steps)
+        )
+
+        if in_restart_settle_after_accept:
+            # During the restart-settling window, do not grow dt.
+            # Let the migrated state relax onto the new mesh/discretization first.
+            if rel_update >= float(rel_update_hard):
+                dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+            else:
+                dt = min(float(dt), float(dt_max))
         else:
-            dt = min(float(dt), float(dt_max))
-        
+            if n_newton is not None and n_newton <= int(newton_easy_iters) and rel_update <= float(rel_update_easy):
+                dt = min(float(dt_max), float(dt) * float(dt_growth))
+            elif n_newton is not None and (n_newton >= int(newton_hard_iters) or rel_update >= float(rel_update_hard)):
+                dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+            else:
+                dt = min(float(dt), float(dt_max))
+
         dt = min(dt_cfl, dt)
 
     if step >= int(step_max) and status == "transient_complete":
