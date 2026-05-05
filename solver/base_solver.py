@@ -1901,11 +1901,11 @@ def run_post_continuation_transient(
                 f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
             )
 
-            save_experiment(p_out, sub_mesh_dim, [p_dim])
+            # save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
             save_experiment(q_out, sub_mesh_dim, [q_heat])
-            save_experiment(qmag_out, sub_mesh_dim, [q_mag])
+            # save_experiment(qmag_out, sub_mesh_dim, [q_mag])
 
             Lref_dim = float(scales.Lref)
             plane_fluxes = compute_horizontal_plane_heat_fluxes(
