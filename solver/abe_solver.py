@@ -852,7 +852,7 @@ def run_post_abe_continuation_transient(
     max_newton_it: int = 20,
     max_retries_per_step: int = 8,
     atol: float = 1.0e-9,
-    rtol: float = 1.0e-8,
+    rtol: float = 1.0e-12,
     rel_update_easy: float = 1.0e-3,
     rel_update_hard: float = 5.0e-3,
     rel_update_reject: float = 2.0e-2,
@@ -865,6 +865,8 @@ def run_post_abe_continuation_transient(
     history_csv_path: str = "",
     start_time: float = 0.0,
     start_step: int = 0,
+    restart_recovered=False,
+    restart_step:int = 0,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -896,6 +898,13 @@ def run_post_abe_continuation_transient(
     rejected_steps = 0
     history = []
     status = "transient_complete"
+    restart_settle_steps = 10
+    restart_rel_update_reject = 5.0e-2
+    restart_rel_u_reject = 2.0e-1
+    restart_rel_theta_reject = 1.0e-1
+    restart_u_abs_max = 1.0e3
+    restart_theta_min = -1.0
+    restart_theta_max = 20.0
 
     x_probe = max(1.0e-8, 2.0 * float(sub_mesh_star.hmin())) if sub_mesh_star is not None else 1.0e-8
     if sub_mesh_star is not None:
@@ -940,6 +949,50 @@ def run_post_abe_continuation_transient(
             return float("nan")
         return val if np.isfinite(val) else float("nan")
 
+    def _relative_function_update(new_f, old_f):
+        delta_f = new_f.vector().copy()
+        delta_f.axpy(-1.0, old_f.vector())
+        return delta_f.norm("l2") / (new_f.vector().norm("l2") + 1.0e-14)
+
+    def _candidate_component_diagnostics(w_candidate, w_old):
+        diag = {
+            "rel_p": float("nan"),
+            "rel_u": float("nan"),
+            "rel_theta": float("nan"),
+            "p_min": float("nan"),
+            "p_max": float("nan"),
+            "u_max": float("nan"),
+            "theta_min": float("nan"),
+            "theta_max": float("nan"),
+        }
+
+        try:
+            p_new, u_new, theta_new = w_candidate.split(deepcopy=True)
+            p_old, u_old, theta_old = w_old.split(deepcopy=True)
+
+            diag["rel_p"] = _relative_function_update(p_new, p_old)
+            diag["rel_u"] = _relative_function_update(u_new, u_old)
+            diag["rel_theta"] = _relative_function_update(theta_new, theta_old)
+
+            diag["p_min"] = global_vec_min(p_new)
+            diag["p_max"] = global_vec_max(p_new)
+            diag["theta_min"] = global_vec_min(theta_new)
+            diag["theta_max"] = global_vec_max(theta_new)
+
+            if sub_mesh_star is not None:
+                Vmag = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
+                u_mag = fenics.project(
+                    fenics.sqrt(fenics.inner(u_new, u_new)),
+                    Vmag,
+                    solver_type="mumps",
+                )
+                diag["u_max"] = global_vec_max(u_mag)
+
+        except Exception as err:
+            print0(f"Candidate diagnostic failed: {err}")
+
+        return diag
+
     def _compute_integral_diagnostics(sol_w):
         diag = {
             "Q_interface_W_per_m": float("nan"),
@@ -962,11 +1015,11 @@ def run_post_abe_continuation_transient(
             diag["Q_far_W_per_m"] = Q_far
             if abs(Q_interface) > 1.0e-14:
                 diag["heat_imbalance_rel"] = abs(Q_interface - Q_far) / abs(Q_interface)
-            diag["theta_max"] = float(theta.vector().max())
+            diag["theta_max"] = global_vec_max(theta)
             try:
                 Vmag = fenics.FunctionSpace(sub_mesh_star, "CG", 1)
                 umag = fenics.project(fenics.sqrt(fenics.inner(u_star, u_star)), Vmag, solver_type="mumps")
-                diag["u_max"] = float(umag.vector().max())
+                diag["u_max"] = global_vec_max(umag)
             except Exception:
                 diag["u_max"] = float("nan")
         except Exception:
@@ -982,10 +1035,13 @@ def run_post_abe_continuation_transient(
             for key in row.keys():
                 if key not in fieldnames:
                     fieldnames.append(key)
-        with open(path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        if is_rank0():
+            with open(path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(rows)
+
+        COMM.Barrier()
 
     def _window_mean(values):
         vals = [float(v) for v in values if np.isfinite(v)]
@@ -1066,11 +1122,93 @@ def run_post_abe_continuation_transient(
                 mixed_norm = _safe_float_norm(w.vector())
                 finite_ok = np.isfinite(mixed_norm)
 
-                if (not finite_ok) or (not np.isfinite(rel_update)) or (rel_update > rel_update_reject):
+                in_restart_settle = (
+                    bool(restart_recovered)
+                    and restart_step is not None
+                    and step < int(restart_step) + int(restart_settle_steps)
+                )
+
+                rel_update_limit = restart_rel_update_reject if in_restart_settle else rel_update_reject
+
+                candidate_diag = _candidate_component_diagnostics(w, w_n)
+
+                print0(
+                    "candidate diagnostics: "
+                    f"rel_mix={rel_update:.3e}, "
+                    f"rel_p={candidate_diag['rel_p']:.3e}, "
+                    f"rel_u={candidate_diag['rel_u']:.3e}, "
+                    f"rel_theta={candidate_diag['rel_theta']:.3e}, "
+                    f"p=[{candidate_diag['p_min']:.3e}, {candidate_diag['p_max']:.3e}], "
+                    f"|u|max={candidate_diag['u_max']:.3e}, "
+                    f"theta=[{candidate_diag['theta_min']:.3e}, {candidate_diag['theta_max']:.3e}], "
+                    f"limit={rel_update_limit:.3e}, "
+                    f"restart_settle={in_restart_settle}"
+                )
+
+                if not finite_ok or not np.isfinite(rel_update):
                     raise RuntimeError(
-                        f"transient step rejected by sanity check: rel_update={rel_update:.3e}, "
+                        f"transient step rejected by sanity check: non-finite state, "
+                        f"rel_update={rel_update:.3e}, ||w||={mixed_norm}"
+                    )
+
+                if rel_update > rel_update_limit:
+                    raise RuntimeError(
+                        f"transient step rejected by sanity check: "
+                        f"rel_update={rel_update:.3e}, "
+                        f"limit={rel_update_limit:.3e}, "
                         f"||w||={mixed_norm}"
                     )
+
+                if in_restart_settle:
+                    if (
+                        np.isfinite(candidate_diag["rel_u"])
+                        and candidate_diag["rel_u"] > restart_rel_u_reject
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"rel_u={candidate_diag['rel_u']:.3e}, "
+                            f"limit={restart_rel_u_reject:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["rel_theta"])
+                        and candidate_diag["rel_theta"] > restart_rel_theta_reject
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"rel_theta={candidate_diag['rel_theta']:.3e}, "
+                            f"limit={restart_rel_theta_reject:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["u_max"])
+                        and candidate_diag["u_max"] > restart_u_abs_max
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"|u|max={candidate_diag['u_max']:.3e}, "
+                            f"limit={restart_u_abs_max:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["theta_min"])
+                        and candidate_diag["theta_min"] < restart_theta_min
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"theta_min={candidate_diag['theta_min']:.3e}, "
+                            f"limit={restart_theta_min:.3e}"
+                        )
+
+                    if (
+                        np.isfinite(candidate_diag["theta_max"])
+                        and candidate_diag["theta_max"] > restart_theta_max
+                    ):
+                        raise RuntimeError(
+                            f"restart-settle sanity rejection: "
+                            f"theta_max={candidate_diag['theta_max']:.3e}, "
+                            f"limit={restart_theta_max:.3e}"
+                        )
 
                 trial_success = True
                 copy_state(w_last_accepted, w)
@@ -1110,6 +1248,12 @@ def run_post_abe_continuation_transient(
             "dt": dt,
             "newton_iterations": int(n_newton) if n_newton is not None else -1,
             "rel_update": float(rel_update),
+            "rel_p": float(candidate_diag.get("rel_p", float("nan"))),
+            "rel_u": float(candidate_diag.get("rel_u", float("nan"))),
+            "rel_theta": float(candidate_diag.get("rel_theta", float("nan"))),
+            "candidate_u_max": float(candidate_diag.get("u_max", float("nan"))),
+            "candidate_theta_min": float(candidate_diag.get("theta_min", float("nan"))),
+            "candidate_theta_max": float(candidate_diag.get("theta_max", float("nan"))),
         }
         row.update(_sample_probes(w_n))
         if diagnostic_every > 0 and (step % diagnostic_every == 0):
@@ -1142,13 +1286,43 @@ def run_post_abe_continuation_transient(
                 experiment.fluid.properties["rho"],
             )
 
+            k_air = fenics.Constant(experiment.fluid.properties["k"])
+            q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
+            q_out = T_path.split(".xdmf")[0] + f"_heatflux_transient_{step:05d}.xdmf"
+            qmag_out = T_path.split(".xdmf")[0] + f"_heatflux_mag_transient_{step:05d}.xdmf"
+
             p_out = p_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
             u_out = u_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
             t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
 
+            # --- Effective Grashof number diagnostic ---
+            theta_max = float(global_vec_max(theta))
+            theta_min = float(global_vec_min(theta))
+
+            dT_eff = scales.dTref * max(theta_max, 0.0)
+
+            props = experiment.fluid.properties
+            g = float(props.get("g", 9.81))
+            beta = float(props["beta"])
+            nu = float(scales.nu)
+
+            L_eff = float(scales.Lref)   # keep consistent with your reference Gr/Ra definition
+
+            Gr_eff = g * beta * dT_eff * L_eff**3 / (nu**2)
+            Ra_eff = Gr_eff * float(scales.Pr)
+
+            print0(
+                f"  snapshot diagnostics: "
+                f"theta_min={theta_min:.6e}, theta_max={theta_max:.6e}, "
+                f"dT_eff={dT_eff:.6e} K, "
+                f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
+            )
+
             save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
+            save_experiment(q_out, sub_mesh_dim, [q_heat])
+            save_experiment(qmag_out, sub_mesh_dim, [q_mag])
 
             plane_fluxes = compute_horizontal_plane_heat_fluxes(
                 u_dim=u_dim,
@@ -1198,7 +1372,7 @@ def run_post_abe_continuation_transient(
                         characteristic_length="radius",
                         return_local_field=True
                     )
-                    print0(f"Biot number stats: min={biots.vector().min():.6e}, max={biots.vector().max():.6e}")
+                    print0(f"Biot number stats: min={float(global_vec_min(biots)):.6e}, max={float(global_vec_max(biots)):.6e}")
                 except Exception as err:
                     print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
@@ -1220,12 +1394,27 @@ def run_post_abe_continuation_transient(
             dt_max=dt_max
         )
         
-        if n_newton is not None and n_newton <= int(newton_easy_iters) and rel_update <= float(rel_update_easy):
-            dt = min(float(dt_max), float(dt) * float(dt_growth))
-        elif n_newton is not None and (n_newton >= int(newton_hard_iters) or rel_update >= float(rel_update_hard)):
-            dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+        in_restart_settle_after_accept = (
+            bool(restart_recovered)
+            and restart_step is not None
+            and step <= int(restart_step) + int(restart_settle_steps)
+        )
+
+        if in_restart_settle_after_accept:
+            # During the restart-settling window, do not grow dt.
+            # Let the migrated state relax onto the new mesh/discretization first.
+            if rel_update >= float(rel_update_hard):
+                dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+            else:
+                dt = min(float(dt), float(dt_max))
         else:
-            dt = min(float(dt), float(dt_max))
+            if n_newton is not None and n_newton <= int(newton_easy_iters) and rel_update <= float(rel_update_easy):
+                dt = min(float(dt_max), float(dt) * float(dt_growth))
+            elif n_newton is not None and (n_newton >= int(newton_hard_iters) or rel_update >= float(rel_update_hard)):
+                dt = max(float(dt_min), float(dt) * float(dt_hard_cut))
+            else:
+                dt = min(float(dt), float(dt_max))
+
         dt = min(dt_cfl, dt)
         
     if step >= int(step_max) and status == "transient_complete":

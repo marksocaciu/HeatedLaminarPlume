@@ -1173,8 +1173,6 @@ def build_ptc_problem(
     convection_scale=1.0,
     SUPG=False,
     buoyancy_prefactor=None,
-    outlet_penalty=0.0,
-    backflow_beta=0.0,
 ):
     inner, dot, grad, div, sym = fenics.inner, fenics.dot, fenics.grad, fenics.div, fenics.sym
 

@@ -34,7 +34,6 @@ class MeshPaths:
     air_cells: Path
     air_facets: Path
 
-
 def make_mesh_paths(run_root):
     run_root = Path(run_root)
     return MeshPaths(
@@ -86,7 +85,6 @@ def _infer_xdmf_attribute_name(xdmf_path: str) -> str:
                 return name
     raise RuntimeError(f"Could not infer XDMF Attribute Name from {xdmf_path}")
 
-
 def _load_checkpoint_snapshot_from_xdmf(xdmf_path: str, function):
     attr_name = _infer_xdmf_attribute_name(xdmf_path)
     with fenics.XDMFFile(function.function_space().mesh().mpi_comm(), xdmf_path) as xdmf:
@@ -95,7 +93,6 @@ def _load_checkpoint_snapshot_from_xdmf(xdmf_path: str, function):
         except RuntimeError:
             xdmf.read(function)
     return function
-
 
 def _last_transient_step_from_history(history_csv_path: str) -> int:
     if not history_csv_path or not os.path.exists(history_csv_path):
@@ -1045,7 +1042,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
             dt_min=1.0e-5,
             dt_max=1.0,
             t_end=15000.0,
-            step_max=200000,
+            n_steps=200000,
             save_every=20,
             max_retries_per_step=8,
             rel_update_easy=1.0e-3,
@@ -1581,17 +1578,26 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
 def abs_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+    mkdir0(experiment.name)
     run_root = make_run_root(experiment.name, "abs", reuse_existing=existing_run_root)
+
+    if is_rank0():
+        os.makedirs(os.path.join(run_root, "base"), exist_ok=True)
+    COMM.Barrier()
+
     GEOM_FILE = geometry_template(
         wire_radius=experiment.dimensions.wire.diameter / 2,
         output_path=experiment.name,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
-        resolution=250,
+        resolution=100,
     )
-    MSH_FILE = experiment.name + "/plume.msh"
-    TRIG_XDMF_PATH = run_root + "/plume.xdmf"
-    FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
+    
+    MSH_FILE = run_root + "/plume.msh"
+    TRIG_XDMF_PATH = run_root + "/full_cells.xdmf"
+    FACETS_XDMF_PATH = run_root + "/full_facets.xdmf"
+    AIR_TRIG_XDMF_PATH = run_root + "/air_cells.xdmf"
+    AIR_FACETS_XDMF_PATH = run_root + "/air_facets.xdmf"
     OUTPUT_XDMF_PATH_WIRE = run_root + "/abs/wire_temperature.xdmf"
     OUTPUT_XDMF_PATH_TEMP = run_root + "/abs/temperature.xdmf"
     OUTPUT_XDMF_PATH_AIR_T = run_root + "/abs/air_temperature.xdmf"
@@ -1601,19 +1607,72 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     MESH_NAME = "Grid"
     ELEM = "triangle"
 
-    # Generate and read mesh
-    generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
-    
-    # --- 1) read mesh (dim)  [already]
-    mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
-        TRIG_XDMF_PATH, FACETS_XDMF_PATH, MESH_NAME, PRINT_TAG_SUMMARY
+   # Rank 0 generates:
+    #   full_cells.xdmf/full_facets.xdmf
+    #   air_cells.xdmf/air_facets.xdmf
+    # All ranks wait at the barrier inside generate_mesh().
+    mesh_files_exist = (
+        os.path.exists(TRIG_XDMF_PATH)
+        and os.path.exists(FACETS_XDMF_PATH)
+        and os.path.exists(AIR_TRIG_XDMF_PATH)
+        and os.path.exists(AIR_FACETS_XDMF_PATH)
     )
 
-    # --- 2) create submesh (dim)
-    sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
+    if existing_run_root and mesh_files_exist:
+        print0("Using existing mesh files; not regenerating gmsh mesh.")
+        COMM.Barrier()
+    else:
+        generate_mesh(
+            GEOM_FILE,
+            MSH_FILE,
+            TRIG_XDMF_PATH,
+            FACETS_XDMF_PATH,
+            AIR_TRIG_XDMF_PATH=AIR_TRIG_XDMF_PATH,
+            AIR_FACETS_XDMF_PATH=AIR_FACETS_XDMF_PATH,
+            AIR_TAG_VALUE=AIR_TAG,
+            ELEM=ELEM,
+            PRUNE_Z=True,
+        )
 
+    # Full dimensional mesh.
+    # Keep this for your full-domain initial thermal solve.
+    mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
+        TRIG_XDMF_PATH,
+        FACETS_XDMF_PATH,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+
+    # Air-only dimensional mesh.
+    # This replaces:
+    #     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(...)
+    sub_mesh_dim, air_ct, air_ft, _, sub_dx_dim, _, sub_mc_dim, sub_ft_dim = read_mesh(
+        AIR_TRIG_XDMF_PATH,
+        AIR_FACETS_XDMF_PATH,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+    
+    sub_dx_dim = fenics.Measure(
+        "dx",
+        domain=sub_mesh_dim,
+        subdomain_data=sub_mc_dim,
+    )
+    sub_ds_dim = fenics.Measure(
+        "ds",
+        domain=sub_mesh_dim,
+        subdomain_data=sub_ft_dim,
+    )
+    
     scales = compute_nondimensional_scales(experiment)
     print0(scales)
+    print0(f"Uref   = {scales.Uref:.6e} m/s")
+    print0(f"Uplume = {scales.Uplume:.6e} m/s")
+    print0(f"Uref/Uplume = {scales.Uref_over_Uplume:.6e}")
+    print0(f"Lref   = {scales.Lref:.6e} m")
+    print0(f"Lplume = {scales.Lplume:.6e} m")
+    print0(f"dTref  = {scales.dTref:.6e} K")
+    print0(f"dTline = {scales.dTline:.6e} K")
 
     # --- 3) conduction initial guess (dim parent mesh)
     print0("Computing initial guess for temperature field...")
@@ -1640,9 +1699,9 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     theta_full_dim.vector().apply("insert")
     theta_full_dim.rename("theta_full", "theta_full")
 
-    print0("theta min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
-    print0("T_dim  min/max:", T_air_dim.vector().min(), T_air_dim.vector().max())
-    print0("T_nondim min/max:", theta_full_dim.vector().min(), theta_full_dim.vector().max())
+    print0("theta min/max:", global_vec_min(theta_full_dim), global_vec_max(theta_full_dim))
+    print0("T_dim  min/max:", global_vec_min(T_air_dim), global_vec_max(T_air_dim))
+    print0("T_nondim min/max:", global_vec_min(theta_full_dim), global_vec_max(theta_full_dim))
 
     # --- (still dimensional) compute qn_air using your current routine
     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
@@ -1651,35 +1710,58 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
 
     # Optional diagnostic: Biot numbers should use dimensional geometry/fields
-    biot_air_h_eff, biot_air_Bi = biot(
-        sub_mesh_dim, sub_ft_dim, T_full, qn_air,
-        T_ambient, experiment.wire.properties["k"],
-        experiment.dimensions.wire.diameter
-    )
+    # biot_air_h_eff, biot_air_Bi = biot(
+    #     sub_mesh_dim, sub_ft_dim, T_full, qn_air,
+    #     T_ambient, experiment.wire.properties["k"],
+    #     experiment.dimensions.wire.diameter
+    # )
 
-    print0(f"Initial max temperature: {T_full.vector().max():.2f} K")
-    print0(f"Initial min temperature: {T_full.vector().min():.2f} K")
-    print0(f"Initial max theta (dim-submesh): {theta_full_dim.vector().max():.6e}")
-    print0(f"Initial min theta (dim-submesh): {theta_full_dim.vector().min():.6e}")
+    print0(f"Initial max temperature: {global_vec_max(T_full):.2f} K")
+    print0(f"Initial min temperature: {global_vec_min(T_full):.2f} K")
+    print0(f"Initial max theta (dim-submesh): {global_vec_max(theta_full_dim):.6e}")
+    print0(f"Initial min theta (dim-submesh): {global_vec_min(theta_full_dim):.6e}")
 
     # --- 5) scale parent mesh coordinates (dim→star)
     Lref = float(scales.Lref)
     scale_mesh_inplace(mesh, Lref)
     scale_mesh_inplace(sub_mesh_dim, Lref)
 
-    # --- 6) recreate submesh + measures on scaled parent mesh
-    sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star, theta_full_star, qn_air_star = \
-    build_star_submesh_and_transfer(
-        mesh=mesh,
-        mc=mc,
-        mf=mf,
-        air_tag=AIR_TAG,
-        theta_full_dim=theta_full_dim,
-        qn_air=qn_air,
+    try:
+        mesh.bounding_box_tree().build(mesh)
+        sub_mesh_dim.bounding_box_tree().build(sub_mesh_dim)
+    except Exception:
+        pass
+
+    COMM.Barrier()
+
+    # The air mesh has been scaled in place, so it is now the star mesh.
+    # No SubMesh reconstruction is needed.
+    sub_mesh_star = sub_mesh_dim
+    sub_ft_star = sub_ft_dim
+    sub_dx_star = fenics.Measure(
+        "dx",
+        domain=sub_mesh_star,
+        subdomain_data=sub_mc_dim,
+    )
+    sub_ds_star = fenics.Measure(
+        "ds",
+        domain=sub_mesh_star,
+        subdomain_data=sub_ft_star,
     )
 
-    print0(f"Initial max theta (star-submesh): {theta_full_star.vector().max():.6e}")
-    print0(f"Initial min theta (star-submesh): {theta_full_star.vector().min():.6e}")
+    qn_air_star = qn_air
+
+    theta_full_star = solve_air_initial_theta(
+        air_mesh=sub_mesh_star,
+        air_facet_markers=sub_ft_star,
+        air_ds=sub_ds_star,
+        qn_air=qn_air_star,
+        interface_tag=INTERFACE_TAG,
+        cold_tags=(101, 103),
+    )
+
+    print0(f"Initial max theta (star-submesh): {global_vec_max(theta_full_star):.6e}")
+    print0(f"Initial min theta (star-submesh): {global_vec_min(theta_full_star):.6e}")
     print0(f"Rho_air: {experiment.fluid.properties['rho']}")
     print0(f"Beta_air: {experiment.fluid.properties['beta']}")
     
@@ -1858,6 +1940,11 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
     except Exception:
         print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
+
+    dt_start=1.0e-4
+    if restart_from_last_transient:
+        dt_start = restart_meta["dt"]
+        print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
     
     w, transient_info = run_post_abe_continuation_transient(
             experiment=experiment,
@@ -1875,14 +1962,14 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             p_path=OUTPUT_XDMF_PATH_AIR_P,
             u_path=OUTPUT_XDMF_PATH_AIR_V,
             T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=1.0e-5,
+            dt_start=dt_start,
             dt_growth=1.1,
             dt_cut=0.8,
             dt_hard_cut=0.5,
             dt_min=1.0e-5,
             dt_max=1.0,
             t_end=15000.0,
-            step_max=20000,
+            n_steps=200000,
             save_every=20,
             max_retries_per_step=8,
             rel_update_easy=1.0e-3,
@@ -1894,6 +1981,8 @@ def abs_version(experiment: Experiment, restart_from_last_transient: bool = Fals
             start_time=restart_meta["time"],
             start_step=restart_meta["step"],
             history_csv_path=run_root + "/transient_history.csv",
+            restart_recovered=restart_from_last_transient,
+            restart_step=restart_meta["step"],
         )
 
     print0("transient status:", transient_info["status"])
