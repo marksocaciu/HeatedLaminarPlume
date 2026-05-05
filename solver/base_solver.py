@@ -1910,12 +1910,13 @@ def run_post_continuation_transient(
             save_experiment(q_out, sub_mesh_dim, [q_heat])
             save_experiment(qmag_out, sub_mesh_dim, [q_mag])
 
+            Lref_dim = float(scales.Lref)
             plane_fluxes = compute_horizontal_plane_heat_fluxes(
                 u_dim=u_dim,
                 T_dim=T_dim,
                 sub_mesh_dim=sub_mesh_dim,
                 experiment=experiment,
-                y_planes_m=(0.01, 0.02, 0.04, 0.08),
+                y_planes_m=(0.01 / Lref_dim, 0.02 / Lref_dim, 0.04 / Lref_dim, 0.08 / Lref_dim),
                 T_ref=T_ambient,
                 nx=400,
                 half_domain_symmetric=True,
