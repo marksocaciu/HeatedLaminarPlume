@@ -1916,7 +1916,7 @@ def run_post_continuation_transient(
                 T_dim=T_dim,
                 sub_mesh_dim=sub_mesh_dim,
                 experiment=experiment,
-                y_planes_m=(0.01 / Lref_dim, 0.02 / Lref_dim, 0.04 / Lref_dim, 0.08 / Lref_dim),
+                y_planes_m=(0.01, 0.02, 0.04, 0.08),
                 T_ref=T_ambient,
                 nx=400,
                 half_domain_symmetric=True,
