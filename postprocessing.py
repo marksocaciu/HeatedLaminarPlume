@@ -6,12 +6,16 @@ Implemented diagnostics:
   1. Q_conv_net / Q_conv_up / Q_conv_down
   2. uy_min / uy_mean / uy_max / ∫uy dx / ∫|uy| dx
   3. Multiple integration half-widths
-  4. Final uy(x) profile plots
-  5. Final CSV with T, uy, and h_flux density
+  4. Final uy(x) and 10*ux(x) profile plots over the full requested line width
+  5. Final CSV with T, theta=T-T_inf, ux, 10ux, uy, and h_flux density
+  6. Temperature evolution plots use temperature excess T-T_inf
 
 Usage:
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-    python postprocess_temperature_convergence.py /path/to/results/folder --workers 8
+    python postprocess_temperature_convergence.py /path/to/results/folder \
+        --workers 8 \
+        --velocity-scale-factor 0.153657 \
+        --T-inf 292.96
 
 Expected temperature files:
     air_temperature_transient_*.h5
@@ -25,7 +29,7 @@ Expected HDF5 layout:
     VisualisationVector/0
 
 Temperature is expected to be dimensional [K].
-Velocity is expected to be dimensional [m/s].
+Velocity is expected to be dimensional [m/s], after applying --velocity-scale-factor.
 
 Mesh coordinates are expected to be nondimensional by Lref unless
 the coordinate range already looks physical.
@@ -157,7 +161,7 @@ def integrate_trapezoid_ignore_nan(y, x):
     if np.count_nonzero(valid) < 2:
         return np.nan
 
-    return float(np.trapezoid(y[valid], x[valid]))
+    return float(np.trapz(y[valid], x[valid]))
 
 
 def add_plane_window_diagnostics(
@@ -167,6 +171,7 @@ def add_plane_window_diagnostics(
     half_width: float,
     x_line: np.ndarray,
     T_profile: np.ndarray,
+    ux_profile: np.ndarray,
     uy_profile: np.ndarray,
     rho: float,
     cp: float,
@@ -176,6 +181,7 @@ def add_plane_window_diagnostics(
 
     xw = x_line[window]
     Tw = T_profile[window]
+    uxw = ux_profile[window]
     uyw = uy_profile[window]
 
     h_flux_w = rho * cp * (Tw - T_inf) * uyw
@@ -187,16 +193,25 @@ def add_plane_window_diagnostics(
     int_uy = integrate_trapezoid_ignore_nan(uyw, xw)
     int_abs_uy = integrate_trapezoid_ignore_nan(np.abs(uyw), xw)
 
+    int_ux = integrate_trapezoid_ignore_nan(uxw, xw)
+    int_abs_ux = integrate_trapezoid_ignore_nan(np.abs(uxw), xw)
+
     key = f"y_plus_{offset:.3f}_m_halfwidth_{half_width:.3f}_m"
 
     flux_row[f"Q_conv_net_{key}_W_per_m"] = Q_conv_net
     flux_row[f"Q_conv_up_{key}_W_per_m"] = Q_conv_up
     flux_row[f"Q_conv_down_{key}_W_per_m"] = Q_conv_down
 
+    flux_row[f"ux_min_{key}_m_per_s"] = float(np.nanmin(uxw))
+    flux_row[f"ux_mean_{key}_m_per_s"] = float(np.nanmean(uxw))
+    flux_row[f"ux_max_{key}_m_per_s"] = float(np.nanmax(uxw))
+    flux_row[f"int_ux_{key}_m2_per_s"] = int_ux
+    flux_row[f"int_abs_ux_{key}_m2_per_s"] = int_abs_ux
+    flux_row[f"ux_net_fraction_{key}"] = abs(int_ux) / max(int_abs_ux, 1.0e-300)
+
     flux_row[f"uy_min_{key}_m_per_s"] = float(np.nanmin(uyw))
     flux_row[f"uy_mean_{key}_m_per_s"] = float(np.nanmean(uyw))
     flux_row[f"uy_max_{key}_m_per_s"] = float(np.nanmax(uyw))
-
     flux_row[f"int_uy_{key}_m2_per_s"] = int_uy
     flux_row[f"int_abs_uy_{key}_m2_per_s"] = int_abs_uy
     flux_row[f"uy_net_fraction_{key}"] = abs(int_uy) / max(int_abs_uy, 1.0e-300)
@@ -245,6 +260,7 @@ def process_saved_step_worker(payload):
         )
 
     temp_box = temperature[box_mask]
+    theta_box = temp_box - T_inf
 
     result = {
         "step": step,
@@ -253,6 +269,9 @@ def process_saved_step_worker(payload):
         "box_T_min_K": float(np.nanmin(temp_box)),
         "box_T_mean_K": float(np.nanmean(temp_box)),
         "box_T_max_K": float(np.nanmax(temp_box)),
+        "box_theta_min_K": float(np.nanmin(theta_box)),
+        "box_theta_mean_K": float(np.nanmean(theta_box)),
+        "box_theta_max_K": float(np.nanmax(theta_box)),
         "T_box": temp_box,
     }
 
@@ -272,6 +291,17 @@ def process_saved_step_worker(payload):
             lref=lref,
         )
 
+        ux_profile = interpolate_vector_component_on_line(
+            coords=coords_u,
+            topology=topology_u,
+            vector=velocity,
+            component=0,
+            x_phys=x_line,
+            y_phys=y_line,
+            coordinates_are_nondim=coordinates_are_nondim,
+            lref=lref,
+        )
+
         uy_profile = interpolate_vector_component_on_line(
             coords=coords_u,
             topology=topology_u,
@@ -283,7 +313,15 @@ def process_saved_step_worker(payload):
             lref=lref,
         )
 
+        theta_profile = T_profile - T_inf
+
+        peak_row[f"theta_peak_y_plus_{offset:.3f}_m_K"] = float(np.nanmax(theta_profile))
+        peak_row[f"theta_min_y_plus_{offset:.3f}_m_K"] = float(np.nanmin(theta_profile))
+        peak_row[f"theta_mean_y_plus_{offset:.3f}_m_K"] = float(np.nanmean(theta_profile))
+
         peak_row[f"T_peak_y_plus_{offset:.3f}_m_K"] = float(np.nanmax(T_profile))
+        peak_row[f"T_min_y_plus_{offset:.3f}_m_K"] = float(np.nanmin(T_profile))
+        peak_row[f"T_mean_y_plus_{offset:.3f}_m_K"] = float(np.nanmean(T_profile))
 
         for half_width in flux_half_widths:
             add_plane_window_diagnostics(
@@ -292,6 +330,7 @@ def process_saved_step_worker(payload):
                 half_width=half_width,
                 x_line=x_line,
                 T_profile=T_profile,
+                ux_profile=ux_profile,
                 uy_profile=uy_profile,
                 rho=rho,
                 cp=cp,
@@ -439,8 +478,8 @@ def main() -> None:
     parser.add_argument(
         "--line-half-width",
         type=float,
-        default=0.20,
-        help="Half-width of extracted horizontal profiles [m]. Must be >= max(--flux-half-widths).",
+        default=None,
+        help="Half-width of extracted horizontal profiles [m]. Defaults to --box-half-width.",
     )
 
     parser.add_argument(
@@ -513,10 +552,14 @@ def main() -> None:
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
 
+    if args.line_half_width is None:
+        args.line_half_width = args.box_half_width
+
     if max(args.flux_half_widths) > args.line_half_width:
         raise ValueError(
             "max(--flux-half-widths) must be <= --line-half-width. "
-            f"Got max flux half-width {max(args.flux_half_widths)} and line half-width {args.line_half_width}."
+            f"Got max flux half-width {max(args.flux_half_widths)} and "
+            f"line half-width {args.line_half_width}."
         )
 
     results_dir = args.results_dir
@@ -545,6 +588,7 @@ def main() -> None:
     print(f"  cp          = {args.cp:.8e} J/(kg K)")
     print(f"  T_inf       = {args.T_inf:.8e} K")
     print(f"  velocity_scale_factor = {args.velocity_scale_factor:.8e}")
+    print(f"  line_half_width = {args.line_half_width:.8e} m")
     print(f"  flux_half_widths = {args.flux_half_widths}")
     print("  convergence box [physical]:")
     print(f"    x = [{box_x_min:.6e}, {box_x_max:.6e}] m")
@@ -642,6 +686,9 @@ def main() -> None:
                 "box_T_min_K": row["box_T_min_K"],
                 "box_T_mean_K": row["box_T_mean_K"],
                 "box_T_max_K": row["box_T_max_K"],
+                "box_theta_min_K": row["box_theta_min_K"],
+                "box_theta_mean_K": row["box_theta_mean_K"],
+                "box_theta_max_K": row["box_theta_max_K"],
                 "box_l2_update_K": l2_update,
                 "box_rel_l2_update": rel_l2_update,
                 "box_linf_update_K": linf_update,
@@ -678,8 +725,8 @@ def main() -> None:
         dtype=float,
     )
 
-    box_max = np.asarray(
-        [row["box_T_max_K"] for row in convergence_rows],
+    box_theta_max = np.asarray(
+        [row["box_theta_max_K"] for row in convergence_rows],
         dtype=float,
     )
 
@@ -702,19 +749,19 @@ def main() -> None:
     plt.close()
 
     plt.figure()
-    plt.plot(steps, box_max)
+    plt.plot(steps, box_theta_max)
     plt.xlabel("Saved step")
-    plt.ylabel("Maximum temperature in box [K]")
+    plt.ylabel(r"Maximum temperature excess in box $\max(T-T_\infty)$ [K]")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_box_peak_temperature.png", dpi=200)
+    plt.savefig(output_dir / "temperature_excess_box_peak.png", dpi=200)
     plt.close()
 
     peak_steps = np.asarray([row["step"] for row in plane_peak_rows], dtype=float)
 
     plt.figure()
     for offset in args.plane_offsets:
-        key = f"T_peak_y_plus_{offset:.3f}_m_K"
+        key = f"theta_peak_y_plus_{offset:.3f}_m_K"
         values = np.asarray([row[key] for row in plane_peak_rows], dtype=float)
         plt.plot(
             peak_steps,
@@ -723,11 +770,11 @@ def main() -> None:
         )
 
     plt.xlabel("Saved step")
-    plt.ylabel("Peak temperature on horizontal plane [K]")
+    plt.ylabel(r"Peak temperature excess $\max(T-T_\infty)$ [K]")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_plane_peak_evolution.png", dpi=200)
+    plt.savefig(output_dir / "temperature_excess_plane_peak_evolution.png", dpi=200)
     plt.close()
 
     flux_steps = np.asarray([row["step"] for row in enthalpy_flux_rows], dtype=float)
@@ -855,8 +902,8 @@ def main() -> None:
     )
     final_velocity = args.velocity_scale_factor * final_velocity
 
-    final_profiles_csv = output_dir / f"temperature_profiles_step_{final_step}.csv"
-    final_combined_profiles_csv = output_dir / f"final_profiles_T_uy_hflux_step_{final_step}.csv"
+    final_temperature_profiles_csv = output_dir / f"temperature_profiles_step_{final_step}.csv"
+    final_combined_profiles_csv = output_dir / f"final_profiles_T_theta_ux_uy_hflux_step_{final_step}.csv"
 
     temperature_profile_columns = {"x_m": x_line}
     combined_profile_columns = {"x_m": x_line}
@@ -875,27 +922,43 @@ def main() -> None:
             lref=args.lref,
         )
 
+        theta_profile = T_profile - args.T_inf
+
         temperature_profile_columns[f"T_y_plus_{offset:.3f}_m_K"] = T_profile
+        temperature_profile_columns[f"theta_y_plus_{offset:.3f}_m_K"] = theta_profile
+
         combined_profile_columns[f"T_y_plus_{offset:.3f}_m_K"] = T_profile
+        combined_profile_columns[f"theta_y_plus_{offset:.3f}_m_K"] = theta_profile
 
         plt.plot(
             x_line,
-            T_profile,
+            theta_profile,
             label=f"y = {offset * 100:.0f} cm above wire",
         )
 
     plt.xlabel("x [m]")
-    plt.ylabel("Temperature [K]")
-    plt.title(f"Temperature profiles at saved step {final_step}")
+    plt.ylabel(r"Temperature excess $T-T_\infty$ [K]")
+    plt.title(f"Temperature excess profiles at saved step {final_step}")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / f"temperature_profiles_step_{final_step}.png", dpi=200)
+    plt.savefig(output_dir / f"temperature_excess_profiles_step_{final_step}.png", dpi=200)
     plt.close()
 
     plt.figure()
     for offset in args.plane_offsets:
         y_line = np.full_like(x_line, wire_y + offset)
+
+        ux_profile = interpolate_vector_component_on_line(
+            coords=final_coords_u,
+            topology=final_topology_u,
+            vector=final_velocity,
+            component=0,
+            x_phys=x_line,
+            y_phys=y_line,
+            coordinates_are_nondim=coordinates_are_nondim,
+            lref=args.lref,
+        )
 
         uy_profile = interpolate_vector_component_on_line(
             coords=final_coords_u,
@@ -908,21 +971,31 @@ def main() -> None:
             lref=args.lref,
         )
 
+        combined_profile_columns[f"ux_y_plus_{offset:.3f}_m_m_per_s"] = ux_profile
+        combined_profile_columns[f"10ux_y_plus_{offset:.3f}_m_m_per_s"] = 10.0 * ux_profile
         combined_profile_columns[f"uy_y_plus_{offset:.3f}_m_m_per_s"] = uy_profile
 
         plt.plot(
             x_line,
             uy_profile,
-            label=f"y = {offset * 100:.0f} cm above wire",
+            label=f"$u_y$, y = {offset * 100:.0f} cm",
         )
 
+        plt.plot(
+            x_line,
+            10.0 * ux_profile,
+            linestyle="--",
+            label=f"$10u_x$, y = {offset * 100:.0f} cm",
+        )
+
+    plt.axhline(0.0, linewidth=0.8)
     plt.xlabel("x [m]")
-    plt.ylabel(r"$u_y$ [m/s]")
-    plt.title(f"Vertical velocity profiles at saved step {final_step}")
+    plt.ylabel(r"Velocity [m/s], with $10u_x$ scaled")
+    plt.title(f"Velocity profiles across box width at saved step {final_step}")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / f"vertical_velocity_profiles_step_{final_step}.png", dpi=200)
+    plt.savefig(output_dir / f"velocity_profiles_uy_and_10ux_step_{final_step}.png", dpi=200)
     plt.close()
 
     plt.figure()
@@ -939,6 +1012,17 @@ def main() -> None:
             lref=args.lref,
         )
 
+        ux_profile = interpolate_vector_component_on_line(
+            coords=final_coords_u,
+            topology=final_topology_u,
+            vector=final_velocity,
+            component=0,
+            x_phys=x_line,
+            y_phys=y_line,
+            coordinates_are_nondim=coordinates_are_nondim,
+            lref=args.lref,
+        )
+
         uy_profile = interpolate_vector_component_on_line(
             coords=final_coords_u,
             topology=final_topology_u,
@@ -950,11 +1034,9 @@ def main() -> None:
             lref=args.lref,
         )
 
-        h_flux_density = args.rho * args.cp * (T_profile - args.T_inf) * uy_profile
+        theta_profile = T_profile - args.T_inf
+        h_flux_density = args.rho * args.cp * theta_profile * uy_profile
 
-        combined_profile_columns[
-            f"TminusTinf_y_plus_{offset:.3f}_m_K"
-        ] = T_profile - args.T_inf
         combined_profile_columns[
             f"hflux_y_plus_{offset:.3f}_m_W_per_m2"
         ] = h_flux_density
@@ -977,7 +1059,7 @@ def main() -> None:
     )
     plt.close()
 
-    with final_profiles_csv.open("w", newline="") as f:
+    with final_temperature_profiles_csv.open("w", newline="") as f:
         fieldnames = list(temperature_profile_columns.keys())
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
@@ -997,7 +1079,7 @@ def main() -> None:
                 {key: combined_profile_columns[key][i] for key in fieldnames}
             )
 
-    print(f"  wrote {final_profiles_csv}")
+    print(f"  wrote {final_temperature_profiles_csv}")
     print(f"  wrote {final_combined_profiles_csv}")
     print("Done.")
 
