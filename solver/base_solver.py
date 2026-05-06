@@ -1436,8 +1436,8 @@ def run_post_continuation_transient(
     rel_update_easy: float = 1.0e-3,
     rel_update_hard: float = 5.0e-3,
     rel_update_reject: float = 2.0e-2,
-    newton_easy_iters: int = 3,
-    newton_hard_iters: int = 8,
+    newton_easy_iters: int = 6,
+    newton_hard_iters: int = 10,
     steady_window: int = 25,
     steady_rel_tol: float = 1.0e-5,
     steady_update_tol: float = 1.0e-6,
@@ -1901,10 +1901,24 @@ def run_post_continuation_transient(
                 f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
             )
 
+            J_dim = compute_entropy_flux_dim(
+                mesh=sub_mesh_dim,
+                u_dim=u_dim,
+                T_dim=T_dim,
+                rho=experiment.fluid.properties["rho"],
+                cp=experiment.fluid.properties["cp"],
+                k=experiment.fluid.properties["k"],
+                T_inf=T_ambient,
+                degree=1,
+                family="DG",
+            )
+            J_out = T_path.split(".xdmf")[0] + f"_entropy_flux_transient_{step:05d}.xdmf"
+            
             # save_experiment(p_out, sub_mesh_dim, [p_dim])
             save_experiment(u_out, sub_mesh_dim, [u_dim])
             save_experiment(t_out, sub_mesh_dim, [T_dim])
             save_experiment(q_out, sub_mesh_dim, [q_heat])
+            save_experiment(J_out, sub_mesh_dim, [J_dim])
             # save_experiment(qmag_out, sub_mesh_dim, [q_mag])
 
             Lref_dim = float(scales.Lref)

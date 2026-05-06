@@ -258,3 +258,48 @@ def append_plane_flux_csv(csv_path, row):
             writer.writerow(row)
 
     COMM.Barrier()
+
+def compute_entropy_flux_dim(
+    mesh,
+    u_dim,
+    T_dim,
+    rho,
+    cp,
+    k,
+    T_inf,
+    degree=1,
+    family="DG",
+):
+    """
+    Compute the dimensional vector flux
+
+        J = rho * cp * (T - T_inf) * u - k * grad(T)
+
+    where:
+        u     : dimensional velocity [m/s]
+        T     : dimensional temperature [K]
+        T_inf : ambient/reference temperature [K]
+        rho   : density [kg/m^3]
+        cp    : heat capacity [J/(kg K)]
+        k     : thermal conductivity [W/(m K)]
+
+    Returns:
+        J_dim : vector Function, units [W/m^2]
+    """
+
+    rho_c = fenics.Constant(float(rho))
+    cp_c = fenics.Constant(float(cp))
+    k_c = fenics.Constant(float(k))
+    T_inf_c = fenics.Constant(float(T_inf))
+
+    VJ = fenics.VectorFunctionSpace(mesh, family, degree)
+
+    J_expr = (
+        rho_c * cp_c * (T_dim - T_inf_c) * u_dim
+        - k_c * fenics.grad(T_dim)
+    )
+
+    J_dim = fenics.project(J_expr, VJ, solver_type="mumps")
+    J_dim.rename("J_entropy_dim", "J_entropy_dim")
+
+    return J_dim
