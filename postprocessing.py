@@ -2,6 +2,13 @@
 """
 Post-process saved plume temperature fields and convective enthalpy flux.
 
+Implemented diagnostics:
+  1. Q_conv_net / Q_conv_up / Q_conv_down
+  2. uy_min / uy_mean / uy_max / ∫uy dx / ∫|uy| dx
+  3. Multiple integration half-widths
+  4. Final uy(x) profile plots
+  5. Final CSV with T, uy, and h_flux density
+
 Usage:
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
     python postprocess_temperature_convergence.py /path/to/results/folder --workers 8
@@ -19,24 +26,9 @@ Expected HDF5 layout:
 
 Temperature is expected to be dimensional [K].
 Velocity is expected to be dimensional [m/s].
+
 Mesh coordinates are expected to be nondimensional by Lref unless
 the coordinate range already looks physical.
-
-Outputs:
-    <results_dir>/postprocess_temperature/
-        temperature_convergence_box.csv
-        temperature_plane_peaks.csv
-        enthalpy_flux_planes.csv
-        temperature_profiles_step_<last>.csv
-        enthalpy_flux_profiles_step_<last>.csv
-
-        temperature_box_relative_l2_update.png
-        temperature_box_linf_update.png
-        temperature_box_peak_temperature.png
-        temperature_plane_peak_evolution.png
-        enthalpy_flux_plane_evolution.png
-        temperature_profiles_step_<last>.png
-        enthalpy_flux_density_profiles_step_<last>.png
 """
 
 from __future__ import annotations
@@ -165,7 +157,49 @@ def integrate_trapezoid_ignore_nan(y, x):
     if np.count_nonzero(valid) < 2:
         return np.nan
 
-    return float(np.trapezoid(y[valid], x[valid]))
+    return float(np.trapz(y[valid], x[valid]))
+
+
+def add_plane_window_diagnostics(
+    flux_row: dict,
+    *,
+    offset: float,
+    half_width: float,
+    x_line: np.ndarray,
+    T_profile: np.ndarray,
+    uy_profile: np.ndarray,
+    rho: float,
+    cp: float,
+    T_inf: float,
+):
+    window = np.abs(x_line) <= half_width
+
+    xw = x_line[window]
+    Tw = T_profile[window]
+    uyw = uy_profile[window]
+
+    h_flux_w = rho * cp * (Tw - T_inf) * uyw
+
+    Q_conv_net = integrate_trapezoid_ignore_nan(h_flux_w, xw)
+    Q_conv_up = integrate_trapezoid_ignore_nan(np.maximum(h_flux_w, 0.0), xw)
+    Q_conv_down = integrate_trapezoid_ignore_nan(np.minimum(h_flux_w, 0.0), xw)
+
+    int_uy = integrate_trapezoid_ignore_nan(uyw, xw)
+    int_abs_uy = integrate_trapezoid_ignore_nan(np.abs(uyw), xw)
+
+    key = f"y_plus_{offset:.3f}_m_halfwidth_{half_width:.3f}_m"
+
+    flux_row[f"Q_conv_net_{key}_W_per_m"] = Q_conv_net
+    flux_row[f"Q_conv_up_{key}_W_per_m"] = Q_conv_up
+    flux_row[f"Q_conv_down_{key}_W_per_m"] = Q_conv_down
+
+    flux_row[f"uy_min_{key}_m_per_s"] = float(np.nanmin(uyw))
+    flux_row[f"uy_mean_{key}_m_per_s"] = float(np.nanmean(uyw))
+    flux_row[f"uy_max_{key}_m_per_s"] = float(np.nanmax(uyw))
+
+    flux_row[f"int_uy_{key}_m2_per_s"] = int_uy
+    flux_row[f"int_abs_uy_{key}_m2_per_s"] = int_abs_uy
+    flux_row[f"uy_net_fraction_{key}"] = abs(int_uy) / max(int_abs_uy, 1.0e-300)
 
 
 def process_saved_step_worker(payload):
@@ -184,6 +218,8 @@ def process_saved_step_worker(payload):
         rho,
         cp,
         T_inf,
+        flux_half_widths,
+        velocity_scale_factor,
     ) = payload
 
     temperature_file = Path(temperature_file)
@@ -193,6 +229,8 @@ def process_saved_step_worker(payload):
 
     coords_T, topology_T, temperature = read_temperature_h5(temperature_file)
     coords_u, topology_u, velocity = read_velocity_h5(velocity_file)
+
+    velocity = velocity_scale_factor * velocity
 
     if coords_T.shape != coords_u.shape:
         raise RuntimeError(
@@ -245,14 +283,20 @@ def process_saved_step_worker(payload):
             lref=lref,
         )
 
-        T_peak_key = f"T_peak_y_plus_{offset:.3f}_m_K"
-        peak_row[T_peak_key] = float(np.nanmax(T_profile))
+        peak_row[f"T_peak_y_plus_{offset:.3f}_m_K"] = float(np.nanmax(T_profile))
 
-        enthalpy_flux_density = rho * cp * (T_profile - T_inf) * uy_profile
-        Q_conv = integrate_trapezoid_ignore_nan(enthalpy_flux_density, x_line)
-
-        flux_key = f"Q_conv_y_plus_{offset:.3f}_m_W_per_m"
-        flux_row[flux_key] = Q_conv
+        for half_width in flux_half_widths:
+            add_plane_window_diagnostics(
+                flux_row,
+                offset=offset,
+                half_width=half_width,
+                x_line=x_line,
+                T_profile=T_profile,
+                uy_profile=uy_profile,
+                rho=rho,
+                cp=cp,
+                T_inf=T_inf,
+            )
 
     result["peak_row"] = peak_row
     result["flux_row"] = flux_row
@@ -319,12 +363,10 @@ def pair_temperature_velocity_files(results_dir: Path):
     if not common_steps:
         raise RuntimeError("No matching temperature/velocity timesteps found.")
 
-    pairs = [
+    return [
         (step, temperature_by_step[step], velocity_by_step[step])
         for step in common_steps
     ]
-
-    return pairs
 
 
 def main() -> None:
@@ -398,7 +440,7 @@ def main() -> None:
         "--line-half-width",
         type=float,
         default=0.20,
-        help="Half-width of extracted horizontal profiles [m].",
+        help="Half-width of extracted horizontal profiles [m]. Must be >= max(--flux-half-widths).",
     )
 
     parser.add_argument(
@@ -414,6 +456,14 @@ def main() -> None:
         nargs="+",
         default=[0.01, 0.04, 0.08],
         help="Horizontal plane offsets above wire center [m].",
+    )
+
+    parser.add_argument(
+        "--flux-half-widths",
+        type=float,
+        nargs="+",
+        default=[0.01, 0.02, 0.04, 0.08, 0.20],
+        help="Half-widths [m] used for convective enthalpy flux integrals.",
     )
 
     parser.add_argument(
@@ -438,6 +488,20 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--velocity-scale-factor",
+        type=float,
+        default=1.0,
+        help="Optional multiplier applied to saved velocity before diagnostics.",
+    )
+
+    parser.add_argument(
+        "--input-line-power",
+        type=float,
+        default=9.75,
+        help="Input line power [W/m] used as horizontal reference in flux plots.",
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -448,6 +512,12 @@ def main() -> None:
 
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
+
+    if max(args.flux_half_widths) > args.line_half_width:
+        raise ValueError(
+            "max(--flux-half-widths) must be <= --line-half-width. "
+            f"Got max flux half-width {max(args.flux_half_widths)} and line half-width {args.line_half_width}."
+        )
 
     results_dir = args.results_dir
     output_dir = args.output_dir or results_dir / "postprocess_temperature"
@@ -474,11 +544,13 @@ def main() -> None:
     print(f"  rho         = {args.rho:.8e} kg/m^3")
     print(f"  cp          = {args.cp:.8e} J/(kg K)")
     print(f"  T_inf       = {args.T_inf:.8e} K")
+    print(f"  velocity_scale_factor = {args.velocity_scale_factor:.8e}")
+    print(f"  flux_half_widths = {args.flux_half_widths}")
     print("  convergence box [physical]:")
     print(f"    x = [{box_x_min:.6e}, {box_x_max:.6e}] m")
     print(f"    y = [{box_y_min:.6e}, {box_y_max:.6e}] m")
 
-    first_step, first_temperature_file, first_velocity_file = pairs[0]
+    _, first_temperature_file, _ = pairs[0]
     first_coords, first_topology, first_temperature = read_temperature_h5(first_temperature_file)
 
     coordinates_are_nondim = np.nanmax(np.abs(first_coords)) > 10.0
@@ -521,6 +593,8 @@ def main() -> None:
             args.rho,
             args.cp,
             args.T_inf,
+            args.flux_half_widths,
+            args.velocity_scale_factor,
         )
         for _, temperature_file, velocity_file in pairs
     ]
@@ -658,24 +732,115 @@ def main() -> None:
 
     flux_steps = np.asarray([row["step"] for row in enthalpy_flux_rows], dtype=float)
 
-    plt.figure()
     for offset in args.plane_offsets:
-        key = f"Q_conv_y_plus_{offset:.3f}_m_W_per_m"
-        values = np.asarray([row[key] for row in enthalpy_flux_rows], dtype=float)
-        plt.plot(
-            flux_steps,
-            values,
-            label=f"y = {offset * 100:.0f} cm above wire",
-        )
+        plt.figure()
 
-    plt.axhline(9.75, linestyle="--", linewidth=1.0, label="input QL = 9.75 W/m")
-    plt.xlabel("Saved step")
-    plt.ylabel(r"Convective enthalpy flux $Q_{conv}$ [W/m]")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(output_dir / "enthalpy_flux_plane_evolution.png", dpi=200)
-    plt.close()
+        for half_width in args.flux_half_widths:
+            key = (
+                f"Q_conv_net_y_plus_{offset:.3f}_m_"
+                f"halfwidth_{half_width:.3f}_m_W_per_m"
+            )
+            values = np.asarray([row[key] for row in enthalpy_flux_rows], dtype=float)
+            plt.plot(
+                flux_steps,
+                values,
+                label=f"net, ±{half_width * 100:.0f} cm",
+            )
+
+        plt.axhline(
+            args.input_line_power,
+            linestyle="--",
+            linewidth=1.0,
+            label=f"input QL = {args.input_line_power:g} W/m",
+        )
+        plt.xlabel("Saved step")
+        plt.ylabel(r"$Q_{conv,net}$ [W/m]")
+        plt.title(f"Convective enthalpy flux, y = {offset * 100:.0f} cm above wire")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(
+            output_dir / f"enthalpy_flux_net_window_evolution_y_plus_{offset:.3f}_m.png",
+            dpi=200,
+        )
+        plt.close()
+
+        plt.figure()
+
+        for half_width in args.flux_half_widths:
+            key_up = (
+                f"Q_conv_up_y_plus_{offset:.3f}_m_"
+                f"halfwidth_{half_width:.3f}_m_W_per_m"
+            )
+            key_down = (
+                f"Q_conv_down_y_plus_{offset:.3f}_m_"
+                f"halfwidth_{half_width:.3f}_m_W_per_m"
+            )
+
+            values_up = np.asarray(
+                [row[key_up] for row in enthalpy_flux_rows],
+                dtype=float,
+            )
+            values_down = np.asarray(
+                [row[key_down] for row in enthalpy_flux_rows],
+                dtype=float,
+            )
+
+            plt.plot(
+                flux_steps,
+                values_up,
+                label=f"up, ±{half_width * 100:.0f} cm",
+            )
+            plt.plot(
+                flux_steps,
+                values_down,
+                linestyle="--",
+                label=f"down, ±{half_width * 100:.0f} cm",
+            )
+
+        plt.axhline(
+            args.input_line_power,
+            linestyle=":",
+            linewidth=1.0,
+            label=f"input QL = {args.input_line_power:g} W/m",
+        )
+        plt.xlabel("Saved step")
+        plt.ylabel(r"$Q_{conv,up/down}$ [W/m]")
+        plt.title(f"Up/down convective enthalpy flux, y = {offset * 100:.0f} cm above wire")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(
+            output_dir / f"enthalpy_flux_up_down_window_evolution_y_plus_{offset:.3f}_m.png",
+            dpi=200,
+        )
+        plt.close()
+
+        plt.figure()
+
+        for half_width in args.flux_half_widths:
+            key = (
+                f"uy_net_fraction_y_plus_{offset:.3f}_m_"
+                f"halfwidth_{half_width:.3f}_m"
+            )
+            values = np.asarray([row[key] for row in enthalpy_flux_rows], dtype=float)
+            plt.plot(
+                flux_steps,
+                values,
+                label=f"±{half_width * 100:.0f} cm",
+            )
+
+        plt.xlabel("Saved step")
+        plt.ylabel(r"$|\int u_y dx| / \int |u_y| dx$")
+        plt.title(f"Vertical velocity net fraction, y = {offset * 100:.0f} cm above wire")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(
+            output_dir / f"uy_net_fraction_window_evolution_y_plus_{offset:.3f}_m.png",
+            dpi=200,
+        )
+        plt.close()
 
     final_step = processed[-1]["step"]
     final_temperature_file = Path(processed[-1]["temperature_file"])
@@ -688,12 +853,13 @@ def main() -> None:
     final_coords_u, final_topology_u, final_velocity = read_velocity_h5(
         final_velocity_file
     )
+    final_velocity = args.velocity_scale_factor * final_velocity
 
     final_profiles_csv = output_dir / f"temperature_profiles_step_{final_step}.csv"
-    final_flux_profiles_csv = output_dir / f"enthalpy_flux_profiles_step_{final_step}.csv"
+    final_combined_profiles_csv = output_dir / f"final_profiles_T_uy_hflux_step_{final_step}.csv"
 
     temperature_profile_columns = {"x_m": x_line}
-    flux_profile_columns = {"x_m": x_line}
+    combined_profile_columns = {"x_m": x_line}
 
     plt.figure()
     for offset in args.plane_offsets:
@@ -710,6 +876,7 @@ def main() -> None:
         )
 
         temperature_profile_columns[f"T_y_plus_{offset:.3f}_m_K"] = T_profile
+        combined_profile_columns[f"T_y_plus_{offset:.3f}_m_K"] = T_profile
 
         plt.plot(
             x_line,
@@ -724,6 +891,38 @@ def main() -> None:
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(output_dir / f"temperature_profiles_step_{final_step}.png", dpi=200)
+    plt.close()
+
+    plt.figure()
+    for offset in args.plane_offsets:
+        y_line = np.full_like(x_line, wire_y + offset)
+
+        uy_profile = interpolate_vector_component_on_line(
+            coords=final_coords_u,
+            topology=final_topology_u,
+            vector=final_velocity,
+            component=1,
+            x_phys=x_line,
+            y_phys=y_line,
+            coordinates_are_nondim=coordinates_are_nondim,
+            lref=args.lref,
+        )
+
+        combined_profile_columns[f"uy_y_plus_{offset:.3f}_m_m_per_s"] = uy_profile
+
+        plt.plot(
+            x_line,
+            uy_profile,
+            label=f"y = {offset * 100:.0f} cm above wire",
+        )
+
+    plt.xlabel("x [m]")
+    plt.ylabel(r"$u_y$ [m/s]")
+    plt.title(f"Vertical velocity profiles at saved step {final_step}")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_dir / f"vertical_velocity_profiles_step_{final_step}.png", dpi=200)
     plt.close()
 
     plt.figure()
@@ -751,15 +950,18 @@ def main() -> None:
             lref=args.lref,
         )
 
-        enthalpy_flux_density = args.rho * args.cp * (T_profile - args.T_inf) * uy_profile
+        h_flux_density = args.rho * args.cp * (T_profile - args.T_inf) * uy_profile
 
-        flux_profile_columns[
-            f"rho_cp_TminusTinf_uy_y_plus_{offset:.3f}_m_W_per_m2"
-        ] = enthalpy_flux_density
+        combined_profile_columns[
+            f"TminusTinf_y_plus_{offset:.3f}_m_K"
+        ] = T_profile - args.T_inf
+        combined_profile_columns[
+            f"hflux_y_plus_{offset:.3f}_m_W_per_m2"
+        ] = h_flux_density
 
         plt.plot(
             x_line,
-            enthalpy_flux_density,
+            h_flux_density,
             label=f"y = {offset * 100:.0f} cm above wire",
         )
 
@@ -785,18 +987,18 @@ def main() -> None:
                 {key: temperature_profile_columns[key][i] for key in fieldnames}
             )
 
-    with final_flux_profiles_csv.open("w", newline="") as f:
-        fieldnames = list(flux_profile_columns.keys())
+    with final_combined_profiles_csv.open("w", newline="") as f:
+        fieldnames = list(combined_profile_columns.keys())
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
 
         for i in range(len(x_line)):
             writer.writerow(
-                {key: flux_profile_columns[key][i] for key in fieldnames}
+                {key: combined_profile_columns[key][i] for key in fieldnames}
             )
 
     print(f"  wrote {final_profiles_csv}")
-    print(f"  wrote {final_flux_profiles_csv}")
+    print(f"  wrote {final_combined_profiles_csv}")
     print("Done.")
 
 
