@@ -161,7 +161,7 @@ def integrate_trapezoid_ignore_nan(y, x):
     if np.count_nonzero(valid) < 2:
         return np.nan
 
-    return float(np.trapz(y[valid], x[valid]))
+    return float(np.trapezoid(y[valid], x[valid]))
 
 
 def add_plane_window_diagnostics(
