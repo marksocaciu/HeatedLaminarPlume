@@ -972,7 +972,7 @@ def main() -> None:
         )
 
         combined_profile_columns[f"ux_y_plus_{offset:.3f}_m_m_per_s"] = ux_profile
-        combined_profile_columns[f"10ux_y_plus_{offset:.3f}_m_m_per_s"] = 10.0 * ux_profile
+        combined_profile_columns[f"10ux_y_plus_{offset:.3f}_m_m_per_s"] = 10.0 * np.abs(ux_profile)
         combined_profile_columns[f"uy_y_plus_{offset:.3f}_m_m_per_s"] = uy_profile
 
         plt.plot(
@@ -983,7 +983,7 @@ def main() -> None:
 
         plt.plot(
             x_line,
-            10.0 * ux_profile,
+            10.0 * np.abs(ux_profile),
             linestyle="--",
             label=f"$10u_x$, y = {offset * 100:.0f} cm",
         )
