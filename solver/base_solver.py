@@ -2136,7 +2136,7 @@ def solve_steady_from_loaded_checkpoint(
                     w,
                     boundary_conditions,
                     JF_steady,
-                    relaxation=0.7,
+                    relaxation=relaxation,
                     maxit=30,
                     atol=1.0e-9,
                     rtol=1.0e-8,
