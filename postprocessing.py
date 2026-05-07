@@ -9,6 +9,7 @@ Implemented diagnostics:
   4. Final uy(x) and 10*ux(x) profile plots over the full requested line width
   5. Final CSV with T, theta=T-T_inf, ux, 10ux, uy, and h_flux density
   6. Temperature evolution plots use temperature excess T-T_inf
+  7. Outward enthalpy-flow integrals on the full outer boundary
 
 Usage:
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
@@ -217,6 +218,165 @@ def add_plane_window_diagnostics(
     flux_row[f"uy_net_fraction_{key}"] = abs(int_uy) / max(int_abs_uy, 1.0e-300)
 
 
+
+def _sample_boundary_side(
+    *,
+    coords,
+    topology,
+    temperature,
+    velocity,
+    side: str,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+    n_points: int,
+    inset: float,
+    coordinates_are_nondim: bool,
+    lref: float,
+):
+    """
+    Sample T and u just inside one physical outer boundary side.
+
+    The returned normal is the outward normal of the physical rectangular domain.
+    Sampling is inset by a small positive distance to avoid interpolation failures
+    exactly on triangulation edges.
+    """
+    if side == "top":
+        s_coord = np.linspace(x_min, x_max, n_points)
+        x = s_coord
+        y = np.full_like(x, y_max - inset)
+        normal = np.array([0.0, 1.0])
+    elif side == "bottom":
+        s_coord = np.linspace(x_min, x_max, n_points)
+        x = s_coord
+        y = np.full_like(x, y_min + inset)
+        normal = np.array([0.0, -1.0])
+    elif side == "right":
+        s_coord = np.linspace(y_min, y_max, n_points)
+        x = np.full_like(s_coord, x_max - inset)
+        y = s_coord
+        normal = np.array([1.0, 0.0])
+    elif side == "left":
+        s_coord = np.linspace(y_min, y_max, n_points)
+        x = np.full_like(s_coord, x_min + inset)
+        y = s_coord
+        normal = np.array([-1.0, 0.0])
+    else:
+        raise ValueError(f"Unknown boundary side {side!r}")
+
+    T = interpolate_scalar_on_line(
+        coords=coords,
+        topology=topology,
+        scalar=temperature,
+        x_phys=x,
+        y_phys=y,
+        coordinates_are_nondim=coordinates_are_nondim,
+        lref=lref,
+    )
+    ux = interpolate_vector_component_on_line(
+        coords=coords,
+        topology=topology,
+        vector=velocity,
+        component=0,
+        x_phys=x,
+        y_phys=y,
+        coordinates_are_nondim=coordinates_are_nondim,
+        lref=lref,
+    )
+    uy = interpolate_vector_component_on_line(
+        coords=coords,
+        topology=topology,
+        vector=velocity,
+        component=1,
+        x_phys=x,
+        y_phys=y,
+        coordinates_are_nondim=coordinates_are_nondim,
+        lref=lref,
+    )
+    un = normal[0] * ux + normal[1] * uy
+    return s_coord, T, ux, uy, un
+
+
+def add_outer_boundary_enthalpy_diagnostics(
+    boundary_row: dict,
+    *,
+    coords,
+    topology,
+    temperature,
+    velocity,
+    coordinates_are_nondim: bool,
+    lref: float,
+    rho: float,
+    cp: float,
+    T_inf: float,
+    boundary_n_points: int,
+    boundary_inset: float,
+):
+    """
+    Integrate outward convective enthalpy flux over the rectangular outer boundary.
+
+        Q_h,out = ∮ rho*cp*(T - T_inf)*(u · n) ds
+
+    Units are W/m, i.e. per unit out-of-plane wire length. Positive values mean
+    heat leaves the computational room; negative values mean thermal enthalpy enters.
+    """
+    coords_phys = coords * lref if coordinates_are_nondim else coords
+    x_min = float(np.nanmin(coords_phys[:, 0]))
+    x_max = float(np.nanmax(coords_phys[:, 0]))
+    y_min = float(np.nanmin(coords_phys[:, 1]))
+    y_max = float(np.nanmax(coords_phys[:, 1]))
+
+    if boundary_inset <= 0.0:
+        # Keep the samples just inside the triangulation to avoid NaNs on edges.
+        # This is intentionally small relative to the room size.
+        room_size = min(x_max - x_min, y_max - y_min)
+        boundary_inset = max(1.0e-6 * room_size, 1.0e-9)
+
+    total_net = 0.0
+    total_out_positive = 0.0
+    total_in_negative = 0.0
+
+    for side in ("top", "bottom", "left", "right"):
+        s_coord, T, ux, uy, un = _sample_boundary_side(
+            coords=coords,
+            topology=topology,
+            temperature=temperature,
+            velocity=velocity,
+            side=side,
+            x_min=x_min,
+            x_max=x_max,
+            y_min=y_min,
+            y_max=y_max,
+            n_points=boundary_n_points,
+            inset=boundary_inset,
+            coordinates_are_nondim=coordinates_are_nondim,
+            lref=lref,
+        )
+
+        hflux_out = rho * cp * (T - T_inf) * un
+        q_net = integrate_trapezoid_ignore_nan(hflux_out, s_coord)
+        q_out = integrate_trapezoid_ignore_nan(np.maximum(hflux_out, 0.0), s_coord)
+        q_in = integrate_trapezoid_ignore_nan(np.minimum(hflux_out, 0.0), s_coord)
+
+        boundary_row[f"Qh_out_{side}_net_W_per_m"] = q_net
+        boundary_row[f"Qh_out_{side}_positive_W_per_m"] = q_out
+        boundary_row[f"Qh_out_{side}_negative_W_per_m"] = q_in
+        boundary_row[f"un_{side}_min_m_per_s"] = float(np.nanmin(un))
+        boundary_row[f"un_{side}_mean_m_per_s"] = float(np.nanmean(un))
+        boundary_row[f"un_{side}_max_m_per_s"] = float(np.nanmax(un))
+
+        if np.isfinite(q_net):
+            total_net += q_net
+        if np.isfinite(q_out):
+            total_out_positive += q_out
+        if np.isfinite(q_in):
+            total_in_negative += q_in
+
+    boundary_row["Qh_out_boundary_total_net_W_per_m"] = total_net
+    boundary_row["Qh_out_boundary_total_positive_W_per_m"] = total_out_positive
+    boundary_row["Qh_out_boundary_total_negative_W_per_m"] = total_in_negative
+
 def process_saved_step_worker(payload):
     """
     Worker for independent per-step post-processing.
@@ -235,6 +395,8 @@ def process_saved_step_worker(payload):
         T_inf,
         flux_half_widths,
         velocity_scale_factor,
+        boundary_n_points,
+        boundary_inset,
     ) = payload
 
     temperature_file = Path(temperature_file)
@@ -277,6 +439,22 @@ def process_saved_step_worker(payload):
 
     peak_row = {"step": step}
     flux_row = {"step": step}
+    boundary_row = {"step": step}
+
+    add_outer_boundary_enthalpy_diagnostics(
+        boundary_row,
+        coords=coords_T,
+        topology=topology_T,
+        temperature=temperature,
+        velocity=velocity,
+        coordinates_are_nondim=coordinates_are_nondim,
+        lref=lref,
+        rho=rho,
+        cp=cp,
+        T_inf=T_inf,
+        boundary_n_points=boundary_n_points,
+        boundary_inset=boundary_inset,
+    )
 
     for offset in plane_offsets:
         y_line = np.full_like(x_line, wire_y + offset)
@@ -339,6 +517,7 @@ def process_saved_step_worker(payload):
 
     result["peak_row"] = peak_row
     result["flux_row"] = flux_row
+    result["boundary_row"] = boundary_row
 
     return result
 
@@ -541,6 +720,23 @@ def main() -> None:
     )
 
     parser.add_argument(
+        "--boundary-n-points",
+        type=int,
+        default=1200,
+        help="Number of samples per outer-boundary side for enthalpy-flow integrals.",
+    )
+
+    parser.add_argument(
+        "--boundary-inset",
+        type=float,
+        default=0.0,
+        help=(
+            "Physical inset [m] used when sampling the outer boundary. "
+            "Use 0 to choose a small automatic inset."
+        ),
+    )
+
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -590,6 +786,8 @@ def main() -> None:
     print(f"  velocity_scale_factor = {args.velocity_scale_factor:.8e}")
     print(f"  line_half_width = {args.line_half_width:.8e} m")
     print(f"  flux_half_widths = {args.flux_half_widths}")
+    print(f"  boundary_n_points = {args.boundary_n_points}")
+    print(f"  boundary_inset = {args.boundary_inset:.8e} m")
     print("  convergence box [physical]:")
     print(f"    x = [{box_x_min:.6e}, {box_x_max:.6e}] m")
     print(f"    y = [{box_y_min:.6e}, {box_y_max:.6e}] m")
@@ -639,6 +837,8 @@ def main() -> None:
             args.T_inf,
             args.flux_half_widths,
             args.velocity_scale_factor,
+            args.boundary_n_points,
+            args.boundary_inset,
         )
         for _, temperature_file, velocity_file in pairs
     ]
@@ -656,6 +856,7 @@ def main() -> None:
     convergence_rows = []
     plane_peak_rows = []
     enthalpy_flux_rows = []
+    boundary_enthalpy_rows = []
 
     previous_T_box = None
     previous_step = None
@@ -697,6 +898,7 @@ def main() -> None:
 
         plane_peak_rows.append(row["peak_row"])
         enthalpy_flux_rows.append(row["flux_row"])
+        boundary_enthalpy_rows.append(row["boundary_row"])
 
         previous_T_box = T_box
         previous_step = step
@@ -704,14 +906,17 @@ def main() -> None:
     convergence_csv = output_dir / "temperature_convergence_box.csv"
     peaks_csv = output_dir / "temperature_plane_peaks.csv"
     enthalpy_flux_csv = output_dir / "enthalpy_flux_planes.csv"
+    boundary_enthalpy_csv = output_dir / "enthalpy_flux_outer_boundary.csv"
 
     write_csv(convergence_csv, convergence_rows)
     write_csv(peaks_csv, plane_peak_rows)
     write_csv(enthalpy_flux_csv, enthalpy_flux_rows)
+    write_csv(boundary_enthalpy_csv, boundary_enthalpy_rows)
 
     print(f"  wrote {convergence_csv}")
     print(f"  wrote {peaks_csv}")
     print(f"  wrote {enthalpy_flux_csv}")
+    print(f"  wrote {boundary_enthalpy_csv}")
 
     steps = np.asarray([row["step"] for row in convergence_rows], dtype=float)
 
@@ -888,6 +1093,56 @@ def main() -> None:
             dpi=200,
         )
         plt.close()
+
+
+    boundary_steps = np.asarray([row["step"] for row in boundary_enthalpy_rows], dtype=float)
+
+    plt.figure()
+    for side in ("top", "bottom", "left", "right"):
+        values = np.asarray(
+            [row[f"Qh_out_{side}_net_W_per_m"] for row in boundary_enthalpy_rows],
+            dtype=float,
+        )
+        plt.plot(boundary_steps, values, label=side)
+
+    total_values = np.asarray(
+        [row["Qh_out_boundary_total_net_W_per_m"] for row in boundary_enthalpy_rows],
+        dtype=float,
+    )
+    plt.plot(boundary_steps, total_values, linewidth=2.0, label="total boundary")
+    plt.axhline(args.input_line_power, linestyle="--", linewidth=1.0, label=f"input QL = {args.input_line_power:g} W/m")
+    plt.axhline(0.0, linewidth=0.8)
+    plt.xlabel("Saved step")
+    plt.ylabel(r"$\oint \rho c_p (T-T_\infty)(\mathbf{u}\cdot\mathbf{n})\,ds$ [W/m]")
+    plt.title("Outward convective enthalpy flow through outer boundary")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_evolution.png", dpi=200)
+    plt.close()
+
+    plt.figure()
+    positive_values = np.asarray(
+        [row["Qh_out_boundary_total_positive_W_per_m"] for row in boundary_enthalpy_rows],
+        dtype=float,
+    )
+    negative_values = np.asarray(
+        [row["Qh_out_boundary_total_negative_W_per_m"] for row in boundary_enthalpy_rows],
+        dtype=float,
+    )
+    plt.plot(boundary_steps, positive_values, label="outward positive parts")
+    plt.plot(boundary_steps, negative_values, linestyle="--", label="inward negative parts")
+    plt.plot(boundary_steps, total_values, linewidth=2.0, label="net")
+    plt.axhline(args.input_line_power, linestyle=":", linewidth=1.0, label=f"input QL = {args.input_line_power:g} W/m")
+    plt.axhline(0.0, linewidth=0.8)
+    plt.xlabel("Saved step")
+    plt.ylabel(r"Boundary enthalpy flow [W/m]")
+    plt.title("Positive, negative, and net outward boundary enthalpy flow")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_positive_negative_evolution.png", dpi=200)
+    plt.close()
 
     final_step = processed[-1]["step"]
     final_temperature_file = Path(processed[-1]["temperature_file"])
@@ -1086,3 +1341,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    # python postprocessing.py PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/ --workers 46 --flux-half-widths 0.005 0.01 0.02 0.04 0.08 0.20 --line-half-width 0.20 --T-inf 292.96 --velocity-scale-factor 0.153657
+    # python postprocessing.py PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/ --workers 46 --flux-half-widths 0.005 0.01 0.02 0.04 0.08 0.20 --line-half-width 0.20 --T-inf 292.96 --velocity-scale-factor 0.153657
