@@ -1449,7 +1449,7 @@ def plot_enthalpy_flux_1_4_8cm(
     plt.show()
 
 if __name__ == "__main__":
-    # main()
+    main()
     # plot_enthalpy_flux_1_4_8cm(
     #     "PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/postprocess_temperature/enthalpy_flux_planes.csv",
     #     halfwidth=0.200,
