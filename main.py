@@ -610,7 +610,7 @@ def relative_update(new_f, old_f):
 #         "theta_air_star": theta_air_star,
 #     }
 
-def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = ""):
+def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = "", steady_from_last_transient: bool = False):
     mkdir0(experiment.name)
 
     run_root = make_run_root(
@@ -851,7 +851,7 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
 
     # Optional restart
     restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
-    if restart_from_last_transient:
+    if restart_from_last_transient or steady_from_last_transient:
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
         try:
             if os.path.exists(os.path.join(checkpoint_dir, "state.h5")):
@@ -948,7 +948,41 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     )
 
     SUPG = True
-    if not restart_from_last_transient:
+    if steady_from_last_transient:
+        print0("\n=== Steady Newton solve from last transient checkpoint ===")
+
+        w = solve_steady_from_loaded_checkpoint(
+            experiment=experiment,
+            W=W,
+            w=w,
+            w_n=w_n,
+            psi_p=psi_p,
+            psi_u=psi_u,
+            psi_T=psi_T,
+            mu=mu,
+            Pr=Pr,
+            f_b=f_b,
+            T_c=T_c,
+            T_air_bc=T_air_bc,
+            sub_dx=sub_dx_star,
+            sub_ds=sub_ds_star,
+            sub_ft=sub_ft_star,
+            qn_air=qn_air_star,
+            sub_mesh_star=sub_mesh_star,
+            sub_mesh_dim=sub_mesh_dim,
+            scales=scales,
+            T_ambient=T_ambient,
+            rho_air=experiment.fluid.properties["rho"],
+            p_path=OUTPUT_XDMF_PATH_AIR_P,
+            u_path=OUTPUT_XDMF_PATH_AIR_V,
+            T_path=OUTPUT_XDMF_PATH_AIR_T,
+            checkpoint_meta=restart_meta,
+            SUPG=SUPG,
+        )
+        print0("Steady-from-transient branch complete.")
+        return
+        
+    elif not restart_from_last_transient:
         w, info = solve_ptc_continuation(
             experiment,
             W, w, w_n,
@@ -2057,6 +2091,7 @@ def main():
     )
     argparser.add_argument("--restart-from-last-transient", action="store_true")
     argparser.add_argument("--existing-run-root", type=str, default="")
+    argparser.add_argument("--steady-from-last-transient", action="store_true")
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
     experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
@@ -2066,7 +2101,8 @@ def main():
     base_version(
         experiment,
         restart_from_last_transient=args.restart_from_last_transient,
-        existing_run_root=args.existing_run_root
+        existing_run_root=args.existing_run_root,
+        steady_from_last_transient=args.steady_from_last_transient,
     )
     # base_version_new(experiment)  
     # temperature_dependent_version(experiment)

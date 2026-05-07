@@ -1367,7 +1367,94 @@ def main() -> None:
     print(f"  wrote {final_combined_profiles_csv}")
     print("Done.")
 
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+
+def plot_enthalpy_flux_1_4_8cm(
+    csv_path,
+    halfwidth=0.200,
+    flux_kind="net",   # "net", "up", or "down"
+    output_png=None,
+):
+    """
+    Plot convective enthalpy flux at horizontal planes
+    1 cm, 4 cm, and 8 cm above the wire.
+
+    Parameters
+    ----------
+    csv_path : str or Path
+        Path to enthalpy_flux_planes.csv.
+    halfwidth : float
+        Integration half-width in metres. Example: 0.200.
+    flux_kind : str
+        "net", "up", or "down".
+        net  = upward minus downward contribution.
+        up   = positive/upward enthalpy transport only.
+        down = downward enthalpy transport only.
+    output_png : str or Path or None
+        If given, save the figure to this path.
+    """
+
+    csv_path = Path(csv_path)
+    df = pd.read_csv(csv_path)
+
+    y_planes = {
+        0.010: "1 cm above wire",
+        0.040: "4 cm above wire",
+        0.080: "8 cm above wire",
+    }
+
+    if flux_kind not in {"net", "up", "down"}:
+        raise ValueError("flux_kind must be one of: 'net', 'up', 'down'")
+
+    col_prefix = {
+        "net": "Q_conv_net",
+        "up": "Q_conv_up",
+        "down": "Q_conv_down",
+    }[flux_kind]
+
+    plt.figure(figsize=(8, 5))
+
+    for y_plus, label in y_planes.items():
+        col = (
+            f"{col_prefix}_y_plus_{y_plus:.3f}_m_"
+            f"halfwidth_{halfwidth:.3f}_m_W_per_m"
+        )
+
+        if col not in df.columns:
+            raise KeyError(
+                f"Column not found:\n  {col}\n\n"
+                f"Check that halfwidth={halfwidth} exists in the CSV."
+            )
+
+        plt.plot(df["step"], df[col], label=label)
+
+    plt.xlabel("Saved step")
+    plt.ylabel("Convective enthalpy flux [W/m]")
+    plt.title(
+        f"{flux_kind.capitalize()} convective enthalpy flux "
+        f"at 1, 4, and 8 cm above wire\n"
+        f"Integration half-width = {halfwidth:.3f} m"
+    )
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+
+    if output_png is not None:
+        plt.savefig(output_png, dpi=200)
+        print(f"Saved: {output_png}")
+
+    plt.show()
 
 if __name__ == "__main__":
-    main()
+    # main()
+    # plot_enthalpy_flux_1_4_8cm(
+    #     "PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/postprocess_temperature/enthalpy_flux_planes.csv",
+    #     halfwidth=0.200,
+    #     flux_kind="net",
+    #     output_png="enthalpy_flux_1_4_8cm.png",
+    # )
+    
     # python postprocessing.py PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/ --workers 46 --flux-half-widths 0.005 0.01 0.02 0.04 0.08 0.20 --line-half-width 0.20 --T-inf 292.96 --velocity-scale-factor 0.153657

@@ -2030,3 +2030,178 @@ def run_post_continuation_transient(
         "history": history,
     }
 
+def solve_steady_from_loaded_checkpoint(
+    experiment: Experiment,
+    W: fenics.FunctionSpace,
+    w: fenics.Function,
+    w_n: fenics.Function,
+    psi_p,
+    psi_u,
+    psi_T,
+    mu,
+    Pr,
+    f_b,
+    T_c,
+    T_air_bc,
+    sub_dx,
+    sub_ds,
+    sub_ft,
+    qn_air,
+    sub_mesh_star,
+    sub_mesh_dim,
+    scales,
+    T_ambient: float,
+    rho_air: float,
+    p_path: str,
+    u_path: str,
+    T_path: str,
+    checkpoint_meta: dict,
+    SUPG: bool = False,
+):
+    """
+    Load state is assumed already copied into both w and w_n.
+    This solves the steady residual only:
+        no dt
+        no u_n
+        no T_n
+        no pseudo-time terms
+    """
+
+    boundary_conditions = set_bcs(
+        W,
+        sub_ft,
+        T_air_bc,
+        T_c,
+        experiment,
+        scales,
+    )
+
+    # Ensure current Newton iterate starts exactly from accepted restart state.
+    copy_state(w, w_n)
+
+    print0("Building full steady residual from checkpoint initial guess...")
+    F_steady, JF_steady = build_nonlinear_problem(
+        W=W,
+        w=w,
+        psi_p=psi_p,
+        psi_u=psi_u,
+        psi_T=psi_T,
+        mu=mu,
+        Pr=Pr,
+        f_b=f_b,
+        sub_dx=sub_dx,
+        sub_ds=sub_ds,
+        qn_air=qn_air,
+        buoyancy_scale=1.0,
+        qn_scale=1.0,
+        include_convection=True,
+        convection_scale=1.0,
+        SUPG=SUPG,
+        outlet_penalty=0.0,
+        backflow_beta=0.0,
+    )
+
+    try:
+        print0("Trying direct steady Newton from transient checkpoint...")
+        w, n_iter, converged = base_solver(
+            F_steady,
+            w,
+            boundary_conditions,
+            JF_steady,
+            relaxation=0.7,
+            maxit=30,
+            atol=1.0e-9,
+            rtol=1.0e-8,
+            return_meta=True,
+        )
+
+        print0(
+            f"Direct steady Newton converged={converged}, "
+            f"iterations={n_iter}"
+        )
+    except RuntimeError as direct_err:
+        print0(f"Direct steady Newton failed: {direct_err}")
+        print0("Retrying with damped relaxation values...")
+
+        last_err = direct_err
+        ok = False
+
+        for relaxation in (0.5, 0.3, 0.15):
+            copy_state(w, w_n)
+
+            try:
+                print0(f"  retry steady Newton with relaxation={relaxation:.2f}")
+                w, n_iter, converged = base_solver(
+                    F_steady,
+                    w,
+                    boundary_conditions,
+                    JF_steady,
+                    relaxation=0.7,
+                    maxit=30,
+                    atol=1.0e-9,
+                    rtol=1.0e-8,
+                    return_meta=True,
+                )
+
+                print0(
+                    f"Direct steady Newton converged={converged}, "
+                    f"iterations={n_iter}"
+                )
+                ok = True
+                break
+            except RuntimeError as err:
+                last_err = err
+                print0(f"  retry failed: {err}")
+
+        if not ok:
+            raise RuntimeError(
+                "Steady Newton from transient checkpoint failed for all relaxation attempts."
+            ) from last_err
+
+    copy_state(w_n, w)
+
+    print0("Steady Newton accepted. Saving dimensional fields...")
+
+    p_star, u_star, theta = w.split(deepcopy=True)
+
+    u_dim, p_dim, T_dim = dimensionalize_fields(
+        sub_mesh_star,
+        u_star,
+        p_star,
+        theta,
+        scales.Uplume,
+        scales.dTref,
+        T_ambient,
+        rho_air,
+    )
+
+    stem = f"steady_from_transient_step_{int(checkpoint_meta.get('step', 0)):05d}"
+
+    p_out = p_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+    u_out = u_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+    T_out = T_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+
+    save_experiment(p_out, sub_mesh_dim, [p_dim])
+    save_experiment(u_out, sub_mesh_dim, [u_dim])
+    save_experiment(T_out, sub_mesh_dim, [T_dim])
+
+    steady_checkpoint_dir = os.path.join(
+        os.path.dirname(T_path),
+        "steady_from_transient_checkpoint",
+    )
+
+    save_restart_checkpoint(
+        checkpoint_dir=steady_checkpoint_dir,
+        mesh_star=sub_mesh_star,
+        w_n=w_n,
+        step=int(checkpoint_meta.get("step", 0)),
+        time_value=float(checkpoint_meta.get("time", 0.0)),
+        dt_value=0.0,
+    )
+
+    print0(f"Saved steady pressure:    {p_out}")
+    print0(f"Saved steady velocity:    {u_out}")
+    print0(f"Saved steady temperature: {T_out}")
+    print0(f"Saved steady checkpoint:  {steady_checkpoint_dir}")
+
+    return w
