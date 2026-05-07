@@ -21,7 +21,7 @@
   },
   "experiments": [
     {
-      "name": "PlumeCase_Fuji_Air",
+      "name": "PlumeCase_Fuji_Air_reduced",
       "author": "Fuji",
       "notes": "4.fuji",
       "fluid": {
@@ -51,9 +51,9 @@
           "type": "2D_symmetric",
           "coordinates": {
             "x_min": 0.0,
-            "x_max": 2.0,
+            "x_max": 0.25,
             "y_min": 0.0,
-            "y_max": 4.0
+            "y_max": 1.0
           }
         },
         "wire": {
