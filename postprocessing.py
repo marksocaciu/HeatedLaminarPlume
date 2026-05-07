@@ -384,7 +384,7 @@ def process_saved_step_worker(payload):
     (
         temperature_file,
         velocity_file,
-        box_mask,
+        box_bounds,
         plane_offsets,
         x_line,
         wire_y,
@@ -420,6 +420,25 @@ def process_saved_step_worker(payload):
             f"Temperature/velocity topology shape mismatch at step {step}: "
             f"{topology_T.shape} vs {topology_u.shape}"
         )
+
+    # Build the convergence-box mask from this step's own mesh.
+    # This is required when a results directory contains files from different meshes
+    # (for example, pre-MPI and MPI runs written into the same folder).
+    box_x_min, box_x_max, box_y_min, box_y_max = box_bounds
+    if coordinates_are_nondim:
+        coords_phys_for_box = coords_T * lref
+    else:
+        coords_phys_for_box = coords_T
+
+    box_mask = (
+        (coords_phys_for_box[:, 0] >= box_x_min)
+        & (coords_phys_for_box[:, 0] <= box_x_max)
+        & (coords_phys_for_box[:, 1] >= box_y_min)
+        & (coords_phys_for_box[:, 1] <= box_y_max)
+    )
+
+    if int(np.count_nonzero(box_mask)) == 0:
+        raise RuntimeError(f"No mesh nodes found inside convergence box at step {step}.")
 
     temp_box = temperature[box_mask]
     theta_box = temp_box - T_inf
@@ -803,18 +822,21 @@ def main() -> None:
     else:
         coords_phys = first_coords.copy()
 
-    box_mask = (
+    first_box_mask = (
         (coords_phys[:, 0] >= box_x_min)
         & (coords_phys[:, 0] <= box_x_max)
         & (coords_phys[:, 1] >= box_y_min)
         & (coords_phys[:, 1] <= box_y_max)
     )
 
-    n_box = int(np.count_nonzero(box_mask))
+    n_box = int(np.count_nonzero(first_box_mask))
     if n_box == 0:
-        raise RuntimeError("No mesh nodes found inside the requested convergence box.")
+        raise RuntimeError("No mesh nodes found inside the requested convergence box in the first file.")
 
-    print(f"  nodes in convergence box = {n_box}")
+    print(f"  nodes in convergence box in first file = {n_box}")
+    print("  mixed-mesh safe mode: convergence-box mask is rebuilt per file")
+
+    box_bounds = (box_x_min, box_x_max, box_y_min, box_y_max)
 
     x_line = np.linspace(
         -args.line_half_width,
@@ -826,7 +848,7 @@ def main() -> None:
         (
             str(temperature_file),
             str(velocity_file),
-            box_mask,
+            box_bounds,
             args.plane_offsets,
             x_line,
             wire_y,
@@ -870,6 +892,13 @@ def main() -> None:
             rel_l2_update = np.nan
             linf_update = np.nan
             previous_step_out = ""
+        elif T_box.shape != previous_T_box.shape:
+            # Mixed meshes can have different numbers of nodes in the convergence box.
+            # A nodewise update norm is not meaningful unless both vectors live on the same mesh.
+            l2_update = np.nan
+            rel_l2_update = np.nan
+            linf_update = np.nan
+            previous_step_out = previous_step
         else:
             delta_box = T_box - previous_T_box
 
@@ -1341,5 +1370,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    # python postprocessing.py PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/ --workers 46 --flux-half-widths 0.005 0.01 0.02 0.04 0.08 0.20 --line-half-width 0.20 --T-inf 292.96 --velocity-scale-factor 0.153657
     # python postprocessing.py PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/ --workers 46 --flux-half-widths 0.005 0.01 0.02 0.04 0.08 0.20 --line-half-width 0.20 --T-inf 292.96 --velocity-scale-factor 0.153657
