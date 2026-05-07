@@ -3,6 +3,7 @@ import json
 
 from matplotlib.pyplot import step
 
+from solver import scales
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
@@ -2174,7 +2175,73 @@ def solve_steady_from_loaded_checkpoint(
         T_ambient,
         rho_air,
     )
+    k_air = fenics.Constant(experiment.fluid.properties["k"])
+    q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
+    q_out = T_path.split(".xdmf")[0] + f"_heatflux_transient_{step:05d}.xdmf"
+    qmag_out = T_path.split(".xdmf")[0] + f"_heatflux_mag_transient_{step:05d}.xdmf"
 
+    p_out = p_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+    u_out = u_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+    t_out = T_path.split(".xdmf")[0] + f"_transient_{step:05d}.xdmf"
+
+    # --- Effective Grashof number diagnostic ---
+    theta_max = float(global_vec_max(theta))
+    theta_min = float(global_vec_min(theta))
+
+    dT_eff = scales.dTref * max(theta_max, 0.0)
+
+    props = experiment.fluid.properties
+    g = float(props.get("g", 9.81))
+    beta = float(props["beta"])
+    nu = float(scales.nu)
+
+    L_eff = float(scales.Lref)   # keep consistent with your reference Gr/Ra definition
+
+    Gr_eff = g * beta * dT_eff * L_eff**3 / (nu**2)
+    Ra_eff = Gr_eff * float(scales.Pr)
+
+    print0(
+        f"  snapshot diagnostics: "
+        f"theta_min={theta_min:.6e}, theta_max={theta_max:.6e}, "
+        f"dT_eff={dT_eff:.6e} K, "
+        f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
+    )
+
+    J_dim = compute_entropy_flux_dim(
+        mesh=sub_mesh_dim,
+        u_dim=u_dim,
+        T_dim=T_dim,
+        rho=experiment.fluid.properties["rho"],
+        cp=experiment.fluid.properties["cp"],
+        k=experiment.fluid.properties["k"],
+        T_inf=T_ambient,
+        degree=1,
+        family="DG",
+    )
+    J_out = T_path.split(".xdmf")[0] + f"_entropy_flux_transient_{step:05d}.xdmf"
+    Lref_dim = float(scales.Lref)
+    plane_fluxes = compute_horizontal_plane_heat_fluxes(
+        u_dim=u_dim,
+        T_dim=T_dim,
+        sub_mesh_dim=sub_mesh_dim,
+        experiment=experiment,
+        y_planes_m=(0.01, 0.02, 0.04, 0.08),
+        T_ref=T_ambient,
+        nx=400,
+        half_domain_symmetric=True,
+    )
+
+    flux_row = {
+        "step": step,
+        "time": -1.0,  # indicate steady state
+        "dt": -1.0,    # indicate steady state
+    }
+    flux_row.update(plane_fluxes)
+
+    append_plane_flux_csv(
+        os.path.join(os.path.dirname(T_path), "plane_fluxes.csv"),
+        flux_row
+    )
     stem = f"steady_from_transient_step_{int(checkpoint_meta.get('step', 0)):05d}"
 
     p_out = p_path.split(".xdmf")[0] + f"_{stem}.xdmf"
@@ -2184,6 +2251,9 @@ def solve_steady_from_loaded_checkpoint(
     save_experiment(p_out, sub_mesh_dim, [p_dim])
     save_experiment(u_out, sub_mesh_dim, [u_dim])
     save_experiment(T_out, sub_mesh_dim, [T_dim])
+    save_experiment(q_out, sub_mesh_dim, [q_heat])
+    save_experiment(J_out, sub_mesh_dim, [J_dim])
+    
 
     steady_checkpoint_dir = os.path.join(
         os.path.dirname(T_path),

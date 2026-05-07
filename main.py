@@ -1052,49 +1052,50 @@ def base_version(experiment: Experiment, restart_from_last_transient: bool = Fal
     if restart_from_last_transient:
         dt_start = restart_meta["dt"]
         print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
-    
-    w, transient_info = run_post_continuation_transient(
-            experiment=experiment,
-            W=W,
-            w=w,
-            w_n=w_n,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-            sub_mesh_star=sub_mesh_star,
-            sub_mesh_dim=sub_mesh_dim,
-            sub_ft_dim=sub_ft_dim,
-            sub_ds_dim=sub_ds_dim,
-            scales=scales,
-            p_path=OUTPUT_XDMF_PATH_AIR_P,
-            u_path=OUTPUT_XDMF_PATH_AIR_V,
-            T_path=OUTPUT_XDMF_PATH_AIR_T,
-            dt_start=dt_start,
-            dt_growth=1.3,
-            dt_cut=0.8,
-            dt_hard_cut=0.5,
-            dt_min=1.0e-5,
-            dt_max=1.0,
-            t_end=15000.0,
-            n_steps=200000,
-            save_every=100,
-            max_retries_per_step=8,
-            rel_update_easy=1.0e-3,
-            rel_update_hard=1.0e-3,
-            rel_update_reject=1.0e-2,
-            steady_window=25,
-            steady_rel_tol=1.0e-5,
-            steady_update_tol=1.0e-6,
-            start_time=restart_meta["time"],
-            start_step=restart_meta["step"],
-            history_csv_path=run_root + "/transient_history.csv",
-            SUPG=SUPG,
-            restart_recovered=restart_from_last_transient,
-            restart_step=restart_meta["step"],
-        )
 
-    print0("transient status:", transient_info["status"])
-    print0("transient steps:", transient_info["n_steps"])
+    if not steady_from_last_transient:
+        w, transient_info = run_post_continuation_transient(
+                experiment=experiment,
+                W=W,
+                w=w,
+                w_n=w_n,
+                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+                sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+                sub_mesh_star=sub_mesh_star,
+                sub_mesh_dim=sub_mesh_dim,
+                sub_ft_dim=sub_ft_dim,
+                sub_ds_dim=sub_ds_dim,
+                scales=scales,
+                p_path=OUTPUT_XDMF_PATH_AIR_P,
+                u_path=OUTPUT_XDMF_PATH_AIR_V,
+                T_path=OUTPUT_XDMF_PATH_AIR_T,
+                dt_start=dt_start,
+                dt_growth=1.3,
+                dt_cut=0.8,
+                dt_hard_cut=0.5,
+                dt_min=1.0e-5,
+                dt_max=1.0,
+                t_end=15000.0,
+                n_steps=200000,
+                save_every=100,
+                max_retries_per_step=8,
+                rel_update_easy=1.0e-3,
+                rel_update_hard=1.0e-3,
+                rel_update_reject=1.0e-2,
+                steady_window=25,
+                steady_rel_tol=1.0e-5,
+                steady_update_tol=1.0e-6,
+                start_time=restart_meta["time"],
+                start_step=restart_meta["step"],
+                history_csv_path=run_root + "/transient_history.csv",
+                SUPG=SUPG,
+                restart_recovered=restart_from_last_transient,
+                restart_step=restart_meta["step"],
+            )
+
+        print0("transient status:", transient_info["status"])
+        print0("transient steps:", transient_info["n_steps"])
 
     # Split nondimensional solution
     p_star, u_star, theta = w.split(deepcopy=True)
