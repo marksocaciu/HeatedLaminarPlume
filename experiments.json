@@ -177,6 +177,101 @@
       ]
     },
     {
+      "name": "PlumeCase_ForstromSparrow_Air_reduced",
+      "author": "Forstrom_and_Sparrow",
+      "notes": "5.forstrom1967; heated horizontal wire in air; selected profile case Q = 2.12 W/ft = 6.95538 W/m",
+      "fluid": {
+        "material_name": "air",
+        "properties": {
+          "rho": 1.1614,
+          "mu": 1.85e-5,
+          "k": 0.0257,
+          "cp": 1007.0,
+          "beta": 3.4e-3,
+          "q": 0.0
+        }
+      },
+      "wire": {
+        "material_name": "gold_plated_resistance_wire",
+        "properties": {
+          "rho": 8400.0,
+          "k": 10.0,
+          "cp": 450.0,
+          "emissivity": 0.02,
+          "electrical_resistivity": null,
+          "electrical_resistance_per_length": 1.773622047,
+          "h": 15.0
+        }
+      },
+      "dimensions": {
+        "domain": {
+          "type": "2D_symmetric",
+          "coordinates": {
+            "x_min": 0.0,
+            "x_max": 0.3048,
+            "y_min": -0.3048,
+            "y_max": 0.8128
+          }
+        },
+        "wire": {
+          "diameter": 0.001016
+        }
+      },
+      "mesh": {
+        "source": "plume_forstrom.msh",
+        "tags": {
+          "cells": {
+            "fluid": 11,
+            "wire": 10
+          },
+          "facets": {
+            "symmetry_axis": 100,
+            "outer_fluid": 101,
+            "wire_surface": 102
+          }
+        }
+      },
+      "initial_conditions": {
+        "temperature": 292.95,
+        "wire_length": 0.254,
+        "heat_length": 6.95538
+      },
+      "measurement_points": [
+        {
+          "x": 0.0,
+          "y": 0.0065532
+        },
+        {
+          "x": 0.0,
+          "y": 0.0124714
+        },
+        {
+          "x": 0.0,
+          "y": 0.0252222
+        },
+        {
+          "x": 0.0,
+          "y": 0.0754634
+        },
+        {
+          "x": 0.0,
+          "y": 0.1514602
+        },
+        {
+          "x": 0.0,
+          "y": 0.201803
+        },
+        {
+          "x": 0.0,
+          "y": 0.2516124
+        },
+        {
+          "x": 0.0,
+          "y": 0.3791204
+        }
+      ]
+    },
+    {
       "name": "PlumeCase_Fuji_Water",
       "author": "Fuji",
       "notes": "4.fuji",
