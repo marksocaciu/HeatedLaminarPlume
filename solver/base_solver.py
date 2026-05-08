@@ -932,8 +932,6 @@ def solve_ptc_stage(
         SUPG=SUPG,
         # experiment=experiment,
         # scales=scales,
-        outlet_penalty=1.0e-3,
-        backflow_beta=5.0e-1,
     )
 
     F_steady, JF_steady = build_nonlinear_problem(
@@ -948,8 +946,6 @@ def solve_ptc_stage(
         SUPG=SUPG,
         # experiment=experiment,
         # scales=scales,
-        outlet_penalty=1.0e-3,
-        backflow_beta=5.0e-1,
     )
 
     # safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
