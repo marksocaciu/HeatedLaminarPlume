@@ -800,7 +800,7 @@ def base_version(
     print0(f"Initial max theta (dim-submesh): {global_vec_max(theta_full_dim):.6e}")
     print0(f"Initial min theta (dim-submesh): {global_vec_min(theta_full_dim):.6e}")
 
-        # --- 5) scale mesh coordinates dim -> star
+    # --- 5) scale mesh coordinates dim -> star
     Lref = float(scales.Lref)
     scale_mesh_inplace(mesh, Lref)
     scale_mesh_inplace(sub_mesh_dim, Lref)
@@ -899,7 +899,7 @@ def base_version(
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
 
-    if not restart_from_last_transient:
+    if not restart_from_last_transient or not steady_from_last_transient:
         # Use Stokes initial guess for better convergene
         print0("Solving Stokes problem for initial guess...")
         w_n = stokes_initial_guess(
@@ -988,8 +988,8 @@ def base_version(
         )
         print0("Steady-from-transient branch complete.")
         return
-        
-    elif not restart_from_last_transient:
+
+    elif not restart_from_last_transient or not restart_from_checkpoint_mesh:
         w, info = solve_ptc_continuation(
             experiment,
             W, w, w_n,
@@ -1060,6 +1060,53 @@ def base_version(
         dt_start = restart_meta["dt"]
         print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
 
+    if restart_from_checkpoint_mesh:
+        print0(f"Restarting from checkpoint-owned mesh: {restart_from_checkpoint_mesh}")
+
+        loaded = prepare_loaded_checkpoint_for_base_run(
+            checkpoint_dir=restart_from_checkpoint_mesh,
+            experiment=experiment,
+        )
+
+        sub_mesh_star = loaded["sub_mesh_star"]
+        sub_mesh_dim = loaded["sub_mesh_dim"]
+
+        W = loaded["W"]
+        w = loaded["w"]
+        w_n = loaded["w_n"]
+
+        psi_p = loaded["psi_p"]
+        psi_u = loaded["psi_u"]
+        psi_T = loaded["psi_T"]
+
+        sub_ft_star = loaded["sub_ft_star"]
+        sub_dx_star = loaded["sub_dx_star"]
+        sub_ds_star = loaded["sub_ds_star"]
+
+        sub_ft_dim = loaded["sub_ft_dim"]
+        sub_dx_dim = loaded["sub_dx_dim"]
+        sub_ds_dim = loaded["sub_ds_dim"]
+
+        qn_air_star = loaded["qn_air_star"]
+        qn_air = qn_air_star
+
+        restart_meta = loaded["restart_meta"]
+
+        mu = loaded["mu"]
+        Pr = loaded["Pr"]
+        Ra = loaded["Ra"]
+        f_b = loaded["f_b"]
+        T_c = loaded["T_c"]
+        T_air_bc = loaded["T_air_bc"]
+
+        T_ambient = float(experiment.initial_conditions.temperature)
+
+        # Continue directly with transient.
+        print0(
+            f"Loaded AMR checkpoint: step={restart_meta['step']}, "
+            f"time={restart_meta['time']:.6e}, dt={restart_meta['dt']:.6e}"
+        )
+            
     if not steady_from_last_transient:
         w, transient_info = run_post_continuation_transient(
                 experiment=experiment,
@@ -2184,4 +2231,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # python main.py --experiment-index 1 --restart-from-last-transient --existing-run-root PlumeCase_Brodowicz_Air/runs/abs_20260423_195242_pid2592222
+    # mpirun -np 48 --use-hwthread-cpus python main.py --experiment-index 1 --restart-from-last-transient --existing-run-root PlumeCase_Brodowicz_Air/runs/abs_20260423_195242_pid2592222
+    # mpirun -np 48 --use-hwthread-cpus python main.py --experiment-index 1 --existing-run-root  PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/ --restart-from-checkpoint-mesh PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/restart_checkpoint_amr
+    # python main.py --experiment-index 1 --refine-restart-checkpoint  PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/restart_checkpoint --refined-checkpoint-out PlumeCase_Brodowicz_Air_reduced/runs/base_20260504_142234_pid1546866/base/restart_checkpoint_amr --amr-top-fraction 0.1 --amr-levels 2 --amr-dt-factor 0.25
