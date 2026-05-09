@@ -899,7 +899,7 @@ def base_version(
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
 
-    if not restart_from_last_transient or not steady_from_last_transient or restart_from_checkpoint_mesh != "":
+    if not restart_from_last_transient or not steady_from_last_transient or restart_from_checkpoint_mesh == "":
         # Use Stokes initial guess for better convergene
         print0("Solving Stokes problem for initial guess...")
         w_n = stokes_initial_guess(
@@ -989,7 +989,7 @@ def base_version(
         print0("Steady-from-transient branch complete.")
         return
 
-    elif not restart_from_last_transient or restart_from_checkpoint_mesh != "":
+    elif not restart_from_last_transient or restart_from_checkpoint_mesh == "":
         w, info = solve_ptc_continuation(
             experiment,
             W, w, w_n,
