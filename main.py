@@ -1100,7 +1100,7 @@ def base_version(
         T_air_bc = loaded["T_air_bc"]
 
         T_ambient = float(experiment.initial_conditions.temperature)
-
+        restart_from_last_transient = True
         # Continue directly with transient.
         print0(
             f"Loaded AMR checkpoint: step={restart_meta['step']}, "
