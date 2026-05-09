@@ -1732,13 +1732,6 @@ def run_post_continuation_transient(
                         f"rel_update={rel_update:.3e}, ||w||={mixed_norm}"
                     )
 
-                if rel_update > rel_update_limit:
-                    raise RuntimeError(
-                        f"transient step rejected by sanity check: "
-                        f"rel_update={rel_update:.3e}, "
-                        f"limit={rel_update_limit:.3e}, "
-                        f"||w||={mixed_norm}"
-                    )
 
                 if in_restart_settle:
                     if (
@@ -1790,6 +1783,13 @@ def run_post_continuation_transient(
                             f"theta_max={candidate_diag['theta_max']:.3e}, "
                             f"limit={restart_theta_max:.3e}"
                         )
+                if rel_update > rel_update_limit:
+                    raise RuntimeError(
+                        f"transient step rejected by sanity check: "
+                        f"rel_update={rel_update:.3e}, "
+                        f"limit={rel_update_limit:.3e}, "
+                        f"||w||={mixed_norm}"
+                    )
 
                 trial_success = True
                 copy_state(w_last_accepted, w)

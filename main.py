@@ -20,6 +20,7 @@ from utils.transfer import *
 from solver.base_solver import *
 from solver.abe_solver import *
 from solver.temp_solver import *
+from solver.amr import *
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -610,7 +611,13 @@ def relative_update(new_f, old_f):
 #         "theta_air_star": theta_air_star,
 #     }
 
-def base_version(experiment: Experiment, restart_from_last_transient: bool = False, existing_run_root: str = "", steady_from_last_transient: bool = False):
+def base_version(
+        experiment: Experiment,
+        restart_from_last_transient: bool = False,
+        existing_run_root: str = "",
+        steady_from_last_transient: bool = False,
+        restart_from_checkpoint_mesh: str = "",
+    ):
     mkdir0(experiment.name)
 
     run_root = make_run_root(
@@ -2093,17 +2100,78 @@ def main():
     argparser.add_argument("--restart-from-last-transient", action="store_true")
     argparser.add_argument("--existing-run-root", type=str, default="")
     argparser.add_argument("--steady-from-last-transient", action="store_true")
+
+    argparser.add_argument(
+        "--refine-restart-checkpoint",
+        type=str,
+        default="",
+        help="Offline AMR: input restart checkpoint directory containing state.h5/state.json",
+    )
+
+    argparser.add_argument(
+        "--refined-checkpoint-out",
+        type=str,
+        default="",
+        help="Offline AMR: output checkpoint directory for the refined restart",
+    )
+
+    argparser.add_argument(
+        "--amr-top-fraction",
+        type=float,
+        default=0.05,
+        help="Fraction of cells to refine during offline AMR",
+    )
+
+    argparser.add_argument(
+        "--amr-levels",
+        type=int,
+        default=1,
+        help="Number of offline AMR refinement levels",
+    )
+
+    argparser.add_argument(
+        "--amr-dt-factor",
+        type=float,
+        default=0.25,
+        help="Factor applied to checkpoint dt after AMR interpolation",
+    )
+
+    argparser.add_argument(
+        "--restart-from-checkpoint-mesh",
+        type=str,
+        default="",
+        help="Restart from a checkpoint using the mesh stored in state.h5",
+    )
+    
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
     experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
     experiment = experiment_list[args.experiment_index]
     print0(f"Running experiment: {experiment.name}")
 
+    if args.refine_restart_checkpoint:
+        if not args.refined_checkpoint_out:
+            raise ValueError(
+                "--refined-checkpoint-out is required when using "
+                "--refine-restart-checkpoint"
+            )
+
+        refine_checkpoint_offline(
+            input_checkpoint_dir=args.refine_restart_checkpoint,
+            output_checkpoint_dir=args.refined_checkpoint_out,
+            top_fraction=args.amr_top_fraction,
+            levels=args.amr_levels,
+            dt_factor=args.amr_dt_factor,
+        )
+        print0("Offline AMR checkpoint migration completed.")
+        return
+
     base_version(
         experiment,
         restart_from_last_transient=args.restart_from_last_transient,
         existing_run_root=args.existing_run_root,
         steady_from_last_transient=args.steady_from_last_transient,
+        restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
     )
     # base_version_new(experiment)  
     # temperature_dependent_version(experiment)
