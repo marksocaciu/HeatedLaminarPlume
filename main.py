@@ -1110,6 +1110,7 @@ def base_version(
         print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
        
     if not steady_from_last_transient:
+        print(restart_from_last_transient, steady_from_last_transient, restart_from_checkpoint_mesh)
         w, transient_info = run_post_continuation_transient(
                 experiment=experiment,
                 W=W,
