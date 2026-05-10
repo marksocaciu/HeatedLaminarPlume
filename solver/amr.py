@@ -6,8 +6,8 @@ import shutil
 from pathlib import Path
 
 from utils.imports import *
-from solver.scales import compute_nondimensional_scales
-from solver.params_bcs import set_bcs
+from solver.scales import *
+from solver.params_bcs import *
 
 
 def build_mixed_space_on_mesh(mesh: fenics.Mesh) -> fenics.FunctionSpace:
@@ -50,80 +50,97 @@ def build_uniform_qn_air(mesh: fenics.Mesh, qn_star_value: float) -> fenics.Func
     return qn_air
 
 
+def _global_mesh_bounds(mesh: fenics.Mesh):
+    """
+    Return global xmin, xmax, ymin, ymax for a distributed legacy FEniCS mesh.
+    """
+    coords = mesh.coordinates()
+
+    if coords.shape[0] == 0:
+        local = np.array([np.inf, -np.inf, np.inf, -np.inf], dtype=float)
+    else:
+        local = np.array(
+            [
+                coords[:, 0].min(),
+                coords[:, 0].max(),
+                coords[:, 1].min(),
+                coords[:, 1].max(),
+            ],
+            dtype=float,
+        )
+
+    xmin = COMM.allreduce(local[0], op=MPI4Py.MIN)
+    xmax = COMM.allreduce(local[1], op=MPI4Py.MAX)
+    ymin = COMM.allreduce(local[2], op=MPI4Py.MIN)
+    ymax = COMM.allreduce(local[3], op=MPI4Py.MAX)
+
+    return float(xmin), float(xmax), float(ymin), float(ymax)
+
+
 def rebuild_air_facet_tags(mesh: fenics.Mesh, experiment, scales) -> fenics.MeshFunction:
     """
     Rebuild air facet tags geometrically on the current nondimensional/star mesh.
 
-    This is essential after refine(mesh, markers), because the old facet MeshFunction
-    is not automatically valid on the refined mesh.
-
-    Tags follow utils.imports:
-        SYMMETRY_AIR_TAG = 100
-        OUTER_AIR_TAG   = 101
-        INTERFACE_TAG   = 102
-
-    Your current set_bcs(...) uses geometric SubDomains for BCs, but the weak heat
-    flux term uses sub_ds(INTERFACE_TAG), so INTERFACE_TAG must be correct.
+    Expected important tags:
+        OUTER_AIR_TAG = 101
+        INTERFACE_TAG = 102
     """
     tdim = mesh.topology().dim()
     ft = fenics.MeshFunction("size_t", mesh, tdim - 1, 0)
 
+    xmin, xmax, ymin, ymax = _global_mesh_bounds(mesh)
+
+    span = max(1.0, xmax - xmin, ymax - ymin)
+    tol_outer = 1.0e-8 * span
+
     r = (float(experiment.dimensions.wire.diameter) / 2.0) / float(scales.Lref)
 
-    # This matches Hot_wall in solver/params_bcs.py
+    # Must match params_bcs.py::Hot_wall
     yc = (
         float(experiment.dimensions.domain.y_max) / float(scales.Lref) / 10.0
         + 11.0 * r
     )
 
-    x_min = float(experiment.dimensions.domain.x_min) / float(scales.Lref)
-    x_max = float(experiment.dimensions.domain.x_max) / float(scales.Lref)
-    y_min = float(experiment.dimensions.domain.y_min) / float(scales.Lref)
-    y_max = float(experiment.dimensions.domain.y_max) / float(scales.Lref)
-
-    # A slightly relaxed tolerance helps after refinement.
-    tol_outer = 1.0e-9
     tol_wire = max(1.0e-12, 1.0e-1 * r)
+
+    class OuterBoundary(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return (
+                on_boundary
+                and (
+                    fenics.near(x[0], xmin, tol_outer)
+                    or fenics.near(x[0], xmax, tol_outer)
+                    or fenics.near(x[1], ymin, tol_outer)
+                    or fenics.near(x[1], ymax, tol_outer)
+                )
+            )
 
     class WireInterface(fenics.SubDomain):
         def inside(self, x, on_boundary):
             return (
                 on_boundary
-                and fenics.near(x[0] ** 2 + (x[1] - yc) ** 2 - r * r, 0.0, eps=tol_wire)
+                and fenics.near(
+                    x[0] ** 2 + (x[1] - yc) ** 2 - r * r,
+                    0.0,
+                    eps=tol_wire,
+                )
                 and x[1] >= yc - r - 1.0e-12
                 and x[1] <= yc + r + 1.0e-12
             )
 
-    class WestBoundary(fenics.SubDomain):
-        def inside(self, x, on_boundary):
-            return on_boundary and fenics.near(x[0], x_min, tol_outer)
-
-    class EastBoundary(fenics.SubDomain):
-        def inside(self, x, on_boundary):
-            return on_boundary and fenics.near(x[0], x_max, tol_outer)
-
-    class SouthBoundary(fenics.SubDomain):
-        def inside(self, x, on_boundary):
-            return on_boundary and fenics.near(x[1], y_min, tol_outer)
-
-    class NorthBoundary(fenics.SubDomain):
-        def inside(self, x, on_boundary):
-            return on_boundary and fenics.near(x[1], y_max, tol_outer)
-
-    # For your current equations, both left/right/top/bottom can be treated as
-    # outer air for diagnostic flux integration.
-    WestBoundary().mark(ft, OUTER_AIR_TAG)
-    EastBoundary().mark(ft, OUTER_AIR_TAG)
-    SouthBoundary().mark(ft, OUTER_AIR_TAG)
-    NorthBoundary().mark(ft, OUTER_AIR_TAG)
-
-    # Mark wire last, so it overrides any accidental default/outer marking.
+    # Mark outer first, then wire last so the wire wins if there is overlap.
+    OuterBoundary().mark(ft, OUTER_AIR_TAG)
     WireInterface().mark(ft, INTERFACE_TAG)
 
+    local_tags = set(int(v) for v in ft.array())
+    all_tags = COMM.gather(local_tags, root=0)
+
     if is_rank0():
-        tags = set(ft.array())
+        tags = sorted(set().union(*all_tags))
+        print0(f"[AMR] mesh bounds: xmin={xmin:.6e}, xmax={xmax:.6e}, ymin={ymin:.6e}, ymax={ymax:.6e}")
         print0(f"[AMR] rebuilt facet tags: {tags}")
 
+    COMM.Barrier()
     return ft
 
 
@@ -436,33 +453,18 @@ def prepare_loaded_checkpoint_for_base_run(
 ):
     """
     Load a checkpoint on its own mesh and rebuild the objects base_version needs.
-
-    Returns:
-        sub_mesh_star, sub_mesh_dim,
-        W, w, w_n,
-        psi_p, psi_u, psi_T,
-        sub_ft_star, sub_dx_star, sub_ds_star,
-        sub_ft_dim, sub_dx_dim, sub_ds_dim,
-        qn_air_star,
-        restart_meta,
-        T_air_bc, T_c, mu, Pr, Ra, f_b, T_h, T_ref
     """
-    from solver.solver import solver
-
     scales = compute_nondimensional_scales(experiment)
 
     sub_mesh_star, W, w, w_n, restart_meta = load_checkpoint_on_own_mesh(checkpoint_dir)
 
-    # In your current code, the air mesh is scaled in place and then used as both
-    # sub_mesh_dim and sub_mesh_star. For a checkpoint restart, the mesh is already
-    # star/nondimensional, so keep the same object.
+    # The checkpoint mesh is already nondimensional/star-scaled.
     sub_mesh_dim = sub_mesh_star
 
     sub_ft_star = rebuild_air_facet_tags(sub_mesh_star, experiment, scales)
     sub_dx_star = fenics.Measure("dx", domain=sub_mesh_star)
     sub_ds_star = fenics.Measure("ds", domain=sub_mesh_star, subdomain_data=sub_ft_star)
 
-    # Existing postprocessing/diagnostics expect these names too.
     sub_ft_dim = sub_ft_star
     sub_dx_dim = sub_dx_star
     sub_ds_dim = sub_ds_star
@@ -470,22 +472,21 @@ def prepare_loaded_checkpoint_for_base_run(
     qn_star_value = compute_uniform_qn_star_value(experiment, scales)
     qn_air_star = build_uniform_qn_air(sub_mesh_star, qn_star_value)
 
-    # Recreate solver constants/BC placeholders by calling solver(...) with the
-    # checkpoint temperature as initial theta. Then immediately overwrite w/w_n
-    # with the checkpoint state again to be safe.
-    _, _, _, _, _, _, _, _, _, psi_p, psi_u, psi_T, \
-        mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
-            sub_mesh_star,
-            w_n.sub(2, deepcopy=True),
-            0.0,
-            experiment.fluid.properties["rho"],
-            experiment.fluid.properties["beta"],
-            experiment,
-        )
-
-    # solver(...) creates fresh w/w_n; restore checkpoint-loaded ones.
-    # W itself is equivalent, but keep the one from checkpoint load.
     psi_p, psi_u, psi_T = fenics.TestFunctions(W)
+
+    p_ufl, u_ufl, theta_ufl = fenics.split(w)
+
+    theta_checkpoint = w_n.sub(2, deepcopy=True)
+
+    mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = set_param(
+        sub_mesh_star,
+        theta_checkpoint,
+        theta_ufl,
+        0.0,
+        experiment.fluid.properties["rho"],
+        experiment.fluid.properties["beta"],
+        experiment,
+    )
 
     return {
         "sub_mesh_star": sub_mesh_star,
