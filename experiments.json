@@ -511,7 +511,7 @@
         {
           "name": "PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6",
           "author": "Deschamps_and_Desrayaud",
-          "notes": "9.deschamps1994; finite heat-flux cylinder version of confined plume benchmark; A = H/D = 1, Hs = 0.75, d/D = 1/70, Ra = 1e6; dimensionalized with D = 0.1 m",
+          "notes": "9.deschamps1994; confined air plume above finite heat-flux cylinder; A = H/D = 1, Hs = 0.75, d/D = 1/70, Ra = 1e6; dimensionalized with D = 0.1 m",
           "fluid": {
             "material_name": "air",
             "properties": {
@@ -530,13 +530,13 @@
               "k": 10.0,
               "cp": 450.0,
               "emissivity": 0.0,
-              "electrical_resistivity": null,
+              "electrical_resistivity": 1.1e-6,
               "h": 15.0
             }
           },
           "dimensions": {
             "domain": {
-              "type": "2D_symmetric_confined",
+              "type": "2D_symmetric",
               "coordinates": {
                 "x_min": 0.0,
                 "x_max": 0.05,
@@ -545,23 +545,11 @@
               }
             },
             "wire": {
-              "diameter": 0.0014285714285714286,
-              "center": {
-                "x": 0.0,
-                "y": 0.025
-              }
-            },
-            "vessel": {
-              "width": 0.1,
-              "height": 0.1,
-              "aspect_ratio": 1.0,
-              "source_immersion_depth": 0.075,
-              "source_immersion_depth_nondimensional": 0.75,
-              "dimensionless_cylinder_diameter": 0.014285714285714285
+              "diameter": 0.0014285714285714286
             }
           },
           "mesh": {
-            "source": "plume_deschamps_cylinder_A1_Hs075_d70.msh",
+            "source": "plume_deschamps_d70_A1_Hs075.msh",
             "tags": {
               "cells": {
                 "fluid": 11,
@@ -570,10 +558,7 @@
               "facets": {
                 "symmetry_axis": 100,
                 "outer_fluid": 101,
-                "wire_surface": 102,
-                "bottom_wall": 103,
-                "top_wall": 104,
-                "side_wall": 105
+                "wire_surface": 102
               }
             }
           },
@@ -581,15 +566,6 @@
             "temperature": 292.95,
             "wire_length": 1.0,
             "heat_length": 0.26970993
-          },
-          "nondimensional_reference": {
-            "length_scale": 0.1,
-            "temperature_scale": 10.493,
-            "time_scale": 455.07,
-            "rayleigh_number": 1000000.0,
-            "prandtl_number": 0.72488,
-            "source_model": "finite_heat_flux_cylinder",
-            "rayleigh_definition": "Ra = g*beta*Q*D^3/(k*alpha*nu)"
           },
           "measurement_points": [
             {
