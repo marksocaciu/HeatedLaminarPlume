@@ -507,84 +507,84 @@
         {
           "x": 0.0,
           "y": 0.0508
+        }
+      ]
+    },
+    {
+      "name": "PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6",
+      "author": "Deschamps_and_Desrayaud",
+      "notes": "9.deschamps1994; confined air plume above finite heat-flux cylinder; A = H/D = 1, Hs = 0.75, d/D = 1/70, Ra = 1e6; dimensionalized with D = 0.1 m",
+      "fluid": {
+        "material_name": "air",
+        "properties": {
+          "rho": 1.1614,
+          "mu": 1.85e-5,
+          "k": 0.0257,
+          "cp": 1007.0,
+          "beta": 3.4e-3,
+          "q": 0.0
+        }
+      },
+      "wire": {
+        "material_name": "ideal_heat_flux_cylinder",
+        "properties": {
+          "rho": 8400.0,
+          "k": 10.0,
+          "cp": 450.0,
+          "emissivity": 0.0,
+          "electrical_resistivity": 1.1e-6,
+          "h": 15.0
+        }
+      },
+      "dimensions": {
+        "domain": {
+          "type": "2D_symmetric",
+          "coordinates": {
+            "x_min": 0.0,
+            "x_max": 0.05,
+            "y_min": 0.0,
+            "y_max": 0.1
+          }
+        },
+        "wire": {
+          "diameter": 0.0014285714285714286
+        }
+      },
+      "mesh": {
+        "source": "plume_deschamps_d70_A1_Hs075.msh",
+        "tags": {
+          "cells": {
+            "fluid": 11,
+            "wire": 10
+          },
+          "facets": {
+            "symmetry_axis": 100,
+            "outer_fluid": 101,
+            "wire_surface": 102
+          }
+        }
+      },
+      "initial_conditions": {
+        "temperature": 292.95,
+        "wire_length": 1.0,
+        "heat_length": 0.26970993
+      },
+      "measurement_points": [
+        {
+          "x": 0.0,
+          "y": 0.035
         },
         {
-          "name": "PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6",
-          "author": "Deschamps_and_Desrayaud",
-          "notes": "9.deschamps1994; confined air plume above finite heat-flux cylinder; A = H/D = 1, Hs = 0.75, d/D = 1/70, Ra = 1e6; dimensionalized with D = 0.1 m",
-          "fluid": {
-            "material_name": "air",
-            "properties": {
-              "rho": 1.1614,
-              "mu": 1.85e-5,
-              "k": 0.0257,
-              "cp": 1007.0,
-              "beta": 3.4e-3,
-              "q": 0.0
-            }
-          },
-          "wire": {
-            "material_name": "ideal_heat_flux_cylinder",
-            "properties": {
-              "rho": 8400.0,
-              "k": 10.0,
-              "cp": 450.0,
-              "emissivity": 0.0,
-              "electrical_resistivity": 1.1e-6,
-              "h": 15.0
-            }
-          },
-          "dimensions": {
-            "domain": {
-              "type": "2D_symmetric",
-              "coordinates": {
-                "x_min": 0.0,
-                "x_max": 0.05,
-                "y_min": 0.0,
-                "y_max": 0.1
-              }
-            },
-            "wire": {
-              "diameter": 0.0014285714285714286
-            }
-          },
-          "mesh": {
-            "source": "plume_deschamps_d70_A1_Hs075.msh",
-            "tags": {
-              "cells": {
-                "fluid": 11,
-                "wire": 10
-              },
-              "facets": {
-                "symmetry_axis": 100,
-                "outer_fluid": 101,
-                "wire_surface": 102
-              }
-            }
-          },
-          "initial_conditions": {
-            "temperature": 292.95,
-            "wire_length": 1.0,
-            "heat_length": 0.26970993
-          },
-          "measurement_points": [
-            {
-              "x": 0.0,
-              "y": 0.035
-            },
-            {
-              "x": 0.0,
-              "y": 0.05
-            },
-            {
-              "x": 0.0,
-              "y": 0.075
-            },
-            {
-              "x": 0.0,
-              "y": 0.09
-            }
-          ]
+          "x": 0.0,
+          "y": 0.05
+        },
+        {
+          "x": 0.0,
+          "y": 0.075
+        },
+        {
+          "x": 0.0,
+          "y": 0.09
         }
       ]
     }
