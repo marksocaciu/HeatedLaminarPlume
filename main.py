@@ -335,7 +335,7 @@ def generate_coarse_remesh_files(experiment, coarse_run_root: str):
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
         template_geo_name="geom_coarse.geo",
-        resolution=40,
+        resolution=100,
     )
 
     MSH_FILE = os.path.join(coarse_run_root, "plume_coarse.msh")
