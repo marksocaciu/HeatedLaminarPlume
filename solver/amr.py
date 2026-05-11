@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import shutil
+import math
 from pathlib import Path
 
 from utils.imports import *
@@ -514,3 +515,317 @@ def prepare_loaded_checkpoint_for_base_run(
         "T_h": T_h,
         "T_ref": T_ref,
     }
+
+def mark_cells_for_plume_remesh(
+    mesh: fenics.Mesh,
+    theta: fenics.Function,
+    u: fenics.Function | None,
+    experiment,
+    scales,
+    top_fraction: float = 0.05,
+    wire_ring_factor: float = 8.0,
+) -> fenics.MeshFunction:
+    """
+    Mark cells for supervisor-style remeshing on a new coarse mesh.
+
+    Indicator:
+        eta = h*|grad(theta)|
+            + 0.25*h*|grad(u)|
+            + 0.10*|theta|
+            + 0.05*|u|
+
+    In addition, force-refine a ring around the wire. This protects the heat-flux
+    boundary region even if interpolation smooths the near-wire gradients.
+    """
+    top_fraction = float(top_fraction)
+    if not (0.0 < top_fraction < 1.0):
+        raise ValueError(f"top_fraction must be in (0, 1), got {top_fraction}")
+
+    V0 = fenics.FunctionSpace(mesh, "DG", 0)
+    h = fenics.CellDiameter(mesh)
+
+    grad_theta_mag = fenics.sqrt(
+        fenics.inner(fenics.grad(theta), fenics.grad(theta))
+        + fenics.DOLFIN_EPS
+    )
+
+    theta_mag = fenics.sqrt(theta * theta + fenics.DOLFIN_EPS)
+
+    eta_expr = h * grad_theta_mag + fenics.Constant(0.10) * theta_mag
+
+    if u is not None:
+        grad_u_mag = fenics.sqrt(
+            fenics.inner(fenics.grad(u), fenics.grad(u))
+            + fenics.DOLFIN_EPS
+        )
+        u_mag = fenics.sqrt(fenics.inner(u, u) + fenics.DOLFIN_EPS)
+
+        eta_expr += (
+            fenics.Constant(0.25) * h * grad_u_mag
+            + fenics.Constant(0.05) * u_mag
+        )
+
+    eta = fenics.project(eta_expr, V0, solver_type="mumps")
+    vals_local = eta.vector().get_local()
+
+    if vals_local.size == 0:
+        local_threshold = 1.0e100
+    else:
+        local_threshold = float(np.quantile(vals_local, 1.0 - top_fraction))
+
+    # Conservative MPI approximation: mark slightly more, not too few.
+    threshold = COMM.allreduce(local_threshold, op=MPI4Py.MIN)
+
+    markers = fenics.MeshFunction("bool", mesh, mesh.topology().dim())
+    markers.set_all(False)
+
+    dofmap = V0.dofmap()
+    vals = eta.vector().get_local()
+
+    # Must match rebuild_air_facet_tags(...) and params_bcs.py::Hot_wall.
+    r_wire = (
+        float(experiment.dimensions.wire.diameter) / 2.0
+    ) / float(scales.Lref)
+
+    yc = (
+        float(experiment.dimensions.domain.y_max) / float(scales.Lref) / 10.0
+        + 11.0 * r_wire
+    )
+
+    ring_radius = float(wire_ring_factor) * r_wire
+
+    n_marked_local = 0
+
+    for cell in fenics.cells(mesh):
+        dof = dofmap.cell_dofs(cell.index())[0]
+        mp = cell.midpoint()
+        x = mp.x()
+        y = mp.y()
+
+        dist = math.sqrt(x * x + (y - yc) * (y - yc))
+
+        indicator_mark = vals[dof] >= threshold
+        wire_ring_mark = dist <= ring_radius
+
+        if indicator_mark or wire_ring_mark:
+            markers[cell] = True
+            n_marked_local += 1
+
+    n_marked = COMM.allreduce(n_marked_local, op=MPI4Py.SUM)
+
+    print0(
+        f"[REMESH] marked {n_marked} cells; "
+        f"threshold={threshold:.6e}, "
+        f"wire_ring_radius={ring_radius:.6e}"
+    )
+
+    return markers
+
+def remesh_checkpoint_from_coarse_mesh(
+    input_checkpoint_dir: str,
+    coarse_air_cells_xdmf: str,
+    coarse_air_facets_xdmf: str,
+    output_checkpoint_dir: str,
+    experiment,
+    top_fraction: float = 0.05,
+    levels: int = 2,
+    dt_factor: float = 0.25,
+    wire_ring_factor: float = 8.0,
+):
+    """
+    Supervisor-style remeshing workflow:
+
+        old checkpoint on old mesh
+            -> load old p/u/theta
+            -> read new coarse air mesh
+            -> scale new coarse mesh to star coordinates
+            -> interpolate old solution onto new coarse mesh
+            -> refine new mesh according to transferred plume solution
+            -> write checkpoint on the new refined mesh
+
+    The written checkpoint can then be used with:
+        --restart-from-checkpoint-mesh <output_checkpoint_dir>
+    """
+    from utils.geometry import read_mesh
+    from utils.transfer import scale_mesh_inplace
+
+    input_checkpoint_dir = str(input_checkpoint_dir)
+    output_checkpoint_dir = str(output_checkpoint_dir)
+    levels = int(levels)
+
+    if levels < 1:
+        raise ValueError(f"levels must be >= 1, got {levels}")
+
+    scales = compute_nondimensional_scales(experiment)
+
+    # ------------------------------------------------------------
+    # 1. Load old checkpoint on its own old star mesh
+    # ------------------------------------------------------------
+    old_mesh, old_W, old_w, old_w_n, meta = load_checkpoint_on_own_mesh(
+        input_checkpoint_dir
+    )
+
+    p_old, u_old, theta_old = old_w_n.split(deepcopy=True)
+
+    for f in (p_old, u_old, theta_old):
+        try:
+            f.set_allow_extrapolation(True)
+        except Exception:
+            pass
+
+    print0(
+        f"[REMESH] old checkpoint mesh: "
+        f"cells={old_mesh.num_cells()}, vertices={old_mesh.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------
+    # 2. Read new coarse AIR mesh in dimensional coordinates
+    # ------------------------------------------------------------
+    MESH_NAME = "Grid"
+
+    mesh_new, air_ct, air_ft, _, sub_dx_dim, _, sub_mc_dim, sub_ft_dim = read_mesh(
+        coarse_air_cells_xdmf,
+        coarse_air_facets_xdmf,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+
+    print0(
+        f"[REMESH] coarse dimensional air mesh: "
+        f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------
+    # 3. Scale new mesh to star coordinates
+    # ------------------------------------------------------------
+    scale_mesh_inplace(mesh_new, float(scales.Lref))
+
+    try:
+        mesh_new.bounding_box_tree().build(mesh_new)
+    except Exception:
+        pass
+
+    print0(
+        f"[REMESH] coarse star air mesh: "
+        f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------
+    # 4. Transfer old fields onto the new coarse mesh
+    # ------------------------------------------------------------
+    Vp_new = fenics.FunctionSpace(mesh_new, "CG", 1)
+    Vu_new = fenics.VectorFunctionSpace(mesh_new, "CG", 2)
+    VT_new = fenics.FunctionSpace(mesh_new, "CG", 1)
+
+    p_new = fenics.interpolate(p_old, Vp_new)
+    u_new = fenics.interpolate(u_old, Vu_new)
+    theta_new = fenics.interpolate(theta_old, VT_new)
+
+    p_new.rename("p_star", "p_star")
+    u_new.rename("u_star", "u_star")
+    theta_new.rename("theta_star", "theta_star")
+
+    print0(
+        f"[REMESH] transferred theta range: "
+        f"min={global_vec_min(theta_new):.6e}, "
+        f"max={global_vec_max(theta_new):.6e}"
+    )
+    print0(
+        f"[REMESH] transferred |u| vector range proxy: "
+        f"min={global_vec_min(u_new):.6e}, "
+        f"max={global_vec_max(u_new):.6e}"
+    )
+
+    # ------------------------------------------------------------
+    # 5. Refine new mesh using solution-based indicator
+    # ------------------------------------------------------------
+    for lev in range(levels):
+        print0(f"[REMESH] refinement level {lev + 1}/{levels}")
+
+        for f in (p_new, u_new, theta_new):
+            try:
+                f.set_allow_extrapolation(True)
+            except Exception:
+                pass
+
+        markers = mark_cells_for_plume_remesh(
+            mesh=mesh_new,
+            theta=theta_new,
+            u=u_new,
+            experiment=experiment,
+            scales=scales,
+            top_fraction=top_fraction,
+            wire_ring_factor=wire_ring_factor,
+        )
+
+        mesh_refined = fenics.refine(mesh_new, markers)
+
+        try:
+            mesh_refined.bounding_box_tree().build(mesh_refined)
+        except Exception:
+            pass
+
+        Vp_ref = fenics.FunctionSpace(mesh_refined, "CG", 1)
+        Vu_ref = fenics.VectorFunctionSpace(mesh_refined, "CG", 2)
+        VT_ref = fenics.FunctionSpace(mesh_refined, "CG", 1)
+
+        for f in (p_new, u_new, theta_new):
+            try:
+                f.set_allow_extrapolation(True)
+            except Exception:
+                pass
+
+        p_new = fenics.interpolate(p_new, Vp_ref)
+        u_new = fenics.interpolate(u_new, Vu_ref)
+        theta_new = fenics.interpolate(theta_new, VT_ref)
+
+        p_new.rename("p_star", "p_star")
+        u_new.rename("u_star", "u_star")
+        theta_new.rename("theta_star", "theta_star")
+
+        mesh_new = mesh_refined
+
+        print0(
+            f"[REMESH] refined mesh now has "
+            f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+        )
+        print0(
+            f"[REMESH] theta range after level {lev + 1}: "
+            f"min={global_vec_min(theta_new):.6e}, "
+            f"max={global_vec_max(theta_new):.6e}"
+        )
+
+    # ------------------------------------------------------------
+    # 6. Assemble mixed checkpoint state
+    # ------------------------------------------------------------
+    W_new = build_mixed_space_on_mesh(mesh_new)
+    w_n_new = assign_split_to_mixed(W_new, p_new, u_new, theta_new)
+
+    # ------------------------------------------------------------
+    # 7. Update metadata and write checkpoint
+    # ------------------------------------------------------------
+    meta = dict(meta)
+
+    old_dt = float(meta.get("dt", 1.0e-5))
+    meta["dt"] = float(dt_factor) * old_dt
+
+    meta["source"] = "remeshed_from_coarse_mesh"
+    meta["remeshed"] = True
+    meta["remesh_parent_checkpoint"] = os.path.abspath(input_checkpoint_dir)
+    meta["remesh_coarse_air_cells"] = os.path.abspath(coarse_air_cells_xdmf)
+    meta["remesh_coarse_air_facets"] = os.path.abspath(coarse_air_facets_xdmf)
+    meta["remesh_levels"] = int(levels)
+    meta["remesh_top_fraction"] = float(top_fraction)
+    meta["remesh_wire_ring_factor"] = float(wire_ring_factor)
+    meta["remesh_dt_factor"] = float(dt_factor)
+
+    write_checkpoint_with_mesh(
+        output_checkpoint_dir,
+        mesh_new,
+        w_n_new,
+        meta,
+    )
+
+    print0(f"[REMESH] wrote remeshed checkpoint: {output_checkpoint_dir}")
+
+    return output_checkpoint_dir

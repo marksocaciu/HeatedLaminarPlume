@@ -316,300 +316,60 @@ def relative_update(new_f, old_f):
     diff.axpy(-1.0, old_f.vector())
     return diff.norm("l2") / (new_f.vector().norm("l2") + 1.0e-14)
 
-# def base_version_new(experiment: Experiment):
-#     """
-#     New conjugate skeleton:
+def generate_coarse_remesh_files(experiment, coarse_run_root: str):
+    """
+    Generate a coarse full mesh and extracted air mesh using geom_coarse.geo.
 
-#       1) solve T_full on parent mesh
-#       2) restrict T_full -> theta_air
-#       3) solve air-only flow on air submesh
-#       4) extend u_air -> parent mesh
-#       5) solve updated T_full with air-only convection
-#       6) iterate
-#     """
-#     run_root = make_run_root(experiment.name, "base")
-#     GEOM_FILE = geometry_template(
-#         wire_radius=experiment.dimensions.wire.diameter / 2,
-#         output_path=experiment.name,
-#         xmax=experiment.dimensions.domain.x_max,
-#         ymax=experiment.dimensions.domain.y_max,
-#         resolution=250,
-#     )
-#     MSH_FILE = experiment.name + "/plume.msh"
-#     TRIG_XDMF_PATH = run_root + "/plume.xdmf"
-#     FACETS_XDMF_PATH = run_root + "/plume_mt.xdmf"
-#     OUTPUT_XDMF_PATH_WIRE = run_root + "/base/wire_temperature.xdmf"
-#     OUTPUT_XDMF_PATH_TEMP = run_root + "/base/temperature.xdmf"
-#     OUTPUT_XDMF_PATH_AIR_T = run_root + "/base/air_temperature.xdmf"
-#     OUTPUT_XDMF_PATH_AIR_P = run_root + "/base/air_pressure.xdmf"
-#     OUTPUT_XDMF_PATH_AIR_V = run_root + "/base/air_velocity.xdmf"
-#     OUTPUT_XDMF_PATH_AIR_PVT = run_root + "/base/air_pvt.xdmf"
-#     MESH_NAME = "Grid"
-#     ELEM = "triangle"
+    This is only used by the offline remeshing workflow:
+        old checkpoint -> new coarse mesh -> solution-based refinement -> checkpoint
+    """
+    coarse_run_root = str(coarse_run_root)
 
-#     # ------------------------------------------------------------------
-#     # 0) Build full mesh and dimensional air submesh
-#     # ------------------------------------------------------------------
-#     generate_mesh(GEOM_FILE, MSH_FILE, TRIG_XDMF_PATH, FACETS_XDMF_PATH)
+    if is_rank0():
+        os.makedirs(coarse_run_root, exist_ok=True)
+    COMM.Barrier()
 
-#     mesh, ct, ft, domains, dx, boundary_markers, mc, mf = read_mesh(
-#         TRIG_XDMF_PATH, FACETS_XDMF_PATH, "Grid", PRINT_TAG_SUMMARY
-#     )
+    GEOM_FILE = geometry_template(
+        wire_radius=experiment.dimensions.wire.diameter / 2.0,
+        output_path=coarse_run_root,
+        xmax=experiment.dimensions.domain.x_max,
+        ymax=experiment.dimensions.domain.y_max,
+        template_geo_name="geom_coarse.geo",
+        resolution=40,
+    )
 
-#     # Dimensional air submesh
-#     sub_mesh_dim, sub_ft_dim, sub_dx_dim, sub_ds_dim = create_submesh(mesh, mc, mf, AIR_TAG)
+    MSH_FILE = os.path.join(coarse_run_root, "plume_coarse.msh")
 
-#     scales = compute_nondimensional_scales(experiment)
-#     print0(scales)
+    TRIG_XDMF_PATH = os.path.join(coarse_run_root, "full_cells.xdmf")
+    FACETS_XDMF_PATH = os.path.join(coarse_run_root, "full_facets.xdmf")
 
-#     T_ambient = float(experiment.initial_conditions.temperature)
-#     dTref = float(scales.dTref)
+    AIR_TRIG_XDMF_PATH = os.path.join(coarse_run_root, "air_cells.xdmf")
+    AIR_FACETS_XDMF_PATH = os.path.join(coarse_run_root, "air_facets.xdmf")
 
-#     # ------------------------------------------------------------------
-#     # 1) Thermal initialization on FULL DIMENSIONAL parent mesh
-#     # ------------------------------------------------------------------
-#     print0("Computing initial full-domain thermal field...")
-#     heat_volume = volume_heat_source(experiment)
-#     print0(f"Using wire volumetric heating: {heat_volume:.6e} W/m^3")
+    mesh_files_exist = (
+        os.path.exists(TRIG_XDMF_PATH)
+        and os.path.exists(FACETS_XDMF_PATH)
+        and os.path.exists(AIR_TRIG_XDMF_PATH)
+        and os.path.exists(AIR_FACETS_XDMF_PATH)
+    )
 
-#     T_full, k_func = solve_full_temperature(
-#         mesh=mesh,
-#         mc=mc,
-#         mf=mf,
-#         experiment=experiment,
-#         heat_volume=heat_volume,
-#         output_xdmf_path=OUTPUT_XDMF_PATH_TEMP,
-#         u_full=None,
-#         include_convection=False,
-#         T_prev=None,
-#         pseudo_dt=None,
-#         max_material_iters=6,
-#         material_tol=1.0e-8,
-#     )
+    if mesh_files_exist:
+        print0("[REMESH] using existing coarse mesh files; not regenerating.")
+        COMM.Barrier()
+    else:
+        generate_mesh(
+            GEOM_FILE,
+            MSH_FILE,
+            TRIG_XDMF_PATH,
+            FACETS_XDMF_PATH,
+            AIR_TRIG_XDMF_PATH=AIR_TRIG_XDMF_PATH,
+            AIR_FACETS_XDMF_PATH=AIR_FACETS_XDMF_PATH,
+            AIR_TAG_VALUE=AIR_TAG,
+            ELEM="triangle",
+            PRUNE_Z=True,
+        )
 
-#     # Restrict dimensional T_full -> dimensional air submesh -> nondim theta on dim submesh
-#     T_air_dim, theta_air_dim = restrict_full_temperature_to_air_submesh(
-#         T_full=T_full,
-#         sub_mesh_dim=sub_mesh_dim,
-#         T_ambient=T_ambient,
-#         dTref=dTref,
-#     )
-
-#     print0(f"Initial T_full min/max [K]: {T_full.vector().min():.6e}, {T_full.vector().max():.6e}")
-#     print0(f"Initial theta_air_dim min/max [-]: {theta_air_dim.vector().min():.6e}, {theta_air_dim.vector().max():.6e}")
-
-#     # ------------------------------------------------------------------
-#     # 2) Keep qn_air ONLY as diagnostic
-#     # ------------------------------------------------------------------
-#     qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
-#     check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
-
-#     biot_air_h_eff, biot_air_Bi = biot(
-#         sub_mesh_dim,
-#         sub_ft_dim,
-#         T_full,
-#         qn_air,
-#         T_ambient,
-#         experiment.wire.properties["k"],
-#         experiment.dimensions.wire.diameter,
-#     )
-
-#     # print0(f"Diagnostic h_eff [air side]: {biot_air_h_eff:.6e}")
-#     # print0(f"Diagnostic Bi [air side]:    {biot_air_Bi:.6e}")
-
-#     # ------------------------------------------------------------------
-#     # 3) Scale parent mesh to STAR coordinates
-#     #
-#     # Your current main path already does this before solving on the air
-#     # star mesh.  [oai_citation:6‡main.py](sediment://file_00000000fb8872468f86b32172903ceb)
-#     # ------------------------------------------------------------------
-#     Lref = float(scales.Lref)
-#     scale_mesh_inplace(mesh, Lref)
-#     scale_mesh_inplace(sub_mesh_dim, Lref)
-
-#     # rebuild STAR air submesh from scaled parent mesh
-#     sub_mesh_star, sub_ft_star, sub_dx_star, sub_ds_star = create_submesh(mesh, mc, mf, AIR_TAG)
-
-#     # transfer theta from dim-submesh to star-submesh by sampling
-#     theta_air_star = transfer_scalar_to_new_submesh_by_sampling(
-#         theta_air_dim,
-#         sub_mesh_star,
-#         name="theta_air_star",
-#     )
-
-#     print0(f"Initial theta_air_star min/max [-]: {theta_air_star.vector().min():.6e}, {theta_air_star.vector().max():.6e}")
-    
-#     # ------------------------------------------------------------------
-#     # 4) Air-flow startup (Stokes / no momentum convection)
-#     # ------------------------------------------------------------------
-#     print0("Starting air-only Stokes startup...")
-#     startup = solve_air_stokes_startup(
-#         sub_mesh_star=sub_mesh_star,
-#         sub_dx_star=sub_dx_star,
-#         sub_ft_star=sub_ft_star,
-#         experiment=experiment,
-#         theta_air_star=theta_air_star,
-#         relaxation=1.0,
-#     )
-
-#     p_air = startup["p"]
-#     u_air = startup["u"]
-#     w_air = startup["w"]
-
-#     print0(f"[startup] converged = {startup['converged']} | n_iter = {startup['n_iter']}")
-
-#     # ------------------------------------------------------------------
-#     # 5) Outer segregated coupling loop
-#     # ------------------------------------------------------------------
-#     max_outer_it = 20
-#     tol_outer = 1.0e-5
-#     omega_T = 0.5
-#     omega_u = 0.4
-
-#     convection_schedule = [0.10, 0.30, 0.60, 1.00]
-
-#     T_full_old = fenics.Function(T_full.function_space(), name="T_full_old")
-#     T_full_old.assign(T_full)
-
-#     u_air_old = fenics.Function(u_air.function_space(), name="u_air_old")
-#     u_air_old.assign(u_air)
-
-#     for cscale in convection_schedule:
-#         print0(f"\n=== Convection continuation: cscale = {cscale:.2f} ===")
-
-#         for outer_it in range(max_outer_it):
-#             print0(f"\n--- Outer iteration {outer_it:02d} @ convection scale {cscale:.2f} ---")
-
-#             # ----------------------------------------------------------
-#             # A) Extend air velocity to the FULL STAR parent mesh
-#             # ----------------------------------------------------------
-#             u_full_star = extend_air_velocity_to_parent_mesh_by_point_eval(
-#                 u_air_star=u_air,
-#                 mesh_star=mesh,
-#                 mc=mc,
-#             )
-
-#             # ----------------------------------------------------------
-#             # B) Solve full-domain temperature on parent mesh (STAR geometry,
-#             #    but still dimensional T values)
-#             # ----------------------------------------------------------
-#             T_full_new, k_func = solve_full_temperature(
-#                 mesh=mesh,
-#                 mc=mc,
-#                 mf=mf,
-#                 experiment=experiment,
-#                 heat_volume=heat_volume,
-#                 output_xdmf_path=None,
-#                 u_full=u_full_star,
-#                 include_convection=True,
-#                 T_prev=T_full_old,
-#                 pseudo_dt=None,     # you can add pseudo-time later if needed
-#                 max_material_iters=4,
-#                 material_tol=1.0e-8,
-#             )
-
-#             # under-relax T_full
-#             T_full_relaxed = under_relax_scalar(T_full_new, T_full_old, omega_T)
-
-#             # ----------------------------------------------------------
-#             # C) Restrict updated T_full -> dim/star air theta
-#             #
-#             # Since the parent mesh is now already scaled, the old dim-submesh
-#             # has also been scaled in place, so sampling still works.
-#             # ----------------------------------------------------------
-#             T_air_dim_cur, theta_air_dim_cur = restrict_full_temperature_to_air_submesh(
-#                 T_full=T_full_relaxed,
-#                 sub_mesh_dim=sub_mesh_dim,
-#                 T_ambient=T_ambient,
-#                 dTref=dTref,
-#             )
-
-#             theta_air_star_new = transfer_scalar_to_new_submesh_by_sampling(
-#                 theta_air_dim_cur,
-#                 sub_mesh_star,
-#                 name="theta_air_star",
-#             )
-
-#             # ----------------------------------------------------------
-#             # D) Solve air-only flow
-#             # ----------------------------------------------------------
-#             air_sol = solve_air_flow_problem(
-#                 sub_mesh_star=sub_mesh_star,
-#                 sub_dx_star=sub_dx_star,
-#                 sub_ft_star=sub_ft_star,
-#                 experiment=experiment,
-#                 theta_air_star=theta_air_star_new,
-#                 w_init=w_air,
-#                 include_convection=(cscale > 0.0),
-#                 convection_scale=cscale,
-#                 relaxation=0.5,
-#                 maxit=20,
-#                 atol=1.0e-9,
-#                 rtol=1.0e-8,
-#             )
-
-#             p_air_new = air_sol["p"]
-#             u_air_new = air_sol["u"]
-#             w_air_new = air_sol["w"]
-
-#             print0(f"[air solve] converged = {air_sol['converged']} | n_iter = {air_sol['n_iter']}")
-
-#             # under-relax velocity only
-#             u_air_relaxed = under_relax_mixed_component(u_air_new, u_air_old, omega_u)
-
-#             # ----------------------------------------------------------
-#             # E) Compute outer convergence
-#             # ----------------------------------------------------------
-#             relT = relative_update(T_full_relaxed, T_full_old)
-#             relU = relative_update(u_air_relaxed, u_air_old)
-
-#             print0(f"[outer] relT = {relT:.3e} | relU = {relU:.3e}")
-
-#             # update accepted states
-#             T_full_old.assign(T_full_relaxed)
-#             u_air_old.assign(u_air_relaxed)
-#             T_full.assign(T_full_relaxed)
-#             u_air.assign(u_air_relaxed)
-#             p_air.assign(p_air_new)
-#             theta_air_star.assign(theta_air_star_new)
-#             w_air.assign(w_air_new)
-
-#             # optional updated diagnostics
-#             try:
-#                 qn_air = flux_continuity(T_full, k_func, mesh, sub_mesh_dim, sub_ft_dim, mc, scales)
-#                 check_interface_power(sub_ds_dim, sub_ft_dim, qn_air, scales, experiment)
-#             except Exception as err:
-#                 print0(f"[diagnostic] qn_air update skipped: {err}")
-
-#             if max(relT, relU) < tol_outer:
-#                 print0(f"[outer] converged at iteration {outer_it:02d} for cscale={cscale:.2f}")
-#                 break
-
-#     # ------------------------------------------------------------------
-#     # 6) Save final outputs
-#     # ------------------------------------------------------------------
-#     try:
-#         with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_U) as xdmf_u:
-#             xdmf_u.write(sub_mesh_star)
-#             xdmf_u.write(u_air)
-
-#         with fenics.XDMFFile(sub_mesh_star.mpi_comm(), OUTPUT_XDMF_PATH_P) as xdmf_p:
-#             xdmf_p.write(sub_mesh_star)
-#             xdmf_p.write(p_air)
-
-#         with fenics.XDMFFile(mesh.mpi_comm(), OUTPUT_XDMF_PATH_TEMP) as xdmf_t:
-#             xdmf_t.write(mesh)
-#             xdmf_t.write(T_full)
-#     except Exception as err:
-#         print0(f"[output] warning: final write failed: {err}")
-
-#     return {
-#         "T_full": T_full,
-#         "k_func": k_func,
-#         "u_air": u_air,
-#         "p_air": p_air,
-#         "theta_air_star": theta_air_star,
-#     }
+    return AIR_TRIG_XDMF_PATH, AIR_FACETS_XDMF_PATH
 
 def base_version(
         experiment: Experiment,
@@ -2193,6 +1953,38 @@ def main():
         default="",
         help="Restart from a checkpoint using the mesh stored in state.h5",
     )
+
+    argparser.add_argument(
+        "--remesh-restart-checkpoint",
+        type=str,
+        default="",
+        help=(
+            "Offline remeshing: input old checkpoint directory containing "
+            "state.h5/state.json. Transfers old solution to a new coarse Gmsh mesh, "
+            "then refines that mesh."
+        ),
+    )
+
+    argparser.add_argument(
+        "--coarse-remesh-run-root",
+        type=str,
+        default="",
+        help="Directory where coarse remesh Gmsh/XDMF files are generated.",
+    )
+
+    argparser.add_argument(
+        "--remeshed-checkpoint-out",
+        type=str,
+        default="",
+        help="Output checkpoint directory for the remeshed restart.",
+    )
+
+    argparser.add_argument(
+        "--remesh-wire-ring-factor",
+        type=float,
+        default=8.0,
+        help="Forced near-wire refinement radius in multiples of wire radius.",
+    )
     
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
@@ -2200,21 +1992,37 @@ def main():
     experiment = experiment_list[args.experiment_index]
     print0(f"Running experiment: {experiment.name}")
 
-    if args.refine_restart_checkpoint:
-        if not args.refined_checkpoint_out:
+    if args.remesh_restart_checkpoint:
+        if not args.coarse_remesh_run_root:
             raise ValueError(
-                "--refined-checkpoint-out is required when using "
-                "--refine-restart-checkpoint"
+                "--coarse-remesh-run-root is required when using "
+                "--remesh-restart-checkpoint"
             )
 
-        refine_checkpoint_offline(
-            input_checkpoint_dir=args.refine_restart_checkpoint,
-            output_checkpoint_dir=args.refined_checkpoint_out,
+        if not args.remeshed_checkpoint_out:
+            raise ValueError(
+                "--remeshed-checkpoint-out is required when using "
+                "--remesh-restart-checkpoint"
+            )
+
+        coarse_air_cells, coarse_air_facets = generate_coarse_remesh_files(
+            experiment=experiment,
+            coarse_run_root=args.coarse_remesh_run_root,
+        )
+
+        remesh_checkpoint_from_coarse_mesh(
+            input_checkpoint_dir=args.remesh_restart_checkpoint,
+            coarse_air_cells_xdmf=coarse_air_cells,
+            coarse_air_facets_xdmf=coarse_air_facets,
+            output_checkpoint_dir=args.remeshed_checkpoint_out,
+            experiment=experiment,
             top_fraction=args.amr_top_fraction,
             levels=args.amr_levels,
             dt_factor=args.amr_dt_factor,
+            wire_ring_factor=args.remesh_wire_ring_factor,
         )
-        print0("Offline AMR checkpoint migration completed.")
+
+        print0("Offline coarse-mesh remeshing completed.")
         return
 
     base_version(
