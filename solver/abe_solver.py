@@ -370,13 +370,13 @@ def solve_abe_ptc_stage(
         fEc=fenics.Constant(scales.fEc)
     )
 
-    safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
-    log_path = os.path.join(
-        run_root,
-        "abs",
-        f"ptc_history_{safe_stage_name}.csv",
-    )
-    csv_fieldnames = init_ptc_csv(log_path, probe_ys)
+    # safe_stage_name = stage_name.replace(" ", "_").replace("/", "_")
+    # log_path = os.path.join(
+    #     run_root,
+    #     "abs",
+    #     f"ptc_history_{safe_stage_name}.csv",
+    # )
+    # csv_fieldnames = init_ptc_csv(log_path, probe_ys)
 
     print0("\n" + "-" * 72)
     print0(f"Starting PTC stage: {stage_name}")
