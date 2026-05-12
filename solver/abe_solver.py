@@ -1153,13 +1153,6 @@ def run_post_abe_continuation_transient(
                         f"rel_update={rel_update:.3e}, ||w||={mixed_norm}"
                     )
 
-                if rel_update > rel_update_limit:
-                    raise RuntimeError(
-                        f"transient step rejected by sanity check: "
-                        f"rel_update={rel_update:.3e}, "
-                        f"limit={rel_update_limit:.3e}, "
-                        f"||w||={mixed_norm}"
-                    )
 
                 if in_restart_settle:
                     if (
@@ -1211,6 +1204,23 @@ def run_post_abe_continuation_transient(
                             f"theta_max={candidate_diag['theta_max']:.3e}, "
                             f"limit={restart_theta_max:.3e}"
                         )
+                if not in_restart_settle:
+                    if rel_update > rel_update_limit:
+                        raise RuntimeError(
+                            f"transient step rejected by sanity check: "
+                            f"rel_update={rel_update:.3e}, "
+                            f"limit={rel_update_limit:.3e}, "
+                            f"||w||={mixed_norm}"
+                        )
+                else:
+                    # During AMR/restart settling, pressure may re-equilibrate
+                    # strongly after interpolation to the refined mesh.
+                    # We already checked rel_u, rel_theta, |u|max, theta_min/max
+                    # above, so do not reject purely because rel_mix/rel_p is large.
+                    print0(
+                        "restart-settle: ignoring pressure-dominated mixed update "
+                        f"rel_mix={rel_update:.3e}, rel_p={candidate_diag['rel_p']:.3e}"
+                    )
 
                 trial_success = True
                 copy_state(w_last_accepted, w)
