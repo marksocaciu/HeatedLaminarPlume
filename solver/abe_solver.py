@@ -1,3 +1,5 @@
+from math import e
+
 from utils.imports import *
 from solver.solver import *
 from solver.params_bcs import *
@@ -1431,3 +1433,248 @@ def run_post_abe_continuation_transient(
         "final_time": t,
         "history": history,
     }
+
+
+def solve_abe_steady_from_loaded_checkpoint(
+    experiment: Experiment,
+    W: fenics.FunctionSpace,
+    w: fenics.Function,
+    w_n: fenics.Function,
+    psi_p,
+    psi_u,
+    psi_T,
+    mu,
+    Pr,
+    f_b,
+    T_c,
+    T_air_bc,
+    sub_dx,
+    sub_ds,
+    sub_ft,
+    qn_air,
+    sub_mesh_star,
+    sub_mesh_dim,
+    scales,
+    T_ambient: float,
+    rho_air: float,
+    p_path: str,
+    u_path: str,
+    T_path: str,
+    checkpoint_meta: dict,
+    SUPG: bool = False,
+):
+    """
+    Load state is assumed already copied into both w and w_n.
+    This solves the steady residual only:
+        no dt
+        no u_n
+        no T_n
+        no pseudo-time terms
+    """
+
+    boundary_conditions = set_bcs(
+        W,
+        sub_ft,
+        T_air_bc,
+        T_c,
+        experiment,
+        scales,
+    )
+
+    # Ensure current Newton iterate starts exactly from accepted restart state.
+    copy_state(w, w_n)
+
+    print0("Building full steady residual from checkpoint initial guess...")
+    F_steady, JF_steady = build_nonlinear_ABE_problem(
+        W=W,
+        w=w,
+        psi_p=psi_p,
+        psi_u=psi_u,
+        psi_T=psi_T,
+        mu=mu,
+        Pr=Pr,
+        f_b=f_b,
+        sub_dx=sub_dx,
+        sub_ds=sub_ds,
+        qn_air=qn_air,
+        buoyancy_scale=1.0,
+        qn_scale=1.0,
+        include_convection=True,
+        convection_scale=1.0,
+        SUPG=SUPG,
+        fEc=fenics.Constant(scales.fEc)
+    )
+
+    try:
+        print0("Trying direct steady Newton from transient checkpoint...")
+        w, n_iter, converged = base_solver(
+            F_steady,
+            w,
+            boundary_conditions,
+            JF_steady,
+            relaxation=0.7,
+            maxit=300,
+            atol=1.0e-9,
+            rtol=1.0e-8,
+            return_meta=True,
+        )
+
+        print0(
+            f"Direct steady Newton converged={converged}, "
+            f"iterations={n_iter}"
+        )
+    except RuntimeError as direct_err:
+        print0(f"Direct steady Newton failed: {direct_err}")
+        print0("Retrying with damped relaxation values...")
+
+        last_err = direct_err
+        ok = False
+
+        for relaxation in (0.5, 0.3, 0.15):
+            copy_state(w, w_n)
+
+            try:
+                print0(f"  retry steady Newton with relaxation={relaxation:.2f}")
+                w, n_iter, converged = base_solver(
+                    F_steady,
+                    w,
+                    boundary_conditions,
+                    JF_steady,
+                    relaxation=relaxation,
+                    maxit=300,
+                    atol=1.0e-9,
+                    rtol=1.0e-8,
+                    return_meta=True,
+                )
+
+                print0(
+                    f"Direct steady Newton converged={converged}, "
+                    f"iterations={n_iter}"
+                )
+                ok = True
+                break
+            except RuntimeError as err:
+                last_err = err
+                print0(f"  retry failed: {err}")
+
+        if not ok:
+            raise RuntimeError(
+                "Steady Newton from transient checkpoint failed for all relaxation attempts."
+            ) from last_err
+
+    copy_state(w_n, w)
+
+    print0("Steady Newton accepted. Saving dimensional fields...")
+
+    p_star, u_star, theta = w.split(deepcopy=True)
+
+    u_dim, p_dim, T_dim = dimensionalize_fields(
+        sub_mesh_star,
+        u_star,
+        p_star,
+        theta,
+        scales.Uplume,
+        scales.dTref,
+        T_ambient,
+        rho_air,
+    )
+    k_air = fenics.Constant(experiment.fluid.properties["k"])
+    q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
+    q_out = T_path.split(".xdmf")[0] + f"_heatflux_final_steady_{step:05d}.xdmf"
+    qmag_out = T_path.split(".xdmf")[0] + f"_heatflux_mag_final_steady_{step:05d}.xdmf"
+
+    p_out = p_path.split(".xdmf")[0] + f"_final_steady_{step:05d}.xdmf"
+    u_out = u_path.split(".xdmf")[0] + f"_final_steady_{step:05d}.xdmf"
+    t_out = T_path.split(".xdmf")[0] + f"_final_steady_{step:05d}.xdmf"
+
+    # --- Effective Grashof number diagnostic ---
+    theta_max = float(global_vec_max(theta))
+    theta_min = float(global_vec_min(theta))
+
+    dT_eff = scales.dTref * max(theta_max, 0.0)
+
+    props = experiment.fluid.properties
+    g = float(props.get("g", 9.81))
+    beta = float(props["beta"])
+    nu = float(scales.nu)
+
+    L_eff = float(scales.Lref)   # keep consistent with your reference Gr/Ra definition
+
+    Gr_eff = g * beta * dT_eff * L_eff**3 / (nu**2)
+    Ra_eff = Gr_eff * float(scales.Pr)
+
+    print0(
+        f"  snapshot diagnostics: "
+        f"theta_min={theta_min:.6e}, theta_max={theta_max:.6e}, "
+        f"dT_eff={dT_eff:.6e} K, "
+        f"Gr_eff={Gr_eff:.6e}, Ra_eff={Ra_eff:.6e}"
+    )
+
+    J_dim = compute_entropy_flux_dim(
+        mesh=sub_mesh_dim,
+        u_dim=u_dim,
+        T_dim=T_dim,
+        rho=experiment.fluid.properties["rho"],
+        cp=experiment.fluid.properties["cp"],
+        k=experiment.fluid.properties["k"],
+        T_inf=T_ambient,
+        degree=1,
+        family="DG",
+    )
+    J_out = T_path.split(".xdmf")[0] + f"_entropy_flux_transient_{step:05d}.xdmf"
+    Lref_dim = float(scales.Lref)
+    plane_fluxes = compute_horizontal_plane_heat_fluxes(
+        u_dim=u_dim,
+        T_dim=T_dim,
+        sub_mesh_dim=sub_mesh_dim,
+        experiment=experiment,
+        y_planes_m=(0.01, 0.02, 0.04, 0.08),
+        T_ref=T_ambient,
+        nx=400,
+        half_domain_symmetric=True,
+    )
+
+    flux_row = {
+        "step": step,
+        "time": -1.0,  # indicate steady state
+        "dt": -1.0,    # indicate steady state
+    }
+    flux_row.update(plane_fluxes)
+
+    append_plane_flux_csv(
+        os.path.join(os.path.dirname(T_path), "plane_fluxes.csv"),
+        flux_row
+    )
+    stem = f"steady_from_transient_step_{int(checkpoint_meta.get('step', 0)):05d}"
+
+    p_out = p_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+    u_out = u_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+    T_out = T_path.split(".xdmf")[0] + f"_{stem}.xdmf"
+
+    save_experiment(p_out, sub_mesh_dim, [p_dim])
+    save_experiment(u_out, sub_mesh_dim, [u_dim])
+    save_experiment(T_out, sub_mesh_dim, [T_dim])
+    save_experiment(q_out, sub_mesh_dim, [q_heat])
+    save_experiment(J_out, sub_mesh_dim, [J_dim])
+    
+
+    steady_checkpoint_dir = os.path.join(
+        os.path.dirname(T_path),
+        "steady_from_transient_checkpoint",
+    )
+
+    save_restart_checkpoint(
+        checkpoint_dir=steady_checkpoint_dir,
+        mesh_star=sub_mesh_star,
+        w_n=w_n,
+        step=int(checkpoint_meta.get("step", 0)),
+        time_value=float(checkpoint_meta.get("time", 0.0)),
+        dt_value=0.0,
+    )
+
+    print0(f"Saved steady pressure:    {p_out}")
+    print0(f"Saved steady velocity:    {u_out}")
+    print0(f"Saved steady temperature: {T_out}")
+    print0(f"Saved steady checkpoint:  {steady_checkpoint_dir}")
+
+    return w
