@@ -476,7 +476,7 @@ def solve_abe_ptc_stage(
                 "steady_residual": steady_res,
                 **diag,
             }
-            append_ptc_csv(log_path, csv_fieldnames, row)
+            # append_ptc_csv(log_path, csv_fieldnames, row)
 
         # stage acceptance
         # For intermediate continuation stages, do not accept merely because the
