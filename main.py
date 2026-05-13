@@ -2126,11 +2126,33 @@ def main():
         help="Forced near-wire refinement radius in multiples of wire radius.",
     )
     
-    args = argparser.parse_args()
+        args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
-    experiment_list = parser(experiments_json_path=EXPERIMENTS_JSON_PATH, schema_json_path=SCHEMA_JSON_PATH)
+
+    experiment_list = parser(
+        experiments_json_path=EXPERIMENTS_JSON_PATH,
+        schema_json_path=SCHEMA_JSON_PATH,
+    )
     experiment = experiment_list[args.experiment_index]
     print0(f"Running experiment: {experiment.name}")
+
+    if args.refine_restart_checkpoint:
+        if not args.refined_checkpoint_out:
+            raise ValueError(
+                "--refined-checkpoint-out is required when using "
+                "--refine-restart-checkpoint"
+            )
+
+        refine_checkpoint_offline(
+            input_checkpoint_dir=args.refine_restart_checkpoint,
+            output_checkpoint_dir=args.refined_checkpoint_out,
+            top_fraction=args.amr_top_fraction,
+            levels=args.amr_levels,
+            dt_factor=args.amr_dt_factor,
+        )
+
+        print0("Offline checkpoint AMR refinement completed.")
+        return
 
     if args.remesh_restart_checkpoint:
         if not args.coarse_remesh_run_root:
