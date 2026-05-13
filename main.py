@@ -2126,7 +2126,7 @@ def main():
         help="Forced near-wire refinement radius in multiples of wire radius.",
     )
     
-        args = argparser.parse_args()
+    args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
 
     experiment_list = parser(
