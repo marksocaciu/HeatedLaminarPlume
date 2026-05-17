@@ -2115,7 +2115,7 @@ def solve_steady_from_loaded_checkpoint(
             w,
             boundary_conditions,
             JF_steady,
-            relaxation=0.7,
+            relaxation=1.0,
             maxit=300,
             atol=1.0e-9,
             rtol=1.0e-8,
@@ -2133,7 +2133,7 @@ def solve_steady_from_loaded_checkpoint(
         last_err = direct_err
         ok = False
 
-        for relaxation in (0.5, 0.3, 0.15):
+        for relaxation in (0.9, 0.7, 0.5, 0.3, 0.15):
             copy_state(w, w_n)
 
             try:
