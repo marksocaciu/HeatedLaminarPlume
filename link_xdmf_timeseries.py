@@ -119,6 +119,60 @@ def parse_time_from_filename(path: Path, regex: Optional[re.Pattern[str]]) -> Op
         return None
 
 
+def natural_sort_key(path: Path) -> Tuple[object, ...]:
+    """
+    Sort filenames in human/numeric order.
+
+    Example:
+        air_temperature_transient_10020.xdmf
+        air_temperature_transient_100000.xdmf
+
+    Lexicographic sorting puts 100000 before 10020.  This key splits the
+    filename into text and integer/float chunks so numeric chunks are compared
+    by numeric value instead of string value.
+    """
+    parts = re.split(r"([-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?)", path.stem)
+    key = []
+    for part in parts:
+        if not part:
+            continue
+        if re.fullmatch(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", part):
+            # Prefer integer comparison for integer-looking timestep suffixes.
+            if re.fullmatch(r"[-+]?\d+", part):
+                key.append((0, int(part)))
+            else:
+                key.append((0, float(part)))
+        else:
+            key.append((1, part))
+    return tuple(key)
+
+
+def parse_index_from_filename(path: Path, regex: Optional[re.Pattern[str]]) -> Optional[int]:
+    """
+    Extract an integer ordering index from the filename.
+
+    If regex is provided, it must contain one capture group. Otherwise the last
+    integer group in the stem is used.
+    """
+    stem = path.stem
+    if regex is not None:
+        m = regex.search(stem)
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+
+    matches = re.findall(r"[-+]?\d+", stem)
+    if not matches:
+        return None
+    try:
+        return int(matches[-1])
+    except ValueError:
+        return None
+
+
 def relativize_dataitems(elem: ET.Element, src_xdmf: Path, out_xdmf: Path) -> None:
     """
     Rewrite heavy-data paths inside DataItem text so they stay valid from the new output file.
@@ -216,7 +270,7 @@ def build_output_tree(grids: List[ET.Element]) -> ET.ElementTree:
 def collect_files(input_dir: Path, pattern: str) -> List[Path]:
     paths = [Path(p) for p in glob.glob(str(input_dir / pattern))]
     paths = [p for p in paths if p.suffix.lower() == ".xdmf"]
-    return sorted(paths)
+    return sorted(paths, key=natural_sort_key)
 
 
 def main() -> int:
@@ -238,7 +292,12 @@ def main() -> int:
         "--dt",
         type=float,
         default=None,
-        help="If provided, override parsed times and use t_n = n*dt after sorting the matched files.",
+        help="If provided, override parsed times and use t_n = start_time + index*dt. By default, index is the last integer in the filename.",
+    )
+    parser.add_argument(
+        "--index-regex",
+        default=None,
+        help=r"Regex with one capture group for the integer timestep index from filename stem, e.g. 'transient_(\d+)$'. Used with --dt.",
     )
     parser.add_argument(
         "--start-time",
@@ -251,6 +310,7 @@ def main() -> int:
     input_dir = args.input_dir.resolve()
     output = args.output.resolve()
     time_regex = re.compile(args.time_regex) if args.time_regex else None
+    index_regex = re.compile(args.index_regex) if args.index_regex else None
 
     if not input_dir.is_dir():
         print(f"ERROR: input_dir does not exist or is not a directory: {input_dir}", file=sys.stderr)
@@ -266,8 +326,16 @@ def main() -> int:
     time_file_pairs: List[Tuple[float, Path]] = []
 
     if args.dt is not None:
-        for i, path in enumerate(files):
-            time_value = args.start_time + i * args.dt
+        for path in files:
+            index_value = parse_index_from_filename(path, index_regex)
+            if index_value is None:
+                print(
+                    f"ERROR: could not determine integer timestep index for {path.name}. "
+                    f"Use --index-regex, or omit --dt and use --time-regex/--prefer-source-time.",
+                    file=sys.stderr,
+                )
+                return 2
+            time_value = args.start_time + index_value * args.dt
             time_file_pairs.append((time_value, path))
     else:
         for path in files:
