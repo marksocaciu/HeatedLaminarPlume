@@ -270,7 +270,7 @@ def nonlinear_solver(experiment: Experiment,u_n: fenics.Function, u: fenics.Func
     print0("Max qn_air:", qn_air.vector().max())
     print0(f"Applied qn_scale: {float(qn_scale):.4f}")
 
-    F += - qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += - (qn_scale_c / Pr) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     scales = compute_nondimensional_scales(experiment)
     k_inf = float(experiment.fluid.properties["k"])
@@ -425,7 +425,7 @@ def build_linear_startup_problem(
         + fenics.dot(fenics.grad(s), (1.0 / Pr) * fenics.grad(T))
     ) * sub_dx
 
-    L = fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+    L = (fenics.Constant(float(qn_scale)) / Pr) * qn_air * s * sub_ds(INTERFACE_TAG)
 
     if frozen_buoyancy_temperature is not None:
         L += - dot(v, buoyancy_coeff * frozen_buoyancy_temperature * gvec) * sub_dx
@@ -607,7 +607,7 @@ def solve_temperature_only_startup(
     s = fenics.TestFunction(VT)
 
     aT = fenics.dot(fenics.grad(s), (1.0 / Pr) * fenics.grad(T)) * sub_dx
-    LT = fenics.Constant(float(qn_scale)) * qn_air * s * sub_ds(INTERFACE_TAG)
+    LT = (fenics.Constant(float(qn_scale)) / Pr) * qn_air * s * sub_ds(INTERFACE_TAG)
 
     theta = fenics.Function(VT)
     problem = fenics.LinearVariationalProblem(aT, LT, theta, T_bcs or [])
@@ -958,7 +958,7 @@ def build_nonlinear_problem(
         energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
         F = (mass + momentum + energy) * sub_dx
 
-    F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += -(qn_scale_c / Pr) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     # F += weak_open_boundary_momentum_term(
     #     u=u,
@@ -1222,7 +1222,7 @@ def build_ptc_problem(
         energy = dot(grad(psi_T), (1.0 / Pr) * grad(T) - T * u * convection_scale_c)
         F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-    F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += -(qn_scale_c / Pr) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     # F += weak_open_boundary_momentum_term(
     #     u=u,

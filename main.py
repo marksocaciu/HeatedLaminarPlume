@@ -841,7 +841,7 @@ def base_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -921,7 +921,7 @@ def base_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
     k_air = fenics.Constant(experiment.fluid.properties["k"])
@@ -1285,7 +1285,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1358,7 +1358,7 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1889,7 +1889,7 @@ def abs_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1968,7 +1968,7 @@ def abs_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uplume, scales.dTref, T_ambient,
+        scales.Uref, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
     k_air = fenics.Constant(experiment.fluid.properties["k"])

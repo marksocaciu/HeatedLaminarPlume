@@ -20,7 +20,7 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
     T_ref = fenics.Constant(0.0)
 
     f_b = (Ra / Pr) * T * gvec
-    mu = fenics.Constant(sc.nu / (sc.Uplume * sc.Lref))
+    mu = fenics.Constant(sc.nu / (sc.Uref * sc.Lref))
 
     VTa = fenics.FunctionSpace(sub_mesh, "CG", 1)
     T_air_bc = fenics.Function(VTa)

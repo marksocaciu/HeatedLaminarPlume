@@ -58,7 +58,7 @@ def build_nonlinear_ABE_problem(
         F = (mass + momentum + energy) * sub_dx
 
 
-    F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += -(qn_scale_c / Pr) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -105,7 +105,7 @@ def solve_ABE_newton_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uplume, scales.dTref, T_ambient,
+                scales.Uref, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -246,7 +246,7 @@ def build_ptc_abe_problem(
             - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
         F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
-    F += -qn_scale_c * qn_air * psi_T * sub_ds(INTERFACE_TAG)
+    F += -(qn_scale_c / Pr) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
 
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
@@ -806,7 +806,7 @@ def solve_ptc_abe_continuation(
 
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 save_obj[1], u_star, p_star, theta,
-                save_obj[2].Uplume, save_obj[2].dTref, T_ambient,
+                save_obj[2].Uref, save_obj[2].dTref, T_ambient,
                 experiment.fluid.properties["rho"]
             )
 
@@ -1294,7 +1294,7 @@ def run_post_abe_continuation_transient(
             p_star, u_star, theta = w_n.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uplume, scales.dTref, T_ambient,
+                scales.Uref, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
 
@@ -1583,7 +1583,7 @@ def solve_abe_steady_from_loaded_checkpoint(
         u_star,
         p_star,
         theta,
-        scales.Uplume,
+        scales.Uref,
         scales.dTref,
         T_ambient,
         rho_air,
