@@ -5,9 +5,9 @@ Steady plume post-processing for legacy-FEniCS XDMF/HDF5 exports.
 Reads nodal temperature, nodal velocity, and optionally cell-centred heat-flux files
 written in the simple XDMF/HDF5 format used by the current plume project, then computes:
 
-  * horizontal-plane total vertical energy flux [W/m]
+  * horizontal-plane total vertical energy flux [W/m] and boundary heat escape [W/m]
   * mass, volume, vertical-momentum and kinetic-energy fluxes at selected heights
-  * centreline temperature/velocity decay and virtual-origin fits
+  * centreline temperature/velocity decay and automatic/user-window virtual-origin fits
   * one scalar near-wire thermal boundary-layer thickness based on an angular average
     of radial 1-percent temperature-excess distances around the cylinder
   * approximate cumulative buoyancy and vertical-momentum-flux balance diagnostics
@@ -35,7 +35,7 @@ Important conventions:
   * heights supplied by --planes are physical heights above the wire centre, in metres.
   * the wire centre is inferred automatically as y_min + H/10 + 11*r, with r = --lref.
   * all integral outputs are per unit out-of-plane depth, i.e. W/m, kg/(s m), etc.
-  * if q_heat_dim is supplied, it is used internally to form q_total = rho cp uy (T-T_inf) + q_y.
+  * if q_heat_dim is supplied, it is used internally to form q_total = rho cp uy (T-T_inf) + q_y and to integrate heat escaping the domain boundaries.
 """
 
 from __future__ import annotations
@@ -253,6 +253,150 @@ def fit_virtual_origin_powerlaw(y: np.ndarray, a: np.ndarray, exponent: float, m
     return {"C": float(C), "y0": float(y0), "r2": float(r2), "npoints": int(y.size)}
 
 
+
+def select_virtual_origin_window(
+    y: np.ndarray,
+    amp: np.ndarray,
+    exponent: float,
+    wire_y: float,
+    y_min_above_wire: Optional[float],
+    y_max_above_wire: Optional[float],
+    min_points: int,
+    min_span: float,
+) -> Dict[str, float]:
+    """
+    Automatic fit-window selector for the linearized virtual-origin fit.
+
+    It scans contiguous windows, fits the transformed quantity, and keeps the
+    window with the best R^2 subject to basic physical/diagnostic constraints:
+      * positive amplitude;
+      * positive transformed slope, i.e. decaying centreline quantity;
+      * virtual origin below the first point in the selected window;
+      * requested minimum height span.
+
+    This does not magically prove self-similarity; it only finds the most nearly
+    line-plume-like interval in the available centreline data.
+    """
+    y = np.asarray(y, dtype=float)
+    amp = np.asarray(amp, dtype=float)
+    h = y - wire_y
+    mask = np.isfinite(y) & np.isfinite(amp) & (amp > 0.0)
+    if y_min_above_wire is not None:
+        mask &= h >= y_min_above_wire
+    if y_max_above_wire is not None:
+        mask &= h <= y_max_above_wire
+    yy = y[mask]
+    aa = amp[mask]
+    hh = h[mask]
+    if yy.size < min_points:
+        out = fit_virtual_origin_powerlaw(yy, aa, exponent, min_points=min_points)
+        out.update({"fit_y_min_m": np.nan, "fit_y_max_m": np.nan, "fit_height_min_m": np.nan, "fit_height_max_m": np.nan, "auto_score": np.nan, "fit_mode": "auto_failed_too_few_points"})
+        return out
+
+    best = None
+    n = yy.size
+    # Scan windows with at least min_points and min_span. Limit window endpoints to keep cost modest.
+    for i in range(0, n - min_points + 1):
+        for j in range(i + min_points, n + 1):
+            if yy[j - 1] - yy[i] < min_span:
+                continue
+            ywin = yy[i:j]
+            awin = aa[i:j]
+            z = awin ** (-1.0 / exponent)
+            if not np.all(np.isfinite(z)):
+                continue
+            A, B = np.polyfit(ywin, z, 1)
+            if not np.isfinite(A) or A <= 0.0:
+                continue
+            y0 = -B / A
+            # For a meaningful virtual-origin extrapolation, the origin should be below the selected window.
+            if not np.isfinite(y0) or y0 >= ywin[0]:
+                continue
+            zhat = A * ywin + B
+            ss_res = float(np.sum((z - zhat) ** 2))
+            ss_tot = float(np.sum((z - np.mean(z)) ** 2))
+            if ss_tot <= 0.0:
+                continue
+            r2 = 1.0 - ss_res / ss_tot
+            C = A ** (-exponent)
+            # Prefer high R2, but also prefer longer windows mildly.
+            span = ywin[-1] - ywin[0]
+            score = r2 + 0.02 * min(1.0, span / max(min_span, 1e-30))
+            candidate = {
+                "C": float(C),
+                "y0": float(y0),
+                "r2": float(r2),
+                "npoints": int(ywin.size),
+                "fit_y_min_m": float(ywin[0]),
+                "fit_y_max_m": float(ywin[-1]),
+                "fit_height_min_m": float(hh[i]),
+                "fit_height_max_m": float(hh[j - 1]),
+                "auto_score": float(score),
+                "fit_mode": "auto_window",
+            }
+            if best is None or candidate["auto_score"] > best["auto_score"]:
+                best = candidate
+    if best is not None:
+        return best
+    out = fit_virtual_origin_powerlaw(yy, aa, exponent, min_points=min_points)
+    out.update({"fit_y_min_m": np.nan, "fit_y_max_m": np.nan, "fit_height_min_m": np.nan, "fit_height_max_m": np.nan, "auto_score": np.nan, "fit_mode": "auto_failed_no_valid_decay_window"})
+    return out
+
+
+def boundary_flux_samples(Ti, qx_i, qy_i, k: float, x: np.ndarray, y: np.ndarray):
+    """Return conductive heat-flux components q=-k grad(T) at sample points."""
+    if qx_i is not None and qy_i is not None:
+        qx = finite_or_nan(qx_i(x, y))
+        qy = finite_or_nan(qy_i(x, y))
+    else:
+        dTdx, dTdy = Ti.gradient(x, y)
+        qx = -k * finite_or_nan(dTdx)
+        qy = -k * finite_or_nan(dTdy)
+    return qx, qy
+
+
+def integrate_boundary_heat_escape(Ti, qx_i, qy_i, k: float, xmin: float, xmax: float, ymin: float, ymax: float, n: int = 2001) -> Tuple[List[Dict[str, float | str]], Dict[str, float]]:
+    """
+    Integrate outward conductive heat flux over the rectangular domain boundary.
+    Positive value means heat leaves the computational domain.
+    """
+    eps = 1e-10 * max(xmax - xmin, ymax - ymin, 1.0)
+    xb = np.linspace(xmin + eps, xmax - eps, n)
+    yl = np.linspace(ymin + eps, ymax - eps, n)
+
+    # top outward normal +y
+    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, xb, np.full_like(xb, ymax - eps))
+    top_density = qy
+    top = robust_trapz(top_density, xb)
+    # bottom outward normal -y
+    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, xb, np.full_like(xb, ymin + eps))
+    bottom_density = -qy
+    bottom = robust_trapz(bottom_density, xb)
+    # right outward normal +x
+    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, np.full_like(yl, xmax - eps), yl)
+    right_density = qx
+    right = robust_trapz(right_density, yl)
+    # left outward normal -x
+    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, np.full_like(yl, xmin + eps), yl)
+    left_density = -qx
+    left = robust_trapz(left_density, yl)
+
+    rows = [
+        {"boundary": "top", "heat_escape_W_per_m": top, "positive_means": "out_of_domain"},
+        {"boundary": "bottom", "heat_escape_W_per_m": bottom, "positive_means": "out_of_domain"},
+        {"boundary": "left", "heat_escape_W_per_m": left, "positive_means": "out_of_domain"},
+        {"boundary": "right", "heat_escape_W_per_m": right, "positive_means": "out_of_domain"},
+    ]
+    totals = {
+        "Q_escape_top_W_per_m": top,
+        "Q_escape_bottom_W_per_m": bottom,
+        "Q_escape_left_W_per_m": left,
+        "Q_escape_right_W_per_m": right,
+        "Q_escape_total_W_per_m": top + bottom + left + right,
+    }
+    return rows, totals
+
+
 def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
     if not rows:
         return
@@ -306,8 +450,12 @@ def main() -> None:
     ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error")
 
     ap.add_argument("--planes", type=float, nargs="+", default=[0.01, 0.02, 0.04, 0.08], help="Physical heights above wire [m]")
-    ap.add_argument("--fit-y-min", type=float, default=None, help="Minimum physical height above wire [m] used for virtual-origin fits")
-    ap.add_argument("--fit-y-max", type=float, default=None, help="Maximum physical height above wire [m] used for virtual-origin fits")
+    ap.add_argument("--fit-y-min", type=float, default=None, help="Minimum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
+    ap.add_argument("--fit-y-max", type=float, default=None, help="Maximum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
+    ap.add_argument("--auto-fit-min-points", type=int, default=30, help="Minimum number of centreline samples in automatic virtual-origin fit window")
+    ap.add_argument("--auto-fit-min-span", type=float, default=0.01, help="Minimum physical height span [m] of automatic virtual-origin fit window")
+    ap.add_argument("--auto-fit-lower-cutoff", type=float, default=None, help="Minimum height above wire [m] for automatic fits. Default: max(5*r, 0.005 m)")
+    ap.add_argument("--boundary-n", type=int, default=2001, help="Number of samples per rectangular boundary side for boundary heat-escape integration")
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
     ap.add_argument("--nx", type=int, default=1601, help="Number of x samples per horizontal profile")
     ap.add_argument("--ny-balance", type=int, default=300, help="Number of y levels for balance/fit curves")
@@ -433,7 +581,7 @@ def main() -> None:
         deltaU_r = first_crossing_half_width(xs, uyline, uy_threshold, side="right")
         deltaU_l = first_crossing_half_width(xs, uyline, uy_threshold, side="left")
 
-        rel_err = (Qtot - args.q_input_per_length) / args.q_input_per_length if args.q_input_per_length else np.nan
+        vertical_heat_transport_fraction = Qtot / args.q_input_per_length if args.q_input_per_length else np.nan
 
         plane_rows.append({
             "height_m": h,
@@ -444,7 +592,7 @@ def main() -> None:
             "Q_total_W_per_m": Qtot,
             "Q_conv_up_W_per_m": Qconv_up,
             "Q_conv_down_W_per_m": Qconv_down,
-            "energy_balance_rel_error": rel_err,
+            "vertical_heat_transport_fraction": vertical_heat_transport_fraction,
             "volume_flux_m2_per_s": vdot,
             "mass_flux_kg_per_s_per_m": mdot,
             "mass_flux_up_kg_per_s_per_m": mdot_up,
@@ -606,19 +754,60 @@ def main() -> None:
         "thermal_boundary_layer_thickness_max_over_r": thermal_bl_max_m / wire_radius_m if np.isfinite(thermal_bl_max_m) and wire_radius_m else np.nan,
     }])
 
-    # Virtual origin fits. Classical laminar line-source similarity suggests DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(-1/5).
-    fit_mask = np.isfinite(yy) & np.isfinite(dT_c) & np.isfinite(uy_c)
-    if args.fit_y_min is not None:
-        fit_mask &= (yy - wire_y_m) >= args.fit_y_min
-    if args.fit_y_max is not None:
-        fit_mask &= (yy - wire_y_m) <= args.fit_y_max
-    fitT = fit_virtual_origin_powerlaw(yy[fit_mask], dT_c[fit_mask], exponent=3.0/5.0)
-    fitU = fit_virtual_origin_powerlaw(yy[fit_mask], uy_c[fit_mask], exponent=1.0/5.0)
+    # Virtual origin fits. Classical laminar line-source similarity suggests
+    # DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(-1/5).
+    if args.fit_y_min is not None or args.fit_y_max is not None:
+        fit_mask = np.isfinite(yy) & np.isfinite(dT_c) & np.isfinite(uy_c)
+        if args.fit_y_min is not None:
+            fit_mask &= (yy - wire_y_m) >= args.fit_y_min
+        if args.fit_y_max is not None:
+            fit_mask &= (yy - wire_y_m) <= args.fit_y_max
+        fitT = fit_virtual_origin_powerlaw(yy[fit_mask], dT_c[fit_mask], exponent=3.0/5.0)
+        fitU = fit_virtual_origin_powerlaw(yy[fit_mask], uy_c[fit_mask], exponent=1.0/5.0)
+        for fit in (fitT, fitU):
+            fit.update({
+                "fit_y_min_m": float(np.nanmin(yy[fit_mask])) if np.any(fit_mask) else np.nan,
+                "fit_y_max_m": float(np.nanmax(yy[fit_mask])) if np.any(fit_mask) else np.nan,
+                "fit_height_min_m": float(np.nanmin(yy[fit_mask] - wire_y_m)) if np.any(fit_mask) else np.nan,
+                "fit_height_max_m": float(np.nanmax(yy[fit_mask] - wire_y_m)) if np.any(fit_mask) else np.nan,
+                "auto_score": np.nan,
+                "fit_mode": "user_window",
+            })
+    else:
+        lower = args.auto_fit_lower_cutoff
+        if lower is None:
+            lower = max(5.0 * wire_radius_m, 0.005)
+        fitT = select_virtual_origin_window(
+            yy, dT_c, 3.0/5.0, wire_y_m,
+            y_min_above_wire=lower,
+            y_max_above_wire=None,
+            min_points=args.auto_fit_min_points,
+            min_span=args.auto_fit_min_span,
+        )
+        fitU = select_virtual_origin_window(
+            yy, uy_c, 1.0/5.0, wire_y_m,
+            y_min_above_wire=lower,
+            y_max_above_wire=None,
+            min_points=args.auto_fit_min_points,
+            min_span=args.auto_fit_min_span,
+        )
     fit_rows = [
         {"field": "temperature_centerline", "assumed_decay_exponent": 3.0/5.0, **fitT},
         {"field": "velocity_centerline", "assumed_decay_exponent": 1.0/5.0, **fitU},
     ]
     write_csv(outdir / "virtual_origin_fits.csv", fit_rows)
+
+    # Boundary heat escape: integrate outward conductive heat flux along the whole rectangular boundary.
+    boundary_rows, boundary_totals = integrate_boundary_heat_escape(
+        Ti, qx_i, qy_i, args.k, xmin, xmax, ymin, ymax, n=args.boundary_n
+    )
+    if args.q_input_per_length:
+        for r in boundary_rows:
+            r["fraction_of_input"] = r["heat_escape_W_per_m"] / args.q_input_per_length
+        boundary_totals["Q_escape_total_fraction_of_input"] = boundary_totals["Q_escape_total_W_per_m"] / args.q_input_per_length
+        boundary_totals["Q_escape_minus_input_W_per_m"] = boundary_totals["Q_escape_total_W_per_m"] - args.q_input_per_length
+        boundary_totals["Q_escape_minus_input_fraction"] = boundary_totals["Q_escape_minus_input_W_per_m"] / args.q_input_per_length
+    write_csv(outdir / "boundary_heat_escape.csv", boundary_rows + [{"boundary": "total", "heat_escape_W_per_m": boundary_totals["Q_escape_total_W_per_m"], "positive_means": "out_of_domain", "fraction_of_input": boundary_totals.get("Q_escape_total_fraction_of_input", np.nan)}])
 
     # Approximate balance curves at many y-levels using the same x sampling.
     balance_rows = []
@@ -666,12 +855,29 @@ def main() -> None:
 
     # Plots.
     plane_h = np.array([r["height_m"] for r in plane_rows], dtype=float)
-    energy_series = [("total", np.array([r["Q_total_W_per_m"] for r in plane_rows]))]
+    energy_series = [("plume vertical transport through plane", np.array([r["Q_total_W_per_m"] for r in plane_rows]))]
     if args.q_input_per_length:
-        energy_series.append(("input heat per length", np.full_like(plane_h, args.q_input_per_length, dtype=float)))
+        energy_series.append(("supplied heat", np.full_like(plane_h, args.q_input_per_length, dtype=float)))
+    if "boundary_totals" in locals():
+        energy_series.append(("total boundary heat escape", np.full_like(plane_h, boundary_totals["Q_escape_total_W_per_m"], dtype=float)))
     plot_xy(outdir / "energy_flux_vs_height.png", plane_h, energy_series,
-            "height above wire [m]", "total vertical energy flux [W/m]",
-            "Total vertical energy flux through horizontal planes")
+            "height above wire [m]", "heat rate per unit depth [W/m]",
+            "Supplied heat, vertical plume transport, and boundary heat escape")
+
+    # Compact bar chart of global energy budget.
+    if "boundary_totals" in locals():
+        labels = ["supplied", "boundary escape", "max plane plume"]
+        vals = [args.q_input_per_length if args.q_input_per_length else np.nan,
+                boundary_totals["Q_escape_total_W_per_m"],
+                float(np.nanmax([r["Q_total_W_per_m"] for r in plane_rows])) if plane_rows else np.nan]
+        plt.figure(figsize=(7.2, 4.8))
+        plt.bar(labels, vals)
+        plt.ylabel("heat rate per unit depth [W/m]")
+        plt.title("Global/diagnostic heat budget")
+        plt.grid(True, axis="y", alpha=0.35)
+        plt.tight_layout()
+        plt.savefig(outdir / "energy_budget_summary.png", dpi=180)
+        plt.close()
     plot_xy(outdir / "mass_momentum_vs_height.png", plane_h,
             [("mass flux", np.array([r["mass_flux_kg_per_s_per_m"] for r in plane_rows])),
              ("vertical momentum flux", np.array([r["vertical_momentum_flux_N_per_m"] for r in plane_rows]))],
@@ -703,6 +909,8 @@ def main() -> None:
         z = np.full_like(yy_, np.nan, dtype=float)
         z[mask] = amp_[mask] ** (-1.0 / exponent)
         plt.plot(yy_[mask] - wire_y_m, z[mask], label="transformed centreline")
+        if np.isfinite(fit.get("fit_y_min_m", np.nan)) and np.isfinite(fit.get("fit_y_max_m", np.nan)):
+            plt.axvspan(fit["fit_y_min_m"] - wire_y_m, fit["fit_y_max_m"] - wire_y_m, alpha=0.15, label="fit window")
         if np.isfinite(fit["y0"]):
             A = fit["C"] ** (-1.0 / exponent) if np.isfinite(fit["C"]) and fit["C"] > 0 else np.nan
             if np.isfinite(A):
@@ -761,7 +969,7 @@ def main() -> None:
             xp = np.array([r["x_m"] for r in rows], dtype=float)
             qp = np.array([r[quantity_key] for r in rows], dtype=float)
             if quantity_key == "ux_m_per_s":
-                qp = np.abs(qp)
+                qp = np.abs(qp)  # plot absolute value of horizontal velocity
             order = np.argsort(xp)
             plt.plot(xp[order], qp[order], label=f"h={h:g} m")
         plt.xlabel("x [m]")
