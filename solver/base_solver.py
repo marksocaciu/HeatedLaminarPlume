@@ -1429,7 +1429,7 @@ def run_post_continuation_transient(
     max_newton_it: int = 20,
     max_retries_per_step: int = 8,
     atol: float = 1.0e-9,
-    rtol: float = 1.0e-9,
+    rtol: float = 1.0e-8,
     rel_update_easy: float = 1.0e-3,
     rel_update_hard: float = 5.0e-3,
     rel_update_reject: float = 2.0e-2,
