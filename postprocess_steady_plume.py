@@ -5,25 +5,26 @@ Steady plume post-processing for legacy-FEniCS XDMF/HDF5 exports.
 Reads nodal temperature, nodal velocity, and optionally cell-centred heat-flux files
 written in the simple XDMF/HDF5 format used by the current plume project, then computes:
 
-  * horizontal-plane energy fluxes: convective, conductive, total [W/m]
+  * horizontal-plane total vertical energy flux [W/m]
   * mass, volume, vertical-momentum and kinetic-energy fluxes at selected heights
   * centreline temperature/velocity decay and virtual-origin fits
-  * thermal and velocity plume half-widths / 1-percent boundary-layer thicknesses
+  * one scalar near-wire thermal boundary-layer thickness based on an angular average
+    of radial 1-percent temperature-excess distances around the cylinder
   * approximate cumulative buoyancy and vertical-momentum-flux balance diagnostics
-  * CSV files and diagnostic plots
+  * CSV files and diagnostic plots, including combined profile plots across all requested heights
 
 The script intentionally does not depend on FEniCS. It uses h5py + matplotlib.tri
 linear interpolation so it can be run after the solver on saved fields.
 
 Typical use for your nondimensional mesh coordinates:
 
-python postprocess_steady_plume.py \
+python postprocess_steady_plume_v6.py \
   --temperature-xdmf air_temperature_steady_from_transient_step_11860.xdmf \
   --velocity-xdmf air_velocity_steady_from_transient_step_11860.xdmf \
   --heatflux-xdmf air_temperature_heatflux_final_steady_-0001.xdmf \
   --outdir steady_postprocess \
   --coords-are-dimensionless --lref 0.001 \
-  --wire-y 0.0 --T-inf 292.95 \
+  --T-inf 292.95 \
   --rho 1.1614 --cp 1007.0 --k 0.0257 --mu 1.85e-5 --beta 0.0034 \
   --q-input-per-length 1.0
 
@@ -31,9 +32,10 @@ Important conventions:
   * coordinate-scale converts mesh coordinates to metres.
     - if --coords-are-dimensionless, coordinate_scale = --lref
     - otherwise coordinate_scale = --coordinate-scale, default 1.0
-  * heights supplied by --planes are physical heights above --wire-y, in metres.
+  * heights supplied by --planes are physical heights above the wire centre, in metres.
+  * the wire centre is inferred automatically as y_min + H/10 + 11*r, with r = --lref.
   * all integral outputs are per unit out-of-plane depth, i.e. W/m, kg/(s m), etc.
-  * q_heat_dim is assumed to be the conductive heat-flux vector q = -k grad(T) [W/m^2].
+  * if q_heat_dim is supplied, it is used internally to form q_total = rho cp uy (T-T_inf) + q_y.
 """
 
 from __future__ import annotations
@@ -53,6 +55,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import warnings
 import matplotlib.tri as mtri
 
 
@@ -184,7 +187,7 @@ def robust_trapz(y: np.ndarray, x: np.ndarray) -> float:
     mask = np.isfinite(y) & np.isfinite(x)
     if np.count_nonzero(mask) < 2:
         return float("nan")
-    return float(np.trapz(y[mask], x[mask]))
+    return float(np.trapezoid(y[mask], x[mask]))
 
 
 def first_crossing_half_width(x: np.ndarray, f: np.ndarray, threshold: float, side: str) -> float:
@@ -264,9 +267,9 @@ def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, yl
     plt.figure(figsize=(7.2, 4.8))
     for label, y in ys:
         if semilogy:
-            plt.semilogy(x, y, marker="o", label=label)
+            plt.semilogy(x, y, label=label)
         else:
-            plt.plot(x, y, marker="o", label=label)
+            plt.plot(x, y, label=label)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
     plt.title(title)
@@ -291,7 +294,8 @@ def main() -> None:
     ap.add_argument("--lref", type=float, default=None, help="Reference length [m], e.g. wire radius. Required for dimensionless coordinates.")
     ap.add_argument("--coordinate-scale", type=float, default=None, help="Generic multiplier from mesh coordinates to metres.")
 
-    ap.add_argument("--wire-y", type=float, default=0.0, help="Wire/source y-coordinate in physical metres after scaling.")
+    # The wire centre is not a user input for this case family.
+    # Geometry convention: source centre at y_min + H/10 + 11*r, with r = lref.
     ap.add_argument("--T-inf", type=float, required=True, help="Ambient/reference temperature [K]")
     ap.add_argument("--rho", type=float, required=True, help="Density [kg/m^3]")
     ap.add_argument("--cp", type=float, required=True, help="Specific heat [J/(kg K)]")
@@ -307,7 +311,10 @@ def main() -> None:
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
     ap.add_argument("--nx", type=int, default=1601, help="Number of x samples per horizontal profile")
     ap.add_argument("--ny-balance", type=int, default=300, help="Number of y levels for balance/fit curves")
-    ap.add_argument("--threshold", type=float, default=0.01, help="Boundary-layer threshold fraction of centreline excess")
+    ap.add_argument("--threshold", type=float, default=0.01, help="Boundary-layer threshold fraction of local near-surface temperature excess")
+    ap.add_argument("--bl-angles", type=int, default=181, help="Number of radial directions used for angular-average near-wire boundary-layer thickness")
+    ap.add_argument("--bl-r-max", type=float, default=None, help="Maximum radial distance from cylinder surface [m] for boundary-layer search. Default: largest distance fitting in domain")
+    ap.add_argument("--bl-nr", type=int, default=600, help="Number of radial samples per angular direction for boundary-layer search")
     args = ap.parse_args()
 
     if args.coords_are_dimensionless:
@@ -350,6 +357,15 @@ def main() -> None:
 
     xmin, xmax = float(np.min(x)), float(np.max(x))
     ymin, ymax = float(np.min(y)), float(np.max(y))
+    domain_h_m = ymax - ymin
+    if args.lref is None:
+        raise SystemExit("--lref is required because the wire radius is needed to infer wire_y = y_min + H/10 + 11*r.")
+    wire_radius_m = float(args.lref)
+    wire_y_m = ymin + domain_h_m / 10.0 + 11.0 * wire_radius_m
+    wire_top_y_m = wire_y_m + wire_radius_m
+    if not (ymin <= wire_y_m <= ymax):
+        raise SystemExit(f"Inferred wire centre y={wire_y_m:g} m lies outside mesh bounds [{ymin:g}, {ymax:g}] m.")
+
     if args.profile_half_width is None:
         xs = np.linspace(xmin, xmax, args.nx)
     else:
@@ -370,7 +386,7 @@ def main() -> None:
         qy_i = mtri.LinearTriInterpolator(qtri, Qdata.values[:, 1])
 
     for h in args.planes:
-        yp = float(args.wire_y + h)
+        yp = float(wire_y_m + h)
         Tline, uxline, uyline = sample_line(Ti, uxi, uyi, xs, yp)
         theta = Tline - args.T_inf
         speed2 = uxline**2 + uyline**2
@@ -425,8 +441,6 @@ def main() -> None:
             "T_center_K": Tc,
             "DeltaT_center_K": Tce,
             "uy_center_m_per_s": uyc,
-            "Q_conv_W_per_m": Qconv,
-            "Q_cond_W_per_m": Qcond,
             "Q_total_W_per_m": Qtot,
             "Q_conv_up_W_per_m": Qconv_up,
             "Q_conv_down_W_per_m": Qconv_down,
@@ -447,7 +461,7 @@ def main() -> None:
             "velocity_1pct_fullwidth_m": deltaU_l + deltaU_r if np.isfinite(deltaU_l) and np.isfinite(deltaU_r) else np.nan,
         })
 
-        for xi, Ti_, uxi_, uyi_, qc_, qk_ in zip(xs, Tline, uxline, uyline, qconv_y, qcond_y):
+        for xi, Ti_, uxi_, uyi_, qt_ in zip(xs, Tline, uxline, uyline, qtot_y):
             profile_rows.append({
                 "height_m": h,
                 "y_m": yp,
@@ -456,17 +470,15 @@ def main() -> None:
                 "DeltaT_K": Ti_ - args.T_inf,
                 "ux_m_per_s": uxi_,
                 "uy_m_per_s": uyi_,
-                "qconv_y_W_per_m2": qc_,
-                "qcond_y_W_per_m2": qk_,
-                "qtotal_y_W_per_m2": qc_ + qk_,
+                "qtotal_y_W_per_m2": qt_,
             })
 
     write_csv(outdir / "plane_integrals.csv", plane_rows)
     write_csv(outdir / "plane_profiles.csv", profile_rows)
 
     # Continuous centreline / balance curves from wire to top.
-    y_start = max(float(args.wire_y + min(args.planes) * 0.25), ymin)
-    y_end = min(ymax, float(args.wire_y + max(args.planes) * 1.25))
+    y_start = max(float(wire_y_m + min(args.planes) * 0.25), ymin)
+    y_end = min(ymax, float(wire_y_m + max(args.planes) * 1.25))
     yy = np.linspace(y_start, y_end, args.ny_balance)
     x0 = np.zeros_like(yy)
     T_c = finite_or_nan(Ti(x0, yy))
@@ -478,7 +490,7 @@ def main() -> None:
     for yi, Ti_, uxi_, uyi_ in zip(yy, T_c, ux_c, uy_c):
         center_rows.append({
             "y_m": yi,
-            "height_above_wire_m": yi - args.wire_y,
+            "height_above_wire_m": yi - wire_y_m,
             "T_center_K": Ti_,
             "DeltaT_center_K": Ti_ - args.T_inf,
             "ux_center_m_per_s": uxi_,
@@ -486,12 +498,120 @@ def main() -> None:
         })
     write_csv(outdir / "centerline.csv", center_rows)
 
+    # Angular-average near-wire thermal boundary-layer thickness.
+    # Definition: for each ray starting at the cylinder surface, find the radial distance
+    # where DeltaT falls to threshold * DeltaT_near_surface on that same ray. The reported
+    # scalar is the angular mean of these finite distances. This is a practical diagnostic
+    # for a finite cylinder; it is not the same as a boundary-layer-theory local delta(theta).
+    if args.bl_angles < 8:
+        raise SystemExit("--bl-angles should be at least 8 for a meaningful angular average.")
+    if args.bl_nr < 20:
+        raise SystemExit("--bl-nr should be at least 20 for a meaningful radial crossing search.")
+
+    # Default radial search length: stay inside the rectangular computational bounds in most directions.
+    # Use a conservative upper bound so rays do not immediately leave the mesh.
+    if args.bl_r_max is None:
+        bl_r_max = 0.95 * min(
+            wire_y_m - ymin,
+            ymax - wire_y_m,
+            0.5 * (xmax - xmin),
+        ) - wire_radius_m
+        bl_r_max = max(bl_r_max, 5.0 * wire_radius_m)
+    else:
+        bl_r_max = float(args.bl_r_max)
+    bl_r_max = min(bl_r_max, max(ymax - ymin, xmax - xmin))
+    if bl_r_max <= 0.0:
+        raise SystemExit(f"Invalid boundary-layer radial search length: {bl_r_max:g} m")
+
+    angles = np.linspace(0.0, 2.0 * np.pi, args.bl_angles, endpoint=False)
+    s_ray = np.linspace(0.0, bl_r_max, args.bl_nr)  # distance from cylinder surface
+    ray_rows = []
+    delta_values = []
+    theta_reference_values = []
+
+    for ang in angles:
+        ca, sa = math.cos(float(ang)), math.sin(float(ang))
+        rr = wire_radius_m + s_ray
+        xr = rr * ca
+        yr = wire_y_m + rr * sa
+        Tr = finite_or_nan(Ti(xr, yr))
+        dTr = Tr - args.T_inf
+        valid = np.isfinite(dTr)
+        # Reference is the first finite positive sample just outside the cylinder.
+        positive = np.where(valid & (dTr > 0.0))[0]
+        if positive.size == 0:
+            delta = np.nan
+            dTref = np.nan
+            dTthr = np.nan
+        else:
+            i0 = int(positive[0])
+            dTref = float(dTr[i0])
+            dTthr = args.threshold * dTref
+            # Search only after the reference point. This allows a tiny masked/invalid region near the surface.
+            hit = np.where(valid & (np.arange(dTr.size) > i0) & (dTr <= dTthr))[0]
+            if hit.size == 0:
+                delta = np.nan
+            else:
+                j = int(hit[0])
+                j0 = max(i0, j - 1)
+                s0_, s1_ = s_ray[j0], s_ray[j]
+                f0_, f1_ = dTr[j0], dTr[j]
+                if np.isfinite(f0_) and np.isfinite(f1_) and f1_ != f0_:
+                    delta = float(s0_ + (dTthr - f0_) * (s1_ - s0_) / (f1_ - f0_))
+                else:
+                    delta = float(s1_)
+        if np.isfinite(delta):
+            delta_values.append(delta)
+        if np.isfinite(dTref):
+            theta_reference_values.append(dTref)
+        ray_rows.append({
+            "angle_rad": float(ang),
+            "angle_deg": float(np.degrees(ang)),
+            "direction_x": ca,
+            "direction_y": sa,
+            "DeltaT_reference_near_surface_K": dTref,
+            "DeltaT_threshold_K": dTthr,
+            "thermal_boundary_layer_thickness_m": delta,
+            "thermal_boundary_layer_thickness_over_r": delta / wire_radius_m if np.isfinite(delta) and wire_radius_m else np.nan,
+        })
+
+    delta_arr = np.array(delta_values, dtype=float)
+    dTref_arr = np.array(theta_reference_values, dtype=float)
+    thermal_bl_mean_m = float(np.mean(delta_arr)) if delta_arr.size else np.nan
+    thermal_bl_std_m = float(np.std(delta_arr, ddof=1)) if delta_arr.size > 1 else np.nan
+    thermal_bl_min_m = float(np.min(delta_arr)) if delta_arr.size else np.nan
+    thermal_bl_max_m = float(np.max(delta_arr)) if delta_arr.size else np.nan
+    thermal_bl_median_m = float(np.median(delta_arr)) if delta_arr.size else np.nan
+
+    write_csv(outdir / "near_wire_boundary_layer_by_angle.csv", ray_rows)
+    write_csv(outdir / "near_wire_boundary_layer.csv", [{
+        "definition": "angular_mean_radial_distance_from_cylinder_surface_to_1pct_local_DeltaT",
+        "wire_radius_m": wire_radius_m,
+        "wire_center_y_m": wire_y_m,
+        "threshold_fraction": args.threshold,
+        "radial_search_max_m": bl_r_max,
+        "n_angles_requested": int(args.bl_angles),
+        "n_angles_valid": int(delta_arr.size),
+        "valid_angle_fraction": float(delta_arr.size / args.bl_angles),
+        "mean_DeltaT_reference_near_surface_K": float(np.mean(dTref_arr)) if dTref_arr.size else np.nan,
+        "thermal_boundary_layer_thickness_mean_m": thermal_bl_mean_m,
+        "thermal_boundary_layer_thickness_std_m": thermal_bl_std_m,
+        "thermal_boundary_layer_thickness_min_m": thermal_bl_min_m,
+        "thermal_boundary_layer_thickness_median_m": thermal_bl_median_m,
+        "thermal_boundary_layer_thickness_max_m": thermal_bl_max_m,
+        "thermal_boundary_layer_thickness_mean_over_r": thermal_bl_mean_m / wire_radius_m if np.isfinite(thermal_bl_mean_m) and wire_radius_m else np.nan,
+        "thermal_boundary_layer_thickness_std_over_r": thermal_bl_std_m / wire_radius_m if np.isfinite(thermal_bl_std_m) and wire_radius_m else np.nan,
+        "thermal_boundary_layer_thickness_min_over_r": thermal_bl_min_m / wire_radius_m if np.isfinite(thermal_bl_min_m) and wire_radius_m else np.nan,
+        "thermal_boundary_layer_thickness_median_over_r": thermal_bl_median_m / wire_radius_m if np.isfinite(thermal_bl_median_m) and wire_radius_m else np.nan,
+        "thermal_boundary_layer_thickness_max_over_r": thermal_bl_max_m / wire_radius_m if np.isfinite(thermal_bl_max_m) and wire_radius_m else np.nan,
+    }])
+
     # Virtual origin fits. Classical laminar line-source similarity suggests DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(-1/5).
     fit_mask = np.isfinite(yy) & np.isfinite(dT_c) & np.isfinite(uy_c)
     if args.fit_y_min is not None:
-        fit_mask &= (yy - args.wire_y) >= args.fit_y_min
+        fit_mask &= (yy - wire_y_m) >= args.fit_y_min
     if args.fit_y_max is not None:
-        fit_mask &= (yy - args.wire_y) <= args.fit_y_max
+        fit_mask &= (yy - wire_y_m) <= args.fit_y_max
     fitT = fit_virtual_origin_powerlaw(yy[fit_mask], dT_c[fit_mask], exponent=3.0/5.0)
     fitU = fit_virtual_origin_powerlaw(yy[fit_mask], uy_c[fit_mask], exponent=1.0/5.0)
     fit_rows = [
@@ -522,9 +642,7 @@ def main() -> None:
             buoy_line = robust_trapz(args.rho * args.g * args.beta * theta, xs)  # N/m^2 integrated over x -> N/m^2? per unit height per depth
         balance_rows.append({
             "y_m": yp,
-            "height_above_wire_m": yp - args.wire_y,
-            "Q_conv_W_per_m": Qconv,
-            "Q_cond_W_per_m": Qcond,
+            "height_above_wire_m": yp - wire_y_m,
             "Q_total_W_per_m": Qconv + Qcond,
             "mass_flux_kg_per_s_per_m": mass_flux,
             "vertical_momentum_flux_N_per_m": mom_y,
@@ -548,34 +666,135 @@ def main() -> None:
 
     # Plots.
     plane_h = np.array([r["height_m"] for r in plane_rows], dtype=float)
-    plot_xy(outdir / "energy_flux_vs_height.png", plane_h,
-            [("convective", np.array([r["Q_conv_W_per_m"] for r in plane_rows])),
-             ("conductive", np.array([r["Q_cond_W_per_m"] for r in plane_rows])),
-             ("total", np.array([r["Q_total_W_per_m"] for r in plane_rows]))],
-            "height above wire [m]", "energy flux [W/m]", "Energy flux through horizontal planes")
+    energy_series = [("total", np.array([r["Q_total_W_per_m"] for r in plane_rows]))]
+    if args.q_input_per_length:
+        energy_series.append(("input heat per length", np.full_like(plane_h, args.q_input_per_length, dtype=float)))
+    plot_xy(outdir / "energy_flux_vs_height.png", plane_h, energy_series,
+            "height above wire [m]", "total vertical energy flux [W/m]",
+            "Total vertical energy flux through horizontal planes")
     plot_xy(outdir / "mass_momentum_vs_height.png", plane_h,
             [("mass flux", np.array([r["mass_flux_kg_per_s_per_m"] for r in plane_rows])),
              ("vertical momentum flux", np.array([r["vertical_momentum_flux_N_per_m"] for r in plane_rows]))],
             "height above wire [m]", "integral", "Mass and vertical-momentum flux")
-    plot_xy(outdir / "centerline_decay.png", yy - args.wire_y,
-            [("Delta T center", dT_c), ("uy center", uy_c)],
-            "height above wire [m]", "centreline value", "Centreline decay", semilogy=True)
-    plot_xy(outdir / "thickness_vs_height.png", plane_h,
-            [("thermal 1% full width", np.array([r["thermal_1pct_fullwidth_m"] for r in plane_rows])),
-             ("velocity 1% full width", np.array([r["velocity_1pct_fullwidth_m"] for r in plane_rows]))],
-            "height above wire [m]", "width [m]", "1% plume width / boundary-layer thickness")
+    # Centreline plots with fitted virtual-source curves.
+    h_center = yy - wire_y_m
+    dT_fit = np.full_like(yy, np.nan, dtype=float)
+    uy_fit = np.full_like(yy, np.nan, dtype=float)
+    if np.isfinite(fitT["C"]) and np.isfinite(fitT["y0"]):
+        m = yy > fitT["y0"]
+        dT_fit[m] = fitT["C"] * (yy[m] - fitT["y0"]) ** (-(3.0/5.0))
+    if np.isfinite(fitU["C"]) and np.isfinite(fitU["y0"]):
+        m = yy > fitU["y0"]
+        uy_fit[m] = fitU["C"] * (yy[m] - fitU["y0"]) ** (-(1.0/5.0))
 
-    # Profile plots for requested planes.
-    for h in args.planes:
-        rows = [r for r in profile_rows if abs(r["height_m"] - h) < 1e-15]
-        xp = np.array([r["x_m"] for r in rows], dtype=float)
-        dTp = np.array([r["DeltaT_K"] for r in rows], dtype=float)
-        uyp = np.array([r["uy_m_per_s"] for r in rows], dtype=float)
-        qtp = np.array([r["qtotal_y_W_per_m2"] for r in rows], dtype=float)
-        safe_h = f"{h:.4f}".replace(".", "p")
-        plot_xy(outdir / f"profiles_h_{safe_h}m.png", xp,
-                [("Delta T", dTp), ("uy", uyp), ("q_total_y", qtp)],
-                "x [m]", "profile value", f"Profiles at h={h:g} m")
+    plot_xy(outdir / "centerline_temperature_virtual_origin.png", h_center,
+            [("Delta T center", dT_c), ("line-plume fit", dT_fit)],
+            "height above wire centre [m]", "Delta T centre [K]",
+            "Centreline temperature decay and virtual-origin fit", semilogy=True)
+    plot_xy(outdir / "centerline_velocity_virtual_origin.png", h_center,
+            [("uy center", uy_c), ("line-plume fit", uy_fit)],
+            "height above wire centre [m]", "uy centre [m/s]",
+            "Centreline vertical velocity decay and virtual-origin fit", semilogy=True)
+
+    # Linearized virtual-origin convergence plots. Intercept with zero gives y0.
+    def plot_linearized_virtual_origin(path, yy_, amp_, exponent, fit, ylabel, title):
+        mask = np.isfinite(yy_) & np.isfinite(amp_) & (amp_ > 0)
+        plt.figure(figsize=(7.2, 4.8))
+        z = np.full_like(yy_, np.nan, dtype=float)
+        z[mask] = amp_[mask] ** (-1.0 / exponent)
+        plt.plot(yy_[mask] - wire_y_m, z[mask], label="transformed centreline")
+        if np.isfinite(fit["y0"]):
+            A = fit["C"] ** (-1.0 / exponent) if np.isfinite(fit["C"]) and fit["C"] > 0 else np.nan
+            if np.isfinite(A):
+                zfit = A * (yy_ - fit["y0"])
+                plt.plot(yy_ - wire_y_m, zfit, label=f"linear fit; y0={fit['y0']:.4e} m")
+                plt.axvline(fit["y0"] - wire_y_m, linestyle="--", label="virtual origin")
+        plt.xlabel("height above wire centre [m]")
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True, alpha=0.35)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(path, dpi=180)
+        plt.close()
+
+    plot_linearized_virtual_origin(outdir / "virtual_origin_temperature_linearized.png", yy, dT_c, 3.0/5.0, fitT,
+                                   r"$\Delta T_c^{-5/3}$", "Linearized temperature virtual-origin fit")
+    plot_linearized_virtual_origin(outdir / "virtual_origin_velocity_linearized.png", yy, uy_c, 1.0/5.0, fitU,
+                                   r"$u_{y,c}^{-5}$", "Linearized velocity virtual-origin fit")
+
+    # Angular near-wire boundary-layer plot.
+    angle_deg = np.array([r["angle_deg"] for r in ray_rows], dtype=float)
+    delta_ang = np.array([r["thermal_boundary_layer_thickness_m"] for r in ray_rows], dtype=float)
+    plt.figure(figsize=(7.2, 4.8))
+    plt.plot(angle_deg, delta_ang / wire_radius_m)
+    if np.isfinite(thermal_bl_mean_m):
+        plt.axhline(thermal_bl_mean_m / wire_radius_m, linestyle="--", label=f"mean={thermal_bl_mean_m / wire_radius_m:.4g} r")
+    plt.xlabel("angle around cylinder [deg]; 0=right, 90=up")
+    plt.ylabel("1% thermal thickness / r")
+    plt.title("Near-wire angular thermal boundary-layer thickness")
+    plt.grid(True, alpha=0.35)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(outdir / "near_wire_boundary_layer_by_angle.png", dpi=180)
+    plt.close()
+
+    # Polar-style visualization of the same radial thickness values.
+    plt.figure(figsize=(6.2, 6.2))
+    ax = plt.subplot(111, projection="polar")
+    ax.plot(angles, delta_ang / wire_radius_m)
+    if np.isfinite(thermal_bl_mean_m):
+        ax.plot(angles, np.full_like(angles, thermal_bl_mean_m / wire_radius_m), linestyle="--", label="mean")
+    ax.set_title("Angular 1% thermal thickness / r")
+    ax.legend(loc="upper right")
+    plt.tight_layout()
+    plt.savefig(outdir / "near_wire_boundary_layer_polar.png", dpi=180)
+    plt.close()
+
+    # Combined profile plots: one figure per quantity, with all requested heights overlaid.
+    def combined_profile_plot(filename: str, quantity_key: str, ylabel: str, title: str) -> None:
+        plt.figure(figsize=(7.2, 4.8))
+        for h in args.planes:
+            rows = [r for r in profile_rows if abs(r["height_m"] - h) < 1e-15]
+            if not rows:
+                continue
+            xp = np.array([r["x_m"] for r in rows], dtype=float)
+            qp = np.array([r[quantity_key] for r in rows], dtype=float)
+            order = np.argsort(xp)
+            plt.plot(xp[order], qp[order], label=f"h={h:g} m")
+        plt.xlabel("x [m]")
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True, alpha=0.35)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(outdir / filename, dpi=180)
+        plt.close()
+
+    combined_profile_plot(
+        "profiles_temperature_all_heights.png",
+        "DeltaT_K",
+        r"$T-T_\infty$ [K]",
+        "Temperature profiles at requested heights",
+    )
+    combined_profile_plot(
+        "profiles_uy_all_heights.png",
+        "uy_m_per_s",
+        r"$u_y$ [m/s]",
+        "Vertical-velocity profiles at requested heights",
+    )
+    combined_profile_plot(
+        "profiles_ux_all_heights.png",
+        "ux_m_per_s",
+        r"$u_x$ [m/s]",
+        "Horizontal-velocity profiles at requested heights",
+    )
+    combined_profile_plot(
+        "profiles_qtotal_all_heights.png",
+        "qtotal_y_W_per_m2",
+        r"$q_{y,total}$ [W/m$^2$]",
+        "Total vertical energy-flux-density profiles at requested heights",
+    )
 
     summary_path = outdir / "README_summary.txt"
     with summary_path.open("w") as f:
@@ -585,6 +804,11 @@ def main() -> None:
         f.write(f"Velocity file:    {args.velocity_xdmf}\n")
         f.write(f"Heat-flux file:   {args.heatflux_xdmf}\n")
         f.write(f"Coordinate scale to metres: {coordinate_scale:.16e}\n")
+        f.write(f"Wire/source y-coordinate inferred as y_min + H/10 + 11*r: {wire_y_m:.16e} m\n")
+        f.write(f"Wire radius r = lref: {wire_radius_m:.16e} m\n")
+        f.write(f"Near-wire 1% thermal boundary-layer thickness, angular mean: {thermal_bl_mean_m:.8e} m ({thermal_bl_mean_m / wire_radius_m if np.isfinite(thermal_bl_mean_m) else np.nan:.6g} r)\n")
+        f.write(f"Near-wire 1% thickness angular std/min/median/max: {thermal_bl_std_m:.8e}, {thermal_bl_min_m:.8e}, {thermal_bl_median_m:.8e}, {thermal_bl_max_m:.8e} m\n")
+        f.write(f"Valid boundary-layer ray crossings: {delta_arr.size}/{args.bl_angles}\n")
         f.write(f"Physical mesh bounds: x=[{xmin:.6e}, {xmax:.6e}], y=[{ymin:.6e}, {ymax:.6e}] m\n")
         f.write(f"T_inf: {args.T_inf:.12g} K\n")
         if args.q_input_per_length is not None:
@@ -599,12 +823,16 @@ def main() -> None:
         f.write("  plane_profiles.csv\n")
         f.write("  centerline.csv\n")
         f.write("  virtual_origin_fits.csv\n")
+        f.write("  near_wire_boundary_layer.csv\n")
+        f.write("  near_wire_boundary_layer_by_angle.csv\n")
         f.write("  balance_curves.csv\n")
         f.write("  *.png diagnostic plots\n")
 
     print(f"Wrote outputs to: {outdir}")
     print(f"Temperature virtual origin y0 = {fitT['y0']:.6e} m, R2={fitT['r2']:.4f}")
     print(f"Velocity virtual origin    y0 = {fitU['y0']:.6e} m, R2={fitU['r2']:.4f}")
+    print(f"Near-wire 1% thermal boundary-layer thickness angular mean = {thermal_bl_mean_m:.6e} m")
+    print(f"Valid boundary-layer ray crossings = {delta_arr.size}/{args.bl_angles}")
 
 
 if __name__ == "__main__":
