@@ -99,7 +99,7 @@
       ]
     },
     {
-      "name": "PlumeCase_Brodowicz_Air_reduced",
+      "name": "PlumeCase_Brodowicz_Air_reduced_2",
       "author": "Brodowicz",
       "notes": "3.brodowicz",
       "fluid": {
@@ -428,7 +428,7 @@
       ]
     },
     {
-      "name": "PlumeCase_SchorrGebhart_Silicone_reduced",
+      "name": "PlumeCase_SchorrGebhart_Silicone_reduced2",
       "author": "Schorr_and_Gebhart",
       "notes": "6.schorr1970; quantitative Mach-Zehnder interferometer temperature-field case in G.E. silicone SF-96; selected 6 in wire, l/d = 1200, q = 2.88 Btu/(h ft) = 2.7679 W/m; tank dimensions 0.14 x 0.19 x 0.25 m",
       "fluid": {
