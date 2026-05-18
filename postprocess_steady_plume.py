@@ -11,6 +11,7 @@ written in the simple XDMF/HDF5 format used by the current plume project, then c
   * one scalar near-wire thermal boundary-layer thickness based on an angular average
     of radial 1-percent temperature-excess distances around the cylinder
   * approximate cumulative buoyancy and vertical-momentum-flux balance diagnostics
+  * optional full rectangular-control-volume vertical momentum balance when pressure is supplied
   * CSV files and diagnostic plots, including combined profile plots across all requested heights
 
 The script intentionally does not depend on FEniCS. It uses h5py + matplotlib.tri
@@ -18,7 +19,7 @@ linear interpolation so it can be run after the solver on saved fields.
 
 Typical use for your nondimensional mesh coordinates:
 
-python postprocess_steady_plume_v6.py \
+python postprocess_steady_plume_v10.py \
   --temperature-xdmf air_temperature_steady_from_transient_step_11860.xdmf \
   --velocity-xdmf air_velocity_steady_from_transient_step_11860.xdmf \
   --heatflux-xdmf air_temperature_heatflux_final_steady_-0001.xdmf \
@@ -37,6 +38,7 @@ Important conventions:
   * all integral outputs are per unit out-of-plane depth, i.e. W/m, kg/(s m), etc.
   * --velocity-scale-factor is applied immediately after reading the velocity field, before all plots, fits, and flux integrals.
   * if q_heat_dim is supplied, it is used internally to form q_total = rho cp uy (T-T_inf) + q_y and to integrate heat escaping the domain boundaries.
+  * if --pressure-xdmf is supplied, a full vertical momentum balance is computed over rectangular control volumes.
 """
 
 from __future__ import annotations
@@ -163,6 +165,10 @@ def make_interpolators(tri: mtri.Triangulation, T: np.ndarray, u: np.ndarray):
     uxi = mtri.LinearTriInterpolator(tri, u[:, 0])
     uyi = mtri.LinearTriInterpolator(tri, u[:, 1])
     return Ti, uxi, uyi
+
+
+def make_scalar_interpolator(tri: mtri.Triangulation, values: np.ndarray):
+    return mtri.LinearTriInterpolator(tri, np.asarray(values, dtype=float))
 
 
 def cell_centres(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
@@ -502,6 +508,126 @@ def integrate_boundary_heat_escape_from_facets(
 
 
 
+
+def integrate_control_volume_vertical_momentum(
+    Ti,
+    uxi,
+    uyi,
+    pi,
+    x_left: float,
+    x_right: float,
+    y_bottom: float,
+    y_top: float,
+    rho: float,
+    mu: float,
+    beta: float,
+    g: float,
+    T_inf: float,
+    n_side: int = 801,
+    n_bottom_top: int = 1201,
+    n_area_y: int = 101,
+) -> Dict[str, float]:
+    """
+    Integrated steady vertical momentum balance over a rectangular 2D control volume.
+
+    Equation used:
+      ∮ rho*u_y*(u·n) ds = ∮[-p*n_y + tau_yj*n_j] ds + ∬ rho*g*beta*(T-T_inf) dA.
+
+    Residual is advective - pressure - viscous - buoyancy. All quantities are per unit
+    out-of-plane depth. Positive vertical direction is upward.
+    """
+    if pi is None:
+        return {}
+    if y_top <= y_bottom or x_right <= x_left:
+        return {}
+
+    def line_terms(xv, yv, nx, ny):
+        xv = np.asarray(xv, dtype=float)
+        yv = np.asarray(yv, dtype=float)
+        Tline = finite_or_nan(Ti(xv, yv))
+        ux = finite_or_nan(uxi(xv, yv))
+        uy = finite_or_nan(uyi(xv, yv))
+        pp = finite_or_nan(pi(xv, yv))
+        dux_dx, dux_dy = uxi.gradient(xv, yv)
+        duy_dx, duy_dy = uyi.gradient(xv, yv)
+        dux_dx = finite_or_nan(dux_dx)
+        dux_dy = finite_or_nan(dux_dy)
+        duy_dx = finite_or_nan(duy_dx)
+        duy_dy = finite_or_nan(duy_dy)
+        un = ux * nx + uy * ny
+        adv = rho * uy * un
+        tau_yx = mu * (duy_dx + dux_dy)
+        tau_yy = 2.0 * mu * duy_dy
+        pressure = -pp * ny
+        viscous = tau_yx * nx + tau_yy * ny
+        return adv, pressure, viscous
+
+    # Top and bottom horizontal faces.
+    xb = np.linspace(x_left, x_right, n_bottom_top)
+    xt = xb.copy()
+    adv_t, pres_t, visc_t = line_terms(xt, np.full_like(xt, y_top), 0.0, 1.0)
+    adv_b, pres_b, visc_b = line_terms(xb, np.full_like(xb, y_bottom), 0.0, -1.0)
+    adv_top = robust_trapz(adv_t, xt)
+    adv_bottom = robust_trapz(adv_b, xb)
+    pres_top = robust_trapz(pres_t, xt)
+    pres_bottom = robust_trapz(pres_b, xb)
+    visc_top = robust_trapz(visc_t, xt)
+    visc_bottom = robust_trapz(visc_b, xb)
+
+    # Left and right vertical faces.
+    ys = np.linspace(y_bottom, y_top, n_side)
+    adv_l, pres_l, visc_l = line_terms(np.full_like(ys, x_left), ys, -1.0, 0.0)
+    adv_r, pres_r, visc_r = line_terms(np.full_like(ys, x_right), ys, 1.0, 0.0)
+    adv_left = robust_trapz(adv_l, ys)
+    adv_right = robust_trapz(adv_r, ys)
+    pres_left = robust_trapz(pres_l, ys)
+    pres_right = robust_trapz(pres_r, ys)
+    visc_left = robust_trapz(visc_l, ys)
+    visc_right = robust_trapz(visc_r, ys)
+
+    adv_total = adv_top + adv_bottom + adv_left + adv_right
+    pressure_total = pres_top + pres_bottom + pres_left + pres_right
+    viscous_total = visc_top + visc_bottom + visc_left + visc_right
+
+    # Area buoyancy integral by repeated trapezoid integration.
+    ya = np.linspace(y_bottom, y_top, n_area_y)
+    bx = np.full_like(ya, np.nan, dtype=float)
+    for i, yy_ in enumerate(ya):
+        Tline = finite_or_nan(Ti(xb, np.full_like(xb, yy_)))
+        theta = Tline - T_inf
+        bx[i] = robust_trapz(rho * g * beta * theta, xb)
+    buoyancy_total = robust_trapz(bx, ya)
+
+    residual = adv_total - pressure_total - viscous_total - buoyancy_total
+    rhs_total = pressure_total + viscous_total + buoyancy_total
+    scale = max(abs(adv_total), abs(pressure_total), abs(viscous_total), abs(buoyancy_total), abs(rhs_total), 1e-300)
+    return {
+        "y_top_m": float(y_top),
+        "height_top_above_wire_m": float("nan"),
+        "y_bottom_m": float(y_bottom),
+        "x_left_m": float(x_left),
+        "x_right_m": float(x_right),
+        "advective_vertical_momentum_flux_N_per_m": float(adv_total),
+        "advective_top_N_per_m": float(adv_top),
+        "advective_bottom_N_per_m": float(adv_bottom),
+        "advective_left_N_per_m": float(adv_left),
+        "advective_right_N_per_m": float(adv_right),
+        "pressure_vertical_force_N_per_m": float(pressure_total),
+        "pressure_top_N_per_m": float(pres_top),
+        "pressure_bottom_N_per_m": float(pres_bottom),
+        "pressure_left_N_per_m": float(pres_left),
+        "pressure_right_N_per_m": float(pres_right),
+        "viscous_vertical_force_N_per_m": float(viscous_total),
+        "viscous_top_N_per_m": float(visc_top),
+        "viscous_bottom_N_per_m": float(visc_bottom),
+        "viscous_left_N_per_m": float(visc_left),
+        "viscous_right_N_per_m": float(visc_right),
+        "buoyancy_vertical_force_N_per_m": float(buoyancy_total),
+        "rhs_pressure_plus_viscous_plus_buoyancy_N_per_m": float(rhs_total),
+        "momentum_balance_residual_N_per_m": float(residual),
+        "momentum_balance_residual_relative": float(residual / scale),
+    }
+
 def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
     if not rows:
         return
@@ -540,6 +666,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--temperature-xdmf", required=True)
     ap.add_argument("--velocity-xdmf", required=True)
+    ap.add_argument("--pressure-xdmf", default=None, help="Optional nodal pressure XDMF. If supplied, compute full rectangular-control-volume vertical momentum balance with pressure and viscous tractions.")
+    ap.add_argument("--pressure-scale", type=float, default=1.0, help="Multiplicative factor applied to the exported pressure field before momentum-balance diagnostics.")
     ap.add_argument("--heatflux-xdmf", default=None, help="Optional cell-centred q_heat_dim XDMF; assumed q=-k grad(T)")
     ap.add_argument("--heatflux-scale", type=float, default=None,
                     help="Multiplicative scale applied to q_heat field before integration. "
@@ -578,6 +706,12 @@ def main() -> None:
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
     ap.add_argument("--nx", type=int, default=1601, help="Number of x samples per horizontal profile")
     ap.add_argument("--ny-balance", type=int, default=300, help="Number of y levels for balance/fit curves")
+    ap.add_argument("--momentum-cv-half-width", type=float, default=None, help="Half-width [m] of the rectangular momentum-balance control volume. Default: same as profile-half-width, or full mesh half-width.")
+    ap.add_argument("--momentum-cv-y0", type=float, default=None, help="Lower height above wire [m] for cumulative control-volume momentum balance. Default: balance-y-min.")
+    ap.add_argument("--balance-y-max", type=float, default=None,
+                    help="Maximum height above wire [m] for continuous centreline and balance diagnostics. Default: 90% of available height from wire to top boundary.")
+    ap.add_argument("--balance-y-min", type=float, default=None,
+                    help="Minimum height above wire [m] for continuous centreline and balance diagnostics. Default: just above the wire/source region.")
     ap.add_argument("--threshold", type=float, default=0.01, help="Boundary-layer threshold fraction of local near-surface temperature excess")
     ap.add_argument("--bl-angles", type=int, default=181, help="Number of radial directions used for angular-average near-wire boundary-layer thickness")
     ap.add_argument("--bl-r-max", type=float, default=None, help="Maximum radial distance from cylinder surface [m] for boundary-layer search. Default: largest distance fitting in domain")
@@ -604,6 +738,17 @@ def main() -> None:
     if Udata.values.ndim != 2 or Udata.values.shape[1] != 2:
         raise ValueError("Velocity field must be a two-component vector field.")
 
+    Pdata = None
+    p_field = None
+    if args.pressure_xdmf:
+        Pdata = load_xdmf_field(args.pressure_xdmf, coordinate_scale)
+        check_same_mesh(Tdata, Pdata)
+        if Pdata.center != "Node":
+            raise ValueError("Pressure field must be nodal for the control-volume momentum balance.")
+        p_field = np.asarray(Pdata.values, dtype=float) * float(args.pressure_scale)
+        if p_field.ndim != 1:
+            raise ValueError("Pressure field must be scalar-valued.")
+
     Qdata = None
     if args.heatflux_xdmf:
         Qdata = load_xdmf_field(args.heatflux_xdmf, coordinate_scale)
@@ -623,6 +768,7 @@ def main() -> None:
     u = np.asarray(Udata.values, dtype=float) * float(args.velocity_scale_factor)
     tri = mtri.Triangulation(x, y, Tdata.cells)
     Ti, uxi, uyi = make_interpolators(tri, T, u)
+    pi = make_scalar_interpolator(tri, p_field) if p_field is not None else None
     dTdx_i, dTdy_i = Ti.gradient(tri.x, tri.y)
     dTdy_i = finite_or_nan(dTdy_i)
 
@@ -747,9 +893,21 @@ def main() -> None:
     write_csv(outdir / "plane_integrals.csv", plane_rows)
     write_csv(outdir / "plane_profiles.csv", profile_rows)
 
-    # Continuous centreline / balance curves from wire to top.
-    y_start = max(float(wire_y_m + min(args.planes) * 0.25), ymin)
-    y_end = min(ymax, float(wire_y_m + max(args.planes) * 1.25))
+    # Continuous centreline / balance curves.  By default this extends well above
+    # the requested profile planes, because virtual-origin and momentum-balance
+    # diagnostics need the developing/far-field region, not only the sampled cuts.
+    default_balance_y_min_h = max(2.5 * wire_radius_m, 0.001)
+    default_balance_y_max_h = 0.90 * max(ymax - wire_y_m, 0.0)
+    balance_y_min_h = args.balance_y_min if args.balance_y_min is not None else default_balance_y_min_h
+    balance_y_max_h = args.balance_y_max if args.balance_y_max is not None else default_balance_y_max_h
+    # Always include at least the requested plane range when possible.
+    if args.planes:
+        balance_y_max_h = max(balance_y_max_h, max(args.planes) * 1.25)
+    y_start = max(float(wire_y_m + balance_y_min_h), ymin)
+    y_end = min(float(wire_y_m + balance_y_max_h), ymax)
+    if y_end <= y_start:
+        y_start = max(float(wire_y_m + min(args.planes) * 0.25), ymin)
+        y_end = min(ymax, float(wire_y_m + max(args.planes) * 1.25))
     yy = np.linspace(y_start, y_end, args.ny_balance)
     x0 = np.zeros_like(yy)
     T_c = finite_or_nan(Ti(x0, yy))
@@ -1020,6 +1178,80 @@ def main() -> None:
                 r["cumulative_buoyancy_N_per_m"] = c
     write_csv(outdir / "balance_curves.csv", balance_rows)
 
+    # Momentum/buoyancy balance proxy.
+    # This is not a closed Navier-Stokes momentum balance because pressure, viscous
+    # traction, and lateral advective fluxes are not included.  It is a diagnostic:
+    # compare how much upward buoyancy force is generated by the temperature field
+    # against the observed change of vertical momentum flux through horizontal cuts.
+    momentum_rows = []
+    y_arr = np.array([r["y_m"] for r in balance_rows], dtype=float)
+    h_arr = np.array([r["height_above_wire_m"] for r in balance_rows], dtype=float)
+    M_arr = np.array([r["vertical_momentum_flux_N_per_m"] for r in balance_rows], dtype=float)
+    Bp_arr = np.array([r.get("buoyancy_force_density_integral_N_per_m2", np.nan) for r in balance_rows], dtype=float)
+    CB_arr = np.array([r.get("cumulative_buoyancy_N_per_m", np.nan) for r in balance_rows], dtype=float)
+    dMdy_arr = np.full_like(M_arr, np.nan, dtype=float)
+    if np.count_nonzero(np.isfinite(M_arr) & np.isfinite(y_arr)) >= 3:
+        good = np.isfinite(M_arr) & np.isfinite(y_arr)
+        # Gradient on the valid contiguous samples; this is a smooth finite-difference
+        # estimate of d/dy int rho uy^2 dx.
+        idx = np.where(good)[0]
+        dvals = np.gradient(M_arr[idx], y_arr[idx])
+        dMdy_arr[idx] = dvals
+    delta_M_arr = M_arr - M_arr[0] if len(M_arr) else M_arr
+    residual_local = Bp_arr - dMdy_arr
+    residual_cumulative = CB_arr - delta_M_arr
+    for yi, hi, Mi, dMi, Bpi, CBi, dMi_c, rli, rci in zip(y_arr, h_arr, M_arr, dMdy_arr, Bp_arr, CB_arr, delta_M_arr, residual_local, residual_cumulative):
+        momentum_rows.append({
+            "y_m": yi,
+            "height_above_wire_m": hi,
+            "vertical_momentum_flux_N_per_m": Mi,
+            "d_vertical_momentum_flux_dy_N_per_m2": dMi,
+            "buoyancy_force_per_height_N_per_m2": Bpi,
+            "cumulative_buoyancy_N_per_m": CBi,
+            "delta_vertical_momentum_flux_N_per_m": dMi_c,
+            "local_unresolved_terms_proxy_N_per_m2": rli,
+            "cumulative_unresolved_terms_proxy_N_per_m": rci,
+        })
+    write_csv(outdir / "momentum_balance_proxy.csv", momentum_rows)
+
+    # Optional full rectangular-control-volume vertical momentum balance with pressure and viscous tractions.
+    full_momentum_rows = []
+    if pi is not None and args.mu is not None and args.beta is not None:
+        if args.momentum_cv_half_width is not None:
+            cv_hw = float(args.momentum_cv_half_width)
+            x_left_cv = max(xmin, -cv_hw)
+            x_right_cv = min(xmax, cv_hw)
+        elif args.profile_half_width is not None:
+            cv_hw = float(args.profile_half_width)
+            x_left_cv = max(xmin, -cv_hw)
+            x_right_cv = min(xmax, cv_hw)
+        else:
+            x_left_cv = xmin
+            x_right_cv = xmax
+
+        if args.momentum_cv_y0 is not None:
+            y0_cv = wire_y_m + float(args.momentum_cv_y0)
+        else:
+            y0_cv = float(yy[0]) if len(yy) else wire_top_y_m
+        y0_cv = max(y0_cv, ymin + 1e-10 * max(ymax - ymin, 1.0))
+
+        # Use only top positions safely above the lower face.
+        y_tops = [float(v) for v in yy if np.isfinite(v) and v > y0_cv + 1e-6 * max(ymax-ymin, 1.0)]
+        for ytop in y_tops:
+            row = integrate_control_volume_vertical_momentum(
+                Ti, uxi, uyi, pi,
+                x_left_cv, x_right_cv, y0_cv, ytop,
+                rho=float(args.rho), mu=float(args.mu), beta=float(args.beta), g=float(args.g), T_inf=float(args.T_inf),
+                n_side=max(201, min(args.nx, 801)),
+                n_bottom_top=max(401, min(args.nx, 1201)),
+                n_area_y=max(31, min(args.ny_balance, 151)),
+            )
+            if row:
+                row["height_top_above_wire_m"] = row["y_top_m"] - wire_y_m
+                row["height_bottom_above_wire_m"] = y0_cv - wire_y_m
+                full_momentum_rows.append(row)
+        write_csv(outdir / "momentum_balance_full.csv", full_momentum_rows)
+
     # Plots.
     plane_h = np.array([r["height_m"] for r in plane_rows], dtype=float)
     energy_series = [("plume vertical transport through plane", np.array([r["Q_total_W_per_m"] for r in plane_rows]))]
@@ -1050,6 +1282,48 @@ def main() -> None:
             [("mass flux", np.array([r["mass_flux_kg_per_s_per_m"] for r in plane_rows])),
              ("vertical momentum flux", np.array([r["vertical_momentum_flux_N_per_m"] for r in plane_rows]))],
             "height above wire [m]", "integral", "Mass and vertical-momentum flux")
+
+    if args.beta is not None and momentum_rows:
+        mh = np.array([r["height_above_wire_m"] for r in momentum_rows], dtype=float)
+        plot_xy(outdir / "momentum_balance_proxy_local.png", mh,
+                [("buoyancy source per height", np.array([r["buoyancy_force_per_height_N_per_m2"] for r in momentum_rows], dtype=float)),
+                 ("d(momentum flux)/dy", np.array([r["d_vertical_momentum_flux_dy_N_per_m2"] for r in momentum_rows], dtype=float)),
+                 ("unresolved = buoyancy - dM/dy", np.array([r["local_unresolved_terms_proxy_N_per_m2"] for r in momentum_rows], dtype=float))],
+                "height above wire [m]", "force per height per depth [N/m²]",
+                "Local vertical momentum-balance proxy")
+        plot_xy(outdir / "momentum_balance_proxy_cumulative.png", mh,
+                [("cumulative buoyancy", np.array([r["cumulative_buoyancy_N_per_m"] for r in momentum_rows], dtype=float)),
+                 ("change in vertical momentum flux", np.array([r["delta_vertical_momentum_flux_N_per_m"] for r in momentum_rows], dtype=float)),
+                 ("unresolved cumulative terms", np.array([r["cumulative_unresolved_terms_proxy_N_per_m"] for r in momentum_rows], dtype=float))],
+                "height above wire [m]", "force per unit depth [N/m]",
+                "Cumulative vertical momentum-balance proxy")
+
+    if full_momentum_rows:
+        mhf = np.array([r["height_top_above_wire_m"] for r in full_momentum_rows], dtype=float)
+        plot_xy(outdir / "momentum_balance_full_terms.png", mhf,
+                [("advective flux", np.array([r["advective_vertical_momentum_flux_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("pressure force", np.array([r["pressure_vertical_force_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("viscous force", np.array([r["viscous_vertical_force_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("buoyancy force", np.array([r["buoyancy_vertical_force_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("RHS total", np.array([r["rhs_pressure_plus_viscous_plus_buoyancy_N_per_m"] for r in full_momentum_rows], dtype=float))],
+                "top height above wire [m]", "vertical force / momentum flux [N/m]",
+                "Full vertical momentum-balance terms")
+        plot_xy(outdir / "momentum_balance_full_residual.png", mhf,
+                [("residual", np.array([r["momentum_balance_residual_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("relative residual", np.array([r["momentum_balance_residual_relative"] for r in full_momentum_rows], dtype=float))],
+                "top height above wire [m]", "residual [N/m] or relative residual [-]",
+                "Full vertical momentum-balance residual")
+        # Breakdown of side terms helps diagnose where confinement/entrainment enters.
+        plot_xy(outdir / "momentum_balance_full_boundary_breakdown.png", mhf,
+                [("advective top", np.array([r["advective_top_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("advective bottom", np.array([r["advective_bottom_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("advective sides", np.array([r["advective_left_N_per_m"] + r["advective_right_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("pressure top+bottom", np.array([r["pressure_top_N_per_m"] + r["pressure_bottom_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("pressure sides", np.array([r["pressure_left_N_per_m"] + r["pressure_right_N_per_m"] for r in full_momentum_rows], dtype=float)),
+                 ("viscous all", np.array([r["viscous_vertical_force_N_per_m"] for r in full_momentum_rows], dtype=float))],
+                "top height above wire [m]", "term [N/m]",
+                "Full vertical momentum-balance boundary-term breakdown")
+
     # Centreline plots with fitted virtual-source curves.
     h_center = yy - wire_y_m
     dT_fit = np.full_like(yy, np.nan, dtype=float)
@@ -1181,6 +1455,9 @@ def main() -> None:
         f.write(f"Temperature file: {args.temperature_xdmf}\n")
         f.write(f"Velocity file:    {args.velocity_xdmf}\n")
         f.write(f"Heat-flux file:   {args.heatflux_xdmf}\n")
+        f.write(f"Pressure file:    {args.pressure_xdmf}\n")
+        if args.pressure_xdmf:
+            f.write(f"Applied pressure scale: {args.pressure_scale:.16e}\n")
         if Qdata is not None:
             f.write(f"Applied heat-flux field scale: {heatflux_scale:.16e}\n")
         f.write(f"Coordinate scale to metres: {coordinate_scale:.16e}\n")
@@ -1207,6 +1484,12 @@ def main() -> None:
         f.write("  near_wire_boundary_layer.csv\n")
         f.write("  near_wire_boundary_layer_by_angle.csv\n")
         f.write("  balance_curves.csv\n")
+        f.write("  momentum_balance_proxy.csv\n")
+        if full_momentum_rows:
+            f.write("  momentum_balance_full.csv\n")
+            f.write("  momentum_balance_full_terms.png\n")
+            f.write("  momentum_balance_full_residual.png\n")
+            f.write("  momentum_balance_full_boundary_breakdown.png\n")
         f.write("  *.png diagnostic plots\n")
 
     print(f"Wrote outputs to: {outdir}")
