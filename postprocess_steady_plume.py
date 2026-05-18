@@ -35,6 +35,7 @@ Important conventions:
   * heights supplied by --planes are physical heights above the wire centre, in metres.
   * the wire centre is inferred automatically as y_min + H/10 + 11*r, with r = --lref.
   * all integral outputs are per unit out-of-plane depth, i.e. W/m, kg/(s m), etc.
+  * --velocity-scale-factor is applied immediately after reading the velocity field, before all plots, fits, and flux integrals.
   * if q_heat_dim is supplied, it is used internally to form q_total = rho cp uy (T-T_inf) + q_y and to integrate heat escaping the domain boundaries.
 """
 
@@ -263,19 +264,17 @@ def select_virtual_origin_window(
     y_max_above_wire: Optional[float],
     min_points: int,
     min_span: float,
+    require_monotone: bool = True,
+    require_y0_below_wire: bool = True,
+    field_label: str = "field",
 ) -> Dict[str, float]:
     """
-    Automatic fit-window selector for the linearized virtual-origin fit.
+    Conservative automatic fit-window selector for the linearized virtual-origin fit.
 
-    It scans contiguous windows, fits the transformed quantity, and keeps the
-    window with the best R^2 subject to basic physical/diagnostic constraints:
-      * positive amplitude;
-      * positive transformed slope, i.e. decaying centreline quantity;
-      * virtual origin below the first point in the selected window;
-      * requested minimum height span.
-
-    This does not magically prove self-similarity; it only finds the most nearly
-    line-plume-like interval in the available centreline data.
+    It deliberately avoids short-window overfitting. Candidate windows must be
+    positive, reasonably long, decaying, nearly linear after transformation, and
+    have a virtual origin below the selected window. For this cylinder-in-cavity
+    case, the default also requires the virtual origin to be below the wire centre.
     """
     y = np.asarray(y, dtype=float)
     amp = np.asarray(amp, dtype=float)
@@ -288,20 +287,36 @@ def select_virtual_origin_window(
     yy = y[mask]
     aa = amp[mask]
     hh = h[mask]
+
     if yy.size < min_points:
-        out = fit_virtual_origin_powerlaw(yy, aa, exponent, min_points=min_points)
-        out.update({"fit_y_min_m": np.nan, "fit_y_max_m": np.nan, "fit_height_min_m": np.nan, "fit_height_max_m": np.nan, "auto_score": np.nan, "fit_mode": "auto_failed_too_few_points"})
-        return out
+        return {
+            "C": np.nan, "y0": np.nan, "r2": np.nan, "npoints": int(yy.size),
+            "fit_y_min_m": np.nan, "fit_y_max_m": np.nan,
+            "fit_height_min_m": np.nan, "fit_height_max_m": np.nan,
+            "auto_score": np.nan,
+            "fit_mode": f"auto_failed_too_few_points_for_{field_label}",
+        }
 
     best = None
     n = yy.size
-    # Scan windows with at least min_points and min_span. Limit window endpoints to keep cost modest.
     for i in range(0, n - min_points + 1):
         for j in range(i + min_points, n + 1):
-            if yy[j - 1] - yy[i] < min_span:
-                continue
             ywin = yy[i:j]
             awin = aa[i:j]
+            hwin = hh[i:j]
+            span = ywin[-1] - ywin[0]
+            if span < min_span:
+                continue
+            if np.any(~np.isfinite(awin)) or np.nanmin(awin) <= 0:
+                continue
+
+            if require_monotone:
+                da = np.diff(awin)
+                decreasing_fraction = np.mean(da <= 0.0) if da.size else 0.0
+                total_drop = awin[0] - awin[-1]
+                if decreasing_fraction < 0.80 or total_drop <= 0.0:
+                    continue
+
             z = awin ** (-1.0 / exponent)
             if not np.all(np.isfinite(z)):
                 continue
@@ -309,19 +324,24 @@ def select_virtual_origin_window(
             if not np.isfinite(A) or A <= 0.0:
                 continue
             y0 = -B / A
-            # For a meaningful virtual-origin extrapolation, the origin should be below the selected window.
             if not np.isfinite(y0) or y0 >= ywin[0]:
                 continue
+            if require_y0_below_wire and y0 > wire_y:
+                continue
+
             zhat = A * ywin + B
             ss_res = float(np.sum((z - zhat) ** 2))
             ss_tot = float(np.sum((z - np.mean(z)) ** 2))
             if ss_tot <= 0.0:
                 continue
             r2 = 1.0 - ss_res / ss_tot
+            if r2 < 0.90:
+                continue
+
             C = A ** (-exponent)
-            # Prefer high R2, but also prefer longer windows mildly.
-            span = ywin[-1] - ywin[0]
-            score = r2 + 0.02 * min(1.0, span / max(min_span, 1e-30))
+            span_bonus = min(0.05, 0.05 * span / max(min_span, 1e-30))
+            # Mildly prefer longer, cleaner windows. Do not reward tiny local fits.
+            score = r2 + span_bonus
             candidate = {
                 "C": float(C),
                 "y0": float(y0),
@@ -329,82 +349,173 @@ def select_virtual_origin_window(
                 "npoints": int(ywin.size),
                 "fit_y_min_m": float(ywin[0]),
                 "fit_y_max_m": float(ywin[-1]),
-                "fit_height_min_m": float(hh[i]),
-                "fit_height_max_m": float(hh[j - 1]),
+                "fit_height_min_m": float(hwin[0]),
+                "fit_height_max_m": float(hwin[-1]),
                 "auto_score": float(score),
-                "fit_mode": "auto_window",
+                "fit_mode": "auto_window_conservative",
             }
             if best is None or candidate["auto_score"] > best["auto_score"]:
                 best = candidate
+
     if best is not None:
         return best
-    out = fit_virtual_origin_powerlaw(yy, aa, exponent, min_points=min_points)
-    out.update({"fit_y_min_m": np.nan, "fit_y_max_m": np.nan, "fit_height_min_m": np.nan, "fit_height_max_m": np.nan, "auto_score": np.nan, "fit_mode": "auto_failed_no_valid_decay_window"})
+
+    return {
+        "C": np.nan, "y0": np.nan, "r2": np.nan, "npoints": int(yy.size),
+        "fit_y_min_m": np.nan, "fit_y_max_m": np.nan,
+        "fit_height_min_m": np.nan, "fit_height_max_m": np.nan,
+        "auto_score": np.nan,
+        "fit_mode": f"auto_failed_no_physical_line_plume_window_for_{field_label}",
+    }
+
+
+
+def boundary_edges_with_cells(cells: np.ndarray) -> List[Tuple[int, int, int]]:
+    """Return boundary edges as (node_a, node_b, adjacent_cell_index)."""
+    edge_map: Dict[Tuple[int, int], List[int]] = {}
+    for ci, tri in enumerate(cells):
+        a, b, c = map(int, tri)
+        for e in ((a, b), (b, c), (c, a)):
+            key = tuple(sorted(e))
+            edge_map.setdefault(key, []).append(ci)
+    out: List[Tuple[int, int, int]] = []
+    for (a, b), owners in edge_map.items():
+        if len(owners) == 1:
+            out.append((a, b, owners[0]))
     return out
 
 
-def boundary_flux_samples(Ti, qx_i, qy_i, k: float, x: np.ndarray, y: np.ndarray):
-    """Return conductive heat-flux components q=-k grad(T) at sample points."""
-    if qx_i is not None and qy_i is not None:
-        qx = finite_or_nan(qx_i(x, y))
-        qy = finite_or_nan(qy_i(x, y))
+def triangle_temperature_gradient(points: np.ndarray, cells: np.ndarray, T: np.ndarray) -> np.ndarray:
+    """
+    Piecewise-constant gradient of a nodal P1 temperature field in each triangle.
+    Returns array (n_cells, 2) with dT/dx, dT/dy in physical coordinates.
+    """
+    grads = np.full((cells.shape[0], 2), np.nan, dtype=float)
+    for ci, tri in enumerate(cells):
+        pts = points[tri]
+        vals = T[tri]
+        A = np.column_stack([np.ones(3), pts[:, 0], pts[:, 1]])
+        try:
+            coeff = np.linalg.solve(A, vals)
+            grads[ci, 0] = coeff[1]
+            grads[ci, 1] = coeff[2]
+        except np.linalg.LinAlgError:
+            pass
+    return grads
+
+
+def integrate_boundary_heat_escape_from_facets(
+    points: np.ndarray,
+    cells: np.ndarray,
+    T: np.ndarray,
+    k: float,
+    Qdata: Optional[FieldData] = None,
+) -> Tuple[List[Dict[str, float | str]], Dict[str, float]]:
+    """
+    Integrate outward heat flux over actual exterior mesh facets.
+
+    If a cell-centred q_heat field is supplied, the adjacent boundary cell value is
+    used directly. This avoids extrapolating a cell-centred field to the rectangular
+    boundary, which was the reason v7 produced NaNs. If q_heat is not supplied,
+    q=-k*grad(T) is reconstructed in each boundary cell from the P1 temperature.
+    """
+    edges = boundary_edges_with_cells(cells)
+    centroids = cell_centres(points, cells)
+
+    if Qdata is not None and Qdata.center == "Cell" and Qdata.values.ndim == 2 and Qdata.values.shape[0] == cells.shape[0]:
+        q_cell = np.asarray(Qdata.values[:, :2], dtype=float)
+        q_source = "cell_centered_q_heat_field"
     else:
-        dTdx, dTdy = Ti.gradient(x, y)
-        qx = -k * finite_or_nan(dTdx)
-        qy = -k * finite_or_nan(dTdy)
-    return qx, qy
+        gradT = triangle_temperature_gradient(points, cells, np.asarray(T, dtype=float))
+        q_cell = -float(k) * gradT
+        q_source = "reconstructed_from_temperature_gradient"
 
+    xmin, xmax = float(np.min(points[:, 0])), float(np.max(points[:, 0]))
+    ymin, ymax = float(np.min(points[:, 1])), float(np.max(points[:, 1]))
+    tol = 1e-8 * max(xmax - xmin, ymax - ymin, 1.0)
 
-def integrate_boundary_heat_escape(Ti, qx_i, qy_i, k: float, xmin: float, xmax: float, ymin: float, ymax: float, n: int = 2001) -> Tuple[List[Dict[str, float | str]], Dict[str, float]]:
-    """
-    Integrate outward conductive heat flux over the rectangular domain boundary.
-    Positive value means heat leaves the computational domain.
-    """
-    eps = 1e-10 * max(xmax - xmin, ymax - ymin, 1.0)
-    xb = np.linspace(xmin + eps, xmax - eps, n)
-    yl = np.linspace(ymin + eps, ymax - eps, n)
+    sums = {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0, "other": 0.0}
+    counts = {key: 0 for key in sums}
+    lengths = {key: 0.0 for key in sums}
 
-    # top outward normal +y
-    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, xb, np.full_like(xb, ymax - eps))
-    top_density = qy
-    top = robust_trapz(top_density, xb)
-    # bottom outward normal -y
-    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, xb, np.full_like(xb, ymin + eps))
-    bottom_density = -qy
-    bottom = robust_trapz(bottom_density, xb)
-    # right outward normal +x
-    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, np.full_like(yl, xmax - eps), yl)
-    right_density = qx
-    right = robust_trapz(right_density, yl)
-    # left outward normal -x
-    qx, qy = boundary_flux_samples(Ti, qx_i, qy_i, k, np.full_like(yl, xmin + eps), yl)
-    left_density = -qx
-    left = robust_trapz(left_density, yl)
+    for a, b, ci in edges:
+        p0 = points[a]
+        p1 = points[b]
+        mid = 0.5 * (p0 + p1)
+        edge_vec = p1 - p0
+        L = float(np.linalg.norm(edge_vec))
+        if L <= 0.0:
+            continue
 
-    rows = [
-        {"boundary": "top", "heat_escape_W_per_m": top, "positive_means": "out_of_domain"},
-        {"boundary": "bottom", "heat_escape_W_per_m": bottom, "positive_means": "out_of_domain"},
-        {"boundary": "left", "heat_escape_W_per_m": left, "positive_means": "out_of_domain"},
-        {"boundary": "right", "heat_escape_W_per_m": right, "positive_means": "out_of_domain"},
-    ]
+        # Two candidate normals. Choose the one pointing away from the owning cell centroid.
+        nvec = np.array([edge_vec[1], -edge_vec[0]], dtype=float)
+        nvec /= np.linalg.norm(nvec)
+        outward_hint = mid - centroids[ci]
+        if np.dot(nvec, outward_hint) < 0.0:
+            nvec *= -1.0
+
+        q = q_cell[ci]
+        if not np.all(np.isfinite(q)):
+            continue
+
+        flux = float(np.dot(q, nvec) * L)
+
+        if abs(mid[1] - ymax) <= tol:
+            name = "top"
+        elif abs(mid[1] - ymin) <= tol:
+            name = "bottom"
+        elif abs(mid[0] - xmin) <= tol:
+            name = "left"
+        elif abs(mid[0] - xmax) <= tol:
+            name = "right"
+        else:
+            name = "other"
+
+        sums[name] += flux
+        counts[name] += 1
+        lengths[name] += L
+
+    rows: List[Dict[str, float | str]] = []
+    for name in ["top", "bottom", "left", "right", "other"]:
+        rows.append({
+            "boundary": name,
+            "heat_escape_W_per_m": sums[name],
+            "positive_means": "out_of_domain",
+            "edge_count": counts[name],
+            "integrated_length_m": lengths[name],
+            "flux_source": q_source,
+        })
+
+    outer_total = float(sums["top"] + sums["bottom"] + sums["left"] + sums["right"])
+    all_total = float(sum(sums.values()))
+    source_inferred = float(-sums["other"])  # positive means heat enters fluid from the cylinder/inner boundary
     totals = {
-        "Q_escape_top_W_per_m": top,
-        "Q_escape_bottom_W_per_m": bottom,
-        "Q_escape_left_W_per_m": left,
-        "Q_escape_right_W_per_m": right,
-        "Q_escape_total_W_per_m": top + bottom + left + right,
+        "Q_escape_total_W_per_m": outer_total,
+        "Q_escape_outer_W_per_m": outer_total,
+        "Q_escape_all_boundaries_W_per_m": all_total,
+        "Q_source_inferred_from_inner_boundary_W_per_m": source_inferred,
+        "boundary_edge_count": int(sum(counts.values())),
+        "boundary_integrated_length_m": float(sum(lengths.values())),
+        "flux_source": q_source,
     }
     return rows, totals
+
 
 
 def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
     if not rows:
         return
+    # Preserve first-row order, then include any later keys.
     keys = list(rows[0].keys())
+    for row in rows[1:]:
+        for key in row.keys():
+            if key not in keys:
+                keys.append(key)
     with path.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
         w.writerows(rows)
+
 
 
 def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, ylabel: str, title: str, semilogy: bool = False) -> None:
@@ -430,6 +541,10 @@ def main() -> None:
     ap.add_argument("--temperature-xdmf", required=True)
     ap.add_argument("--velocity-xdmf", required=True)
     ap.add_argument("--heatflux-xdmf", default=None, help="Optional cell-centred q_heat_dim XDMF; assumed q=-k grad(T)")
+    ap.add_argument("--heatflux-scale", type=float, default=None,
+                    help="Multiplicative scale applied to q_heat field before integration. "
+                         "Default: 1/lref when --coords-are-dimensionless, otherwise 1. "
+                         "This corrects q fields computed as -k*grad(T) on a nondimensional mesh.")
     ap.add_argument("--outdir", default="steady_plume_postprocess")
 
     coord = ap.add_mutually_exclusive_group()
@@ -448,13 +563,17 @@ def main() -> None:
     ap.add_argument("--beta", type=float, default=None, help="Thermal expansion coefficient [1/K]; used for buoyancy diagnostics")
     ap.add_argument("--g", type=float, default=9.81, help="Gravity magnitude [m/s^2]")
     ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error")
+    ap.add_argument("--velocity-scale-factor", type=float, default=1.0,
+                    help="Multiplicative factor applied to the exported velocity field before all diagnostics. Use this when the saved dimensional velocity was reconstructed with Uref but should be reported with Uplume, or vice versa.")
 
     ap.add_argument("--planes", type=float, nargs="+", default=[0.01, 0.02, 0.04, 0.08], help="Physical heights above wire [m]")
     ap.add_argument("--fit-y-min", type=float, default=None, help="Minimum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--fit-y-max", type=float, default=None, help="Maximum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--auto-fit-min-points", type=int, default=30, help="Minimum number of centreline samples in automatic virtual-origin fit window")
-    ap.add_argument("--auto-fit-min-span", type=float, default=0.01, help="Minimum physical height span [m] of automatic virtual-origin fit window")
-    ap.add_argument("--auto-fit-lower-cutoff", type=float, default=None, help="Minimum height above wire [m] for automatic fits. Default: max(5*r, 0.005 m)")
+    ap.add_argument("--auto-fit-min-span", type=float, default=None, help="Minimum physical height span [m] of automatic virtual-origin fit window. Default: max(0.025 m, 25*r)")
+    ap.add_argument("--auto-fit-lower-cutoff", type=float, default=None, help="Minimum height above wire [m] for automatic fits. Default: max(12*r, 0.010 m)")
+    ap.add_argument("--auto-fit-upper-cutoff", type=float, default=None,
+                    help="Maximum height above wire [m] allowed for automatic virtual-origin fits. Default: stop at 90% of the distance from wire centre to the top boundary, to avoid fitting the cooled top-wall region.")
     ap.add_argument("--boundary-n", type=int, default=2001, help="Number of samples per rectangular boundary side for boundary heat-escape integration")
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
     ap.add_argument("--nx", type=int, default=1601, help="Number of x samples per horizontal profile")
@@ -493,11 +612,15 @@ def main() -> None:
             raise ValueError("Heat-flux field is expected to be cell-centred.")
         if Qdata.values.ndim != 2 or Qdata.values.shape[1] != 2:
             raise ValueError("Heat-flux field must be a two-component vector field.")
+        heatflux_scale = args.heatflux_scale
+        if heatflux_scale is None:
+            heatflux_scale = (1.0 / float(args.lref)) if args.coords_are_dimensionless else 1.0
+        Qdata.values = np.asarray(Qdata.values, dtype=float) * float(heatflux_scale)
 
     x = Tdata.points_m[:, 0]
     y = Tdata.points_m[:, 1]
     T = np.asarray(Tdata.values, dtype=float)
-    u = np.asarray(Udata.values, dtype=float)
+    u = np.asarray(Udata.values, dtype=float) * float(args.velocity_scale_factor)
     tri = mtri.Triangulation(x, y, Tdata.cells)
     Ti, uxi, uyi = make_interpolators(tri, T, u)
     dTdx_i, dTdy_i = Ti.gradient(tri.x, tri.y)
@@ -776,20 +899,42 @@ def main() -> None:
     else:
         lower = args.auto_fit_lower_cutoff
         if lower is None:
-            lower = max(5.0 * wire_radius_m, 0.005)
+            lower = max(12.0 * wire_radius_m, 0.010)
+
+        min_span = args.auto_fit_min_span
+        if min_span is None:
+            min_span = max(0.025, 25.0 * wire_radius_m)
+
+        upper = args.auto_fit_upper_cutoff
+        if upper is None:
+            upper = 0.90 * max(ymax - wire_y_m, 0.0)
+
+        # A velocity virtual-origin decay fit is not meaningful while uy_center
+        # is still accelerating. Start only after the centreline velocity peak.
+        vel_lower = lower
+        if np.any(np.isfinite(uy_c)):
+            imax_u = int(np.nanargmax(uy_c))
+            vel_lower = max(vel_lower, float(yy[imax_u] - wire_y_m + 3.0 * wire_radius_m))
+
         fitT = select_virtual_origin_window(
             yy, dT_c, 3.0/5.0, wire_y_m,
             y_min_above_wire=lower,
-            y_max_above_wire=None,
+            y_max_above_wire=upper,
             min_points=args.auto_fit_min_points,
-            min_span=args.auto_fit_min_span,
+            min_span=min_span,
+            require_monotone=True,
+            require_y0_below_wire=True,
+            field_label="temperature",
         )
         fitU = select_virtual_origin_window(
             yy, uy_c, 1.0/5.0, wire_y_m,
-            y_min_above_wire=lower,
-            y_max_above_wire=None,
+            y_min_above_wire=vel_lower,
+            y_max_above_wire=upper,
             min_points=args.auto_fit_min_points,
-            min_span=args.auto_fit_min_span,
+            min_span=min_span,
+            require_monotone=True,
+            require_y0_below_wire=True,
+            field_label="velocity",
         )
     fit_rows = [
         {"field": "temperature_centerline", "assumed_decay_exponent": 3.0/5.0, **fitT},
@@ -797,9 +942,9 @@ def main() -> None:
     ]
     write_csv(outdir / "virtual_origin_fits.csv", fit_rows)
 
-    # Boundary heat escape: integrate outward conductive heat flux along the whole rectangular boundary.
-    boundary_rows, boundary_totals = integrate_boundary_heat_escape(
-        Ti, qx_i, qy_i, args.k, xmin, xmax, ymin, ymax, n=args.boundary_n
+    # Boundary heat escape: integrate outward heat flux over actual exterior mesh facets.
+    boundary_rows, boundary_totals = integrate_boundary_heat_escape_from_facets(
+        Tdata.points_m, Tdata.cells, T, args.k, Qdata=Qdata
     )
     if args.q_input_per_length:
         for r in boundary_rows:
@@ -807,7 +952,29 @@ def main() -> None:
         boundary_totals["Q_escape_total_fraction_of_input"] = boundary_totals["Q_escape_total_W_per_m"] / args.q_input_per_length
         boundary_totals["Q_escape_minus_input_W_per_m"] = boundary_totals["Q_escape_total_W_per_m"] - args.q_input_per_length
         boundary_totals["Q_escape_minus_input_fraction"] = boundary_totals["Q_escape_minus_input_W_per_m"] / args.q_input_per_length
-    write_csv(outdir / "boundary_heat_escape.csv", boundary_rows + [{"boundary": "total", "heat_escape_W_per_m": boundary_totals["Q_escape_total_W_per_m"], "positive_means": "out_of_domain", "fraction_of_input": boundary_totals.get("Q_escape_total_fraction_of_input", np.nan)}])
+    write_csv(outdir / "boundary_heat_escape.csv", boundary_rows + [{
+        "boundary": "total",
+        "heat_escape_W_per_m": boundary_totals["Q_escape_total_W_per_m"],
+        "positive_means": "out_of_domain",
+        "fraction_of_input": boundary_totals.get("Q_escape_total_fraction_of_input", np.nan),
+        "edge_count": boundary_totals.get("boundary_edge_count", np.nan),
+        "integrated_length_m": boundary_totals.get("boundary_integrated_length_m", np.nan),
+        "flux_source": boundary_totals.get("flux_source", ""),
+        "outer_boundary_escape_W_per_m": boundary_totals.get("Q_escape_outer_W_per_m", np.nan),
+        "all_boundary_net_W_per_m": boundary_totals.get("Q_escape_all_boundaries_W_per_m", np.nan),
+        "inferred_source_input_from_inner_boundary_W_per_m": boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan),
+    }, {
+        "boundary": "inferred_source_from_inner_boundary",
+        "heat_escape_W_per_m": boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan),
+        "positive_means": "into_fluid_from_inner_boundary",
+        "fraction_of_input": (boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan) / args.q_input_per_length) if args.q_input_per_length else np.nan,
+        "edge_count": np.nan,
+        "integrated_length_m": np.nan,
+        "flux_source": boundary_totals.get("flux_source", ""),
+        "outer_boundary_escape_W_per_m": boundary_totals.get("Q_escape_outer_W_per_m", np.nan),
+        "all_boundary_net_W_per_m": boundary_totals.get("Q_escape_all_boundaries_W_per_m", np.nan),
+        "inferred_source_input_from_inner_boundary_W_per_m": boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan),
+    }])
 
     # Approximate balance curves at many y-levels using the same x sampling.
     balance_rows = []
@@ -859,7 +1026,8 @@ def main() -> None:
     if args.q_input_per_length:
         energy_series.append(("supplied heat", np.full_like(plane_h, args.q_input_per_length, dtype=float)))
     if "boundary_totals" in locals():
-        energy_series.append(("total boundary heat escape", np.full_like(plane_h, boundary_totals["Q_escape_total_W_per_m"], dtype=float)))
+        energy_series.append(("outer boundary heat escape", np.full_like(plane_h, boundary_totals["Q_escape_total_W_per_m"], dtype=float)))
+        energy_series.append(("inferred heat entering at cylinder", np.full_like(plane_h, boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan), dtype=float)))
     plot_xy(outdir / "energy_flux_vs_height.png", plane_h, energy_series,
             "height above wire [m]", "heat rate per unit depth [W/m]",
             "Supplied heat, vertical plume transport, and boundary heat escape")
@@ -969,7 +1137,7 @@ def main() -> None:
             xp = np.array([r["x_m"] for r in rows], dtype=float)
             qp = np.array([r[quantity_key] for r in rows], dtype=float)
             if quantity_key == "ux_m_per_s":
-                qp = np.abs(qp)  # plot absolute value of horizontal velocity
+                qp = np.abs(qp) 
             order = np.argsort(xp)
             plt.plot(xp[order], qp[order], label=f"h={h:g} m")
         plt.xlabel("x [m]")
@@ -1013,9 +1181,12 @@ def main() -> None:
         f.write(f"Temperature file: {args.temperature_xdmf}\n")
         f.write(f"Velocity file:    {args.velocity_xdmf}\n")
         f.write(f"Heat-flux file:   {args.heatflux_xdmf}\n")
+        if Qdata is not None:
+            f.write(f"Applied heat-flux field scale: {heatflux_scale:.16e}\n")
         f.write(f"Coordinate scale to metres: {coordinate_scale:.16e}\n")
         f.write(f"Wire/source y-coordinate inferred as y_min + H/10 + 11*r: {wire_y_m:.16e} m\n")
         f.write(f"Wire radius r = lref: {wire_radius_m:.16e} m\n")
+        f.write(f"Velocity scale factor applied to exported velocity field: {args.velocity_scale_factor:.16e}\n")
         f.write(f"Near-wire 1% thermal boundary-layer thickness, angular mean: {thermal_bl_mean_m:.8e} m ({thermal_bl_mean_m / wire_radius_m if np.isfinite(thermal_bl_mean_m) else np.nan:.6g} r)\n")
         f.write(f"Near-wire 1% thickness angular std/min/median/max: {thermal_bl_std_m:.8e}, {thermal_bl_min_m:.8e}, {thermal_bl_median_m:.8e}, {thermal_bl_max_m:.8e} m\n")
         f.write(f"Valid boundary-layer ray crossings: {delta_arr.size}/{args.bl_angles}\n")
@@ -1028,7 +1199,7 @@ def main() -> None:
         f.write("  uy_c     ~ C_U * (y - y0_U)^(-1/5)\n")
         f.write(f"Temperature virtual origin y0 = {fitT['y0']:.8e} m, R2={fitT['r2']:.6f}, n={fitT['npoints']}\n")
         f.write(f"Velocity virtual origin    y0 = {fitU['y0']:.8e} m, R2={fitU['r2']:.6f}, n={fitU['npoints']}\n")
-        f.write("\nMain outputs:\n")
+        f.write("\nBoundary heat escape is integrated over exterior mesh facets; no cell-centred boundary extrapolation is used.\n\nMain outputs:\n")
         f.write("  plane_integrals.csv\n")
         f.write("  plane_profiles.csv\n")
         f.write("  centerline.csv\n")
