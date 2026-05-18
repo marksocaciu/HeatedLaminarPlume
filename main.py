@@ -807,7 +807,7 @@ def base_version(
             mu, Pr, f_b, T_c, T_air_bc,
             sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
             run_root=run_root,
-            dtau_init=1e-4,
+            dtau_init=1e-5,
             dtau_min=1e-8,
             dtau_max=1e-2,
             stage_max_steps=40,
@@ -865,7 +865,7 @@ def base_version(
         print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
 
-    dt_start=1.0e-4
+    dt_start=1.0e-3
     if restart_from_last_transient:
         dt_start = restart_meta["dt"]
         print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
@@ -1913,7 +1913,7 @@ def abs_version(
         print0("Biot diagnostic failed; check dimensional geometry/fields and interface tagging.")
     # print0(f"Effective Biot number after steady solve: Bi_air = {biot_air_Bi:.6e}")
 
-    dt_start=1.0e-4
+    dt_start=1.0e-3
     if restart_from_last_transient:
         dt_start = restart_meta["dt"]
         print0(f"Starting transient with dt={dt_start:.6e} from restart source: {restart_meta['source']}")
@@ -2187,20 +2187,23 @@ def main():
         print0("Offline coarse-mesh remeshing completed.")
         return
 
-    # base_version(
-    #     experiment,
-    #     restart_from_last_transient=args.restart_from_last_transient,
-    #     existing_run_root=args.existing_run_root,
-    #     steady_from_last_transient=args.steady_from_last_transient,
-    #     restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
-    # )
-    abs_version(
-        experiment,
-        restart_from_last_transient=args.restart_from_last_transient,
-        existing_run_root=args.existing_run_root,
-        steady_from_last_transient=args.steady_from_last_transient,
-        restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
-    )
+    basev = True
+    if basev:
+        base_version(
+            experiment,
+            restart_from_last_transient=args.restart_from_last_transient,
+            existing_run_root=args.existing_run_root,
+            steady_from_last_transient=args.steady_from_last_transient,
+            restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
+        )
+    else:
+        abs_version(
+            experiment,
+            restart_from_last_transient=args.restart_from_last_transient,
+            existing_run_root=args.existing_run_root,
+            steady_from_last_transient=args.steady_from_last_transient,
+            restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
+        )
     # temperature_dependent_version(experiment)
 
 
