@@ -760,6 +760,8 @@ def main() -> None:
                 continue
             xp = np.array([r["x_m"] for r in rows], dtype=float)
             qp = np.array([r[quantity_key] for r in rows], dtype=float)
+            if quantity_key == "ux_m_per_s":
+                qp = np.abs(qp)
             order = np.argsort(xp)
             plt.plot(xp[order], qp[order], label=f"h={h:g} m")
         plt.xlabel("x [m]")
