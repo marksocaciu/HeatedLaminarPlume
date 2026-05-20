@@ -395,6 +395,7 @@ def base_version(
         output_path=run_root,
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
+        template_geo_name="geom_coarse.geo",
         resolution=100,
     )
 
