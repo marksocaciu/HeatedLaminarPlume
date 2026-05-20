@@ -236,27 +236,37 @@ def first_crossing_half_width(x: np.ndarray, f: np.ndarray, threshold: float, si
 
 def fit_virtual_origin_powerlaw(y: np.ndarray, a: np.ndarray, exponent: float, min_points: int = 4) -> Dict[str, float]:
     """
-    Fit a(y) = C * (y - y0)^(-exponent).
+    Fit a(y) = C * (y - y0)^exponent.
 
-    Transform a^(-1/exponent) = C^(-1/exponent) * (y - y0) = A*y + B,
-    so y0 = -B/A. Requires positive centreline amplitude a.
+    Signed exponent convention:
+      * centreline temperature excess: exponent = -3/5
+      * centreline vertical velocity:  exponent = +1/5
+
+    Linearization:
+        a^(1/exponent) = C^(1/exponent) * (y - y0) = A*y + B,
+        y0 = -B/A.
+
+    Requires positive centreline amplitude a.
     """
     y = np.asarray(y, dtype=float)
     a = np.asarray(a, dtype=float)
     mask = np.isfinite(y) & np.isfinite(a) & (a > 0.0)
     y = y[mask]
     a = a[mask]
-    if y.size < min_points:
+    if y.size < min_points or exponent == 0.0:
         return {"C": np.nan, "y0": np.nan, "r2": np.nan, "npoints": int(y.size)}
 
-    z = a ** (-1.0 / exponent)
+    z = a ** (1.0 / exponent)
+    if not np.all(np.isfinite(z)):
+        return {"C": np.nan, "y0": np.nan, "r2": np.nan, "npoints": int(y.size)}
+
     A, B = np.polyfit(y, z, 1)
     zhat = A * y + B
     ss_res = float(np.sum((z - zhat) ** 2))
     ss_tot = float(np.sum((z - np.mean(z)) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
     y0 = -B / A if A != 0 else np.nan
-    C = A ** (-exponent) if A > 0 else np.nan
+    C = A ** exponent if A > 0 else np.nan
     return {"C": float(C), "y0": float(y0), "r2": float(r2), "npoints": int(y.size)}
 
 
@@ -318,12 +328,20 @@ def select_virtual_origin_window(
 
             if require_monotone:
                 da = np.diff(awin)
-                decreasing_fraction = np.mean(da <= 0.0) if da.size else 0.0
-                total_drop = awin[0] - awin[-1]
-                if decreasing_fraction < 0.80 or total_drop <= 0.0:
+                if da.size:
+                    if exponent < 0.0:
+                        monotone_fraction = np.mean(da <= 0.0)
+                        net_change_ok = (awin[0] - awin[-1]) > 0.0
+                    else:
+                        monotone_fraction = np.mean(da >= 0.0)
+                        net_change_ok = (awin[-1] - awin[0]) > 0.0
+                else:
+                    monotone_fraction = 0.0
+                    net_change_ok = False
+                if monotone_fraction < 0.80 or not net_change_ok:
                     continue
 
-            z = awin ** (-1.0 / exponent)
+            z = awin ** (1.0 / exponent)
             if not np.all(np.isfinite(z)):
                 continue
             A, B = np.polyfit(ywin, z, 1)
@@ -344,7 +362,7 @@ def select_virtual_origin_window(
             if r2 < 0.90:
                 continue
 
-            C = A ** (-exponent)
+            C = A ** exponent
             span_bonus = min(0.05, 0.05 * span / max(min_span, 1e-30))
             # Mildly prefer longer, cleaner windows. Do not reward tiny local fits.
             score = r2 + span_bonus
@@ -662,6 +680,95 @@ def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, yl
     plt.close()
 
 
+
+def read_profile_overlay_csv(csv_path: Path, T_inf: float, default_label: str) -> List[Dict[str, float]]:
+    """
+    Read optional experimental/theory profile data for overlay plots.
+
+    Accepted columns:
+      required: x_m plus one of height_m, height_above_wire_m, or y_m
+      temperature: DeltaT_K, DeltaT, theta_K, or T_K
+      velocity: uy_m_per_s, uy, v_m_per_s, or v
+      optional: label
+
+    Rows may contain only temperature or only velocity. Non-numeric missing
+    entries are converted to NaN.
+    """
+    def get_float(row: Dict[str, str], names: Sequence[str], default: float = np.nan) -> float:
+        for name in names:
+            if name in row and str(row[name]).strip() != "":
+                try:
+                    return float(row[name])
+                except ValueError:
+                    return default
+        return default
+
+    rows: List[Dict[str, float]] = []
+    with csv_path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames is None:
+            raise ValueError(f"{csv_path} has no CSV header.")
+        for row in reader:
+            x = get_float(row, ["x_m", "x", "x_coord_m"])
+            h = get_float(row, ["height_m", "height_above_wire_m", "h_m", "z_m"])
+            y = get_float(row, ["y_m", "y"])
+            dT = get_float(row, ["DeltaT_K", "DeltaT", "theta_K", "temperature_excess_K"])
+            T = get_float(row, ["T_K", "T", "temperature_K"])
+            if not np.isfinite(dT) and np.isfinite(T):
+                dT = T - T_inf
+            uy = get_float(row, ["uy_m_per_s", "uy", "v_m_per_s", "v", "vertical_velocity_m_per_s"])
+            label = str(row.get("label", "")).strip() or default_label
+            if np.isfinite(x) and (np.isfinite(h) or np.isfinite(y)):
+                rows.append({
+                    "x_m": x,
+                    "height_m": h,
+                    "y_m": y,
+                    "DeltaT_K": dT,
+                    "uy_m_per_s": uy,
+                    "label": label,
+                })
+    return rows
+
+
+def group_overlay_rows_by_label_and_height(
+    rows: List[Dict[str, float]],
+    requested_height: float,
+    height_tol: float,
+) -> Dict[str, List[Dict[str, float]]]:
+    grouped: Dict[str, List[Dict[str, float]]] = {}
+    for r in rows:
+        h = r.get("height_m", np.nan)
+        if not np.isfinite(h):
+            continue
+        if abs(h - requested_height) <= height_tol:
+            grouped.setdefault(str(r.get("label", "overlay")), []).append(r)
+    return grouped
+
+
+def fit_loglog_powerlaw(h: np.ndarray, a: np.ndarray, hmin: float, hmax: float) -> Dict[str, float]:
+    """
+    Fit a = C h^n on a selected h-window in log-log space.
+    This is separate from the virtual-origin fit and is mainly a diagnostic
+    for the straight portion of the log-log centreline curve.
+    """
+    h = np.asarray(h, dtype=float)
+    a = np.asarray(a, dtype=float)
+    mask = np.isfinite(h) & np.isfinite(a) & (h > 0.0) & (a > 0.0)
+    mask &= h >= hmin
+    mask &= h <= hmax
+    if np.count_nonzero(mask) < 4:
+        return {"C": np.nan, "exponent": np.nan, "r2": np.nan, "npoints": int(np.count_nonzero(mask)),
+                "fit_height_min_m": hmin, "fit_height_max_m": hmax}
+    x = np.log(h[mask])
+    y = np.log(a[mask])
+    n, logC = np.polyfit(x, y, 1)
+    yhat = n * x + logC
+    ss_res = float(np.sum((y - yhat) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return {"C": float(np.exp(logC)), "exponent": float(n), "r2": float(r2),
+            "npoints": int(np.count_nonzero(mask)), "fit_height_min_m": float(hmin), "fit_height_max_m": float(hmax)}
+
 def main() -> None:
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--temperature-xdmf", required=True)
@@ -704,6 +811,16 @@ def main() -> None:
                     help="Maximum height above wire [m] allowed for automatic virtual-origin fits. Default: stop at 90% of the distance from wire centre to the top boundary, to avoid fitting the cooled top-wall region.")
     ap.add_argument("--boundary-n", type=int, default=2001, help="Number of samples per rectangular boundary side for boundary heat-escape integration")
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
+    ap.add_argument("--comparison-profile-half-width", type=float, default=None,
+                    help="Half-width [m] used only for profile-comparison plots. Default: profile-half-width if given, otherwise full sampled profile.")
+    ap.add_argument("--comparison-height-tol", type=float, default=5e-5,
+                    help="Height tolerance [m] for matching experimental/theory CSV rows to requested --planes.")
+    ap.add_argument("--comparison-x-scale", type=float, default=1000.0,
+                    help="Multiplier for x-axis in comparison plots. Default 1000 gives mm.")
+    ap.add_argument("--experiment-profile-csv", action="append", default=[],
+                    help="Optional CSV with experimental profile data. May be supplied multiple times.")
+    ap.add_argument("--theory-profile-csv", action="append", default=[],
+                    help="Optional CSV with boundary-layer/self-similar profile data. May be supplied multiple times.")
     ap.add_argument("--nx", type=int, default=1601, help="Number of x samples per horizontal profile")
     ap.add_argument("--ny-balance", type=int, default=300, help="Number of y levels for balance/fit curves")
     ap.add_argument("--momentum-cv-half-width", type=float, default=None, help="Half-width [m] of the rectangular momentum-balance control volume. Default: same as profile-half-width, or full mesh half-width.")
@@ -1036,14 +1153,14 @@ def main() -> None:
     }])
 
     # Virtual origin fits. Classical laminar line-source similarity suggests
-    # DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(-1/5).
+    # DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(+1/5).
     if args.fit_y_min is not None or args.fit_y_max is not None:
         fit_mask = np.isfinite(yy) & np.isfinite(dT_c) & np.isfinite(uy_c)
         if args.fit_y_min is not None:
             fit_mask &= (yy - wire_y_m) >= args.fit_y_min
         if args.fit_y_max is not None:
             fit_mask &= (yy - wire_y_m) <= args.fit_y_max
-        fitT = fit_virtual_origin_powerlaw(yy[fit_mask], dT_c[fit_mask], exponent=3.0/5.0)
+        fitT = fit_virtual_origin_powerlaw(yy[fit_mask], dT_c[fit_mask], exponent=-(3.0/5.0))
         fitU = fit_virtual_origin_powerlaw(yy[fit_mask], uy_c[fit_mask], exponent=1.0/5.0)
         for fit in (fitT, fitU):
             fit.update({
@@ -1067,15 +1184,21 @@ def main() -> None:
         if upper is None:
             upper = 0.90 * max(ymax - wire_y_m, 0.0)
 
-        # A velocity virtual-origin decay fit is not meaningful while uy_center
-        # is still accelerating. Start only after the centreline velocity peak.
+        # Velocity theory has uy_c ~ (y-y0)^(+1/5), so the automatic fit should
+        # use the increasing line-plume-like region before the upper-wall pressure
+        # deceleration. Avoid the immediate source region with the same lower cutoff
+        # as the temperature fit; if a clear maximum exists, cap the fit above it.
         vel_lower = lower
+        vel_upper = upper
         if np.any(np.isfinite(uy_c)):
             imax_u = int(np.nanargmax(uy_c))
-            vel_lower = max(vel_lower, float(yy[imax_u] - wire_y_m + 3.0 * wire_radius_m))
+            h_umax = float(yy[imax_u] - wire_y_m)
+            candidate_upper = h_umax - 3.0 * wire_radius_m
+            if candidate_upper > vel_lower + min_span:
+                vel_upper = min(vel_upper, candidate_upper)
 
         fitT = select_virtual_origin_window(
-            yy, dT_c, 3.0/5.0, wire_y_m,
+            yy, dT_c, -(3.0/5.0), wire_y_m,
             y_min_above_wire=lower,
             y_max_above_wire=upper,
             min_points=args.auto_fit_min_points,
@@ -1087,7 +1210,7 @@ def main() -> None:
         fitU = select_virtual_origin_window(
             yy, uy_c, 1.0/5.0, wire_y_m,
             y_min_above_wire=vel_lower,
-            y_max_above_wire=upper,
+            y_max_above_wire=vel_upper,
             min_points=args.auto_fit_min_points,
             min_span=min_span,
             require_monotone=True,
@@ -1095,8 +1218,8 @@ def main() -> None:
             field_label="velocity",
         )
     fit_rows = [
-        {"field": "temperature_centerline", "assumed_decay_exponent": 3.0/5.0, **fitT},
-        {"field": "velocity_centerline", "assumed_decay_exponent": 1.0/5.0, **fitU},
+        {"field": "temperature_centerline", "assumed_powerlaw_exponent": -(3.0/5.0), **fitT},
+        {"field": "velocity_centerline", "assumed_powerlaw_exponent": 1.0/5.0, **fitU},
     ]
     write_csv(outdir / "virtual_origin_fits.csv", fit_rows)
 
@@ -1333,7 +1456,7 @@ def main() -> None:
         dT_fit[m] = fitT["C"] * (yy[m] - fitT["y0"]) ** (-(3.0/5.0))
     if np.isfinite(fitU["C"]) and np.isfinite(fitU["y0"]):
         m = yy > fitU["y0"]
-        uy_fit[m] = fitU["C"] * (yy[m] - fitU["y0"]) ** (-(1.0/5.0))
+        uy_fit[m] = fitU["C"] * (yy[m] - fitU["y0"]) ** (+(1.0/5.0))
 
     plot_xy(outdir / "centerline_temperature_virtual_origin.png", h_center,
             [("Delta T center", dT_c), ("line-plume fit", dT_fit)],
@@ -1349,12 +1472,12 @@ def main() -> None:
         mask = np.isfinite(yy_) & np.isfinite(amp_) & (amp_ > 0)
         plt.figure(figsize=(7.2, 4.8))
         z = np.full_like(yy_, np.nan, dtype=float)
-        z[mask] = amp_[mask] ** (-1.0 / exponent)
+        z[mask] = amp_[mask] ** (1.0 / exponent)
         plt.plot(yy_[mask] - wire_y_m, z[mask], label="transformed centreline")
         if np.isfinite(fit.get("fit_y_min_m", np.nan)) and np.isfinite(fit.get("fit_y_max_m", np.nan)):
             plt.axvspan(fit["fit_y_min_m"] - wire_y_m, fit["fit_y_max_m"] - wire_y_m, alpha=0.15, label="fit window")
         if np.isfinite(fit["y0"]):
-            A = fit["C"] ** (-1.0 / exponent) if np.isfinite(fit["C"]) and fit["C"] > 0 else np.nan
+            A = fit["C"] ** (1.0 / exponent) if np.isfinite(fit["C"]) and fit["C"] > 0 else np.nan
             if np.isfinite(A):
                 zfit = A * (yy_ - fit["y0"])
                 plt.plot(yy_ - wire_y_m, zfit, label=f"linear fit; y0={fit['y0']:.4e} m")
@@ -1368,10 +1491,10 @@ def main() -> None:
         plt.savefig(path, dpi=180)
         plt.close()
 
-    plot_linearized_virtual_origin(outdir / "virtual_origin_temperature_linearized.png", yy, dT_c, 3.0/5.0, fitT,
+    plot_linearized_virtual_origin(outdir / "virtual_origin_temperature_linearized.png", yy, dT_c, -(3.0/5.0), fitT,
                                    r"$\Delta T_c^{-5/3}$", "Linearized temperature virtual-origin fit")
     plot_linearized_virtual_origin(outdir / "virtual_origin_velocity_linearized.png", yy, uy_c, 1.0/5.0, fitU,
-                                   r"$u_{y,c}^{-5}$", "Linearized velocity virtual-origin fit")
+                                   r"$u_{y,c}^{5}$", "Linearized velocity virtual-origin fit")
 
     # Angular near-wire boundary-layer plot.
     angle_deg = np.array([r["angle_deg"] for r in ray_rows], dtype=float)
@@ -1448,6 +1571,114 @@ def main() -> None:
         "Total vertical energy-flux-density profiles at requested heights",
     )
 
+    # Optional thesis-style overlays: numerical solution as solid lines,
+    # experimental data as symbols, boundary-layer/self-similar data as dashed lines.
+    exp_overlay_rows: List[Dict[str, float]] = []
+    for csv_name in args.experiment_profile_csv:
+        csv_path = Path(csv_name)
+        exp_overlay_rows.extend(read_profile_overlay_csv(csv_path, args.T_inf, default_label=csv_path.stem))
+
+    theory_overlay_rows: List[Dict[str, float]] = []
+    for csv_name in args.theory_profile_csv:
+        csv_path = Path(csv_name)
+        theory_overlay_rows.extend(read_profile_overlay_csv(csv_path, args.T_inf, default_label=csv_path.stem))
+
+    comp_half_width = args.comparison_profile_half_width
+    if comp_half_width is None:
+        comp_half_width = args.profile_half_width
+
+    def plot_profile_comparison(quantity_key: str, ylabel: str, filename_prefix: str, title_prefix: str) -> None:
+        for h in args.planes:
+            rows = [r for r in profile_rows if abs(r["height_m"] - h) < 1e-15]
+            if not rows:
+                continue
+            xp = np.array([r["x_m"] for r in rows], dtype=float)
+            qp = np.array([r[quantity_key] for r in rows], dtype=float)
+            mask = np.isfinite(xp) & np.isfinite(qp)
+            if comp_half_width is not None:
+                mask &= np.abs(xp) <= comp_half_width
+            order = np.argsort(xp[mask])
+            plt.figure(figsize=(7.2, 4.8))
+            plt.plot(args.comparison_x_scale * xp[mask][order], qp[mask][order], label="numerical", linewidth=2.0)
+
+            exp_grouped = group_overlay_rows_by_label_and_height(exp_overlay_rows, h, args.comparison_height_tol)
+            for label, group in exp_grouped.items():
+                xe = np.array([r["x_m"] for r in group], dtype=float)
+                qe = np.array([r[quantity_key] for r in group], dtype=float)
+                m = np.isfinite(xe) & np.isfinite(qe)
+                if comp_half_width is not None:
+                    m &= np.abs(xe) <= comp_half_width
+                if np.any(m):
+                    o = np.argsort(xe[m])
+                    plt.plot(args.comparison_x_scale * xe[m][o], qe[m][o], linestyle="None", marker="o", label=f"{label} exp.")
+
+            th_grouped = group_overlay_rows_by_label_and_height(theory_overlay_rows, h, args.comparison_height_tol)
+            for label, group in th_grouped.items():
+                xt = np.array([r["x_m"] for r in group], dtype=float)
+                qt = np.array([r[quantity_key] for r in group], dtype=float)
+                m = np.isfinite(xt) & np.isfinite(qt)
+                if comp_half_width is not None:
+                    m &= np.abs(xt) <= comp_half_width
+                if np.any(m):
+                    o = np.argsort(xt[m])
+                    plt.plot(args.comparison_x_scale * xt[m][o], qt[m][o], linestyle="--", label=f"{label} BL")
+
+            xunit = "mm" if abs(args.comparison_x_scale - 1000.0) < 1e-12 else f"{args.comparison_x_scale:g} x m"
+            plt.xlabel(f"x [{xunit}]")
+            plt.ylabel(ylabel)
+            plt.title(f"{title_prefix}, h={h:g} m")
+            plt.grid(True, alpha=0.35)
+            plt.legend()
+            plt.tight_layout()
+            safe_h = str(f"{h:.6g}").replace(".", "p").replace("-", "m")
+            plt.savefig(outdir / f"{filename_prefix}_h_{safe_h}m_comparison.png", dpi=220)
+            plt.close()
+
+    plot_profile_comparison("DeltaT_K", r"$T-T_\infty$ [K]", "profile_temperature", "Temperature profile comparison")
+    plot_profile_comparison("uy_m_per_s", r"$u_y$ [m/s]", "profile_uy", "Vertical-velocity profile comparison")
+
+    # Log-log centreline power-law diagnostics requested for the thesis.
+    h_center = yy - wire_y_m
+    temp_power = fit_loglog_powerlaw(
+        h_center, dT_c,
+        fitT["fit_height_min_m"] if np.isfinite(fitT.get("fit_height_min_m", np.nan)) else np.nanmin(h_center[h_center > 0]),
+        fitT["fit_height_max_m"] if np.isfinite(fitT.get("fit_height_max_m", np.nan)) else np.nanmax(h_center),
+    )
+    vel_power = fit_loglog_powerlaw(
+        h_center, uy_c,
+        fitU["fit_height_min_m"] if np.isfinite(fitU.get("fit_height_min_m", np.nan)) else np.nanmin(h_center[h_center > 0]),
+        fitU["fit_height_max_m"] if np.isfinite(fitU.get("fit_height_max_m", np.nan)) else np.nanmax(h_center),
+    )
+    write_csv(outdir / "centerline_loglog_powerlaw_fits.csv", [
+        {"field": "temperature_centerline", **temp_power},
+        {"field": "velocity_centerline", **vel_power},
+    ])
+
+    def plot_centerline_loglog(path: Path, amp: np.ndarray, fit: Dict[str, float], ylabel: str, title: str) -> None:
+        plt.figure(figsize=(7.2, 4.8))
+        mask = np.isfinite(h_center) & np.isfinite(amp) & (h_center > 0.0) & (amp > 0.0)
+        plt.loglog(h_center[mask], amp[mask], label="numerical centreline")
+        if np.isfinite(fit.get("C", np.nan)) and np.isfinite(fit.get("exponent", np.nan)):
+            hfit = h_center[mask]
+            w = (hfit >= fit["fit_height_min_m"]) & (hfit <= fit["fit_height_max_m"])
+            if np.any(w):
+                plt.loglog(hfit[w], fit["C"] * hfit[w] ** fit["exponent"],
+                           linestyle="--", label=f"fit: exponent={fit['exponent']:.3f}, R2={fit['r2']:.4f}")
+                plt.axvspan(fit["fit_height_min_m"], fit["fit_height_max_m"], alpha=0.12, label="fit window")
+        plt.xlabel("height above wire centre [m]")
+        plt.ylabel(ylabel)
+        plt.title(title)
+        plt.grid(True, which="both", alpha=0.35)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(path, dpi=220)
+        plt.close()
+
+    plot_centerline_loglog(outdir / "centerline_temperature_loglog_powerlaw.png", dT_c, temp_power,
+                           r"$\Delta T_c$ [K]", "Centreline temperature decay on log-log axes")
+    plot_centerline_loglog(outdir / "centerline_velocity_loglog_powerlaw.png", uy_c, vel_power,
+                           r"$u_{y,c}$ [m/s]", "Centreline vertical velocity on log-log axes")
+
     summary_path = outdir / "README_summary.txt"
     with summary_path.open("w") as f:
         f.write("Steady plume post-processing summary\n")
@@ -1473,7 +1704,7 @@ def main() -> None:
             f.write(f"Input heat per length: {args.q_input_per_length:.12g} W/m\n")
         f.write("\nVirtual-origin fits use line-plume exponents:\n")
         f.write("  DeltaT_c ~ C_T * (y - y0_T)^(-3/5)\n")
-        f.write("  uy_c     ~ C_U * (y - y0_U)^(-1/5)\n")
+        f.write("  uy_c     ~ C_U * (y - y0_U)^(+1/5)\n")
         f.write(f"Temperature virtual origin y0 = {fitT['y0']:.8e} m, R2={fitT['r2']:.6f}, n={fitT['npoints']}\n")
         f.write(f"Velocity virtual origin    y0 = {fitU['y0']:.8e} m, R2={fitU['r2']:.6f}, n={fitU['npoints']}\n")
         f.write("\nBoundary heat escape is integrated over exterior mesh facets; no cell-centred boundary extrapolation is used.\n\nMain outputs:\n")
