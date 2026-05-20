@@ -1588,6 +1588,7 @@ def solve_abe_steady_from_loaded_checkpoint(
         T_ambient,
         rho_air,
     )
+    step = int(checkpoint_meta.get("step", 0))
     k_air = fenics.Constant(experiment.fluid.properties["k"])
     q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
     q_out = T_path.split(".xdmf")[0] + f"_heatflux_final_steady_{step:05d}.xdmf"
