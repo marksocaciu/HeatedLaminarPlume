@@ -396,7 +396,7 @@ def base_version(
         xmax=experiment.dimensions.domain.x_max,
         ymax=experiment.dimensions.domain.y_max,
         template_geo_name="geom_coarse.geo",
-        resolution=100,
+        resolution=200,
     )
 
     MSH_FILE = run_root + "/plume.msh"
