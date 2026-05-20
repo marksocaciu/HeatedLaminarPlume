@@ -902,8 +902,8 @@ def run_post_abe_continuation_transient(
     status = "transient_complete"
     restart_settle_steps = 10
     restart_rel_update_reject = 5.0e-2
-    restart_rel_u_reject = 2.0e-1
-    restart_rel_theta_reject = 1.0e-1
+    restart_rel_u_reject = 2.5e-1
+    restart_rel_theta_reject = 1.0e0
     restart_u_abs_max = 1.0e3
     restart_theta_min = -1.0
     restart_theta_max = 20.0
