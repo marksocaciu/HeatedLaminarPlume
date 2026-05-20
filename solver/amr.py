@@ -829,3 +829,281 @@ def remesh_checkpoint_from_coarse_mesh(
     print0(f"[REMESH] wrote remeshed checkpoint: {output_checkpoint_dir}")
 
     return output_checkpoint_dir
+
+def foreign_checkpoint_to_target_checkpoint(
+    input_checkpoint_dir: str,
+    coarse_air_cells_xdmf: str,
+    coarse_air_facets_xdmf: str,
+    output_checkpoint_dir: str,
+    source_experiment,
+    target_experiment,
+    top_fraction: float = 0.05,
+    levels: int = 2,
+    dt_factor: float = 0.05,
+    wire_ring_factor: float = 8.0,
+):
+    """
+    Project a checkpoint from one experiment onto another experiment's mesh.
+
+    This is NOT a true restart. It is a foreign-field initial condition.
+
+    Steps:
+      1. Load source checkpoint on its own star mesh.
+      2. Rescale source mesh coordinates into target-star coordinates.
+      3. Convert source nondimensional fields into target nondimensional fields:
+             T_dim = Tinf_src + dTref_src * theta_src
+             theta_tgt = (T_dim - Tinf_tgt) / dTref_tgt
+
+             u_dim = Uref_src * u_src
+             u_tgt = u_dim / Uref_tgt
+
+             p_dim = rho_src * Uref_src^2 * p_src
+             p_tgt = p_dim / (rho_tgt * Uref_tgt^2)
+      4. Read target coarse air mesh, scale it with target Lref.
+      5. Interpolate converted fields onto target mesh.
+      6. Optionally refine using the transferred plume field.
+      7. Write a normal restart checkpoint usable by --restart-from-checkpoint-mesh.
+    """
+    from utils.geometry import read_mesh
+    from utils.transfer import scale_mesh_inplace
+
+    input_checkpoint_dir = str(input_checkpoint_dir)
+    output_checkpoint_dir = str(output_checkpoint_dir)
+    levels = int(levels)
+
+    if levels < 0:
+        raise ValueError(f"levels must be >= 0, got {levels}")
+
+    sc_src = compute_nondimensional_scales(source_experiment)
+    sc_tgt = compute_nondimensional_scales(target_experiment)
+
+    rho_src = float(source_experiment.fluid.properties["rho"])
+    rho_tgt = float(target_experiment.fluid.properties["rho"])
+
+    Tinf_src = float(source_experiment.initial_conditions.temperature)
+    Tinf_tgt = float(target_experiment.initial_conditions.temperature)
+
+    # ------------------------------------------------------------
+    # 1. Load source checkpoint on its own source-star mesh
+    # ------------------------------------------------------------
+    old_mesh, old_W, old_w, old_w_n, meta = load_checkpoint_on_own_mesh(
+        input_checkpoint_dir
+    )
+
+    p_src, u_src, theta_src = old_w_n.split(deepcopy=True)
+
+    # ------------------------------------------------------------
+    # 2. Put source mesh into target-star coordinates
+    #
+    # Old checkpoint coordinates are x_src_star = x_dim / Lref_src.
+    # Target mesh coordinates will be x_tgt_star = x_dim / Lref_tgt.
+    #
+    # Therefore:
+    #     x_tgt_star = x_src_star * Lref_src / Lref_tgt
+    # ------------------------------------------------------------
+    coord_factor = float(sc_src.Lref) / float(sc_tgt.Lref)
+    old_mesh.coordinates()[:] *= coord_factor
+
+    try:
+        old_mesh.bounding_box_tree().build(old_mesh)
+    except Exception:
+        pass
+
+    for f in (p_src, u_src, theta_src):
+        try:
+            f.set_allow_extrapolation(True)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------
+    # 3. Convert source nondimensional fields to target nondimensional fields
+    #    on the rescaled source mesh.
+    # ------------------------------------------------------------
+    Vp_src = p_src.function_space()
+    Vu_src = u_src.function_space()
+    VT_src = theta_src.function_space()
+
+    p_tgt_on_src = fenics.Function(Vp_src, name="p_star")
+    u_tgt_on_src = fenics.Function(Vu_src, name="u_star")
+    theta_tgt_on_src = fenics.Function(VT_src, name="theta_star")
+
+    p_factor = (rho_src * float(sc_src.Uref)**2) / (
+        rho_tgt * float(sc_tgt.Uref)**2
+    )
+    u_factor = float(sc_src.Uref) / float(sc_tgt.Uref)
+    theta_factor = float(sc_src.dTref) / float(sc_tgt.dTref)
+    theta_shift = (Tinf_src - Tinf_tgt) / float(sc_tgt.dTref)
+
+    p_tgt_on_src.vector()[:] = p_factor * p_src.vector()[:]
+    u_tgt_on_src.vector()[:] = u_factor * u_src.vector()[:]
+    theta_tgt_on_src.vector()[:] = theta_shift + theta_factor * theta_src.vector()[:]
+
+    p_tgt_on_src.vector().apply("insert")
+    u_tgt_on_src.vector().apply("insert")
+    theta_tgt_on_src.vector().apply("insert")
+
+    for f in (p_tgt_on_src, u_tgt_on_src, theta_tgt_on_src):
+        try:
+            f.set_allow_extrapolation(True)
+        except Exception:
+            pass
+
+    print0("[FOREIGN] source -> target scale conversion")
+    print0(f"[FOREIGN] coordinate factor Lsrc/Ltgt = {coord_factor:.6e}")
+    print0(f"[FOREIGN] p factor                  = {p_factor:.6e}")
+    print0(f"[FOREIGN] u factor                  = {u_factor:.6e}")
+    print0(f"[FOREIGN] theta factor              = {theta_factor:.6e}")
+    print0(f"[FOREIGN] theta shift               = {theta_shift:.6e}")
+
+    # ------------------------------------------------------------
+    # 4. Read target coarse air mesh in dimensional coordinates
+    # ------------------------------------------------------------
+    MESH_NAME = "Grid"
+
+    mesh_new, air_ct, air_ft, _, sub_dx_dim, _, sub_mc_dim, sub_ft_dim = read_mesh(
+        coarse_air_cells_xdmf,
+        coarse_air_facets_xdmf,
+        MESH_NAME,
+        PRINT_TAG_SUMMARY,
+    )
+
+    print0(
+        f"[FOREIGN] target coarse dimensional air mesh: "
+        f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------
+    # 5. Scale target mesh to target-star coordinates
+    # ------------------------------------------------------------
+    scale_mesh_inplace(mesh_new, float(sc_tgt.Lref))
+
+    try:
+        mesh_new.bounding_box_tree().build(mesh_new)
+    except Exception:
+        pass
+
+    print0(
+        f"[FOREIGN] target coarse star air mesh: "
+        f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------
+    # 6. Interpolate converted source fields onto target mesh
+    # ------------------------------------------------------------
+    Vp_new = fenics.FunctionSpace(mesh_new, "CG", 1)
+    Vu_new = fenics.VectorFunctionSpace(mesh_new, "CG", 2)
+    VT_new = fenics.FunctionSpace(mesh_new, "CG", 1)
+
+    p_new = fenics.interpolate(p_tgt_on_src, Vp_new)
+    u_new = fenics.interpolate(u_tgt_on_src, Vu_new)
+    theta_new = fenics.interpolate(theta_tgt_on_src, VT_new)
+
+    p_new.rename("p_star", "p_star")
+    u_new.rename("u_star", "u_star")
+    theta_new.rename("theta_star", "theta_star")
+
+    print0(
+        f"[FOREIGN] transferred theta range: "
+        f"min={global_vec_min(theta_new):.6e}, "
+        f"max={global_vec_max(theta_new):.6e}"
+    )
+    print0(
+        f"[FOREIGN] transferred u component range proxy: "
+        f"min={global_vec_min(u_new):.6e}, "
+        f"max={global_vec_max(u_new):.6e}"
+    )
+
+    # Optional but recommended: remove arbitrary pressure mean.
+    p_mean = fenics.assemble(p_new * fenics.dx(domain=mesh_new)) / fenics.assemble(
+        fenics.Constant(1.0) * fenics.dx(domain=mesh_new)
+    )
+    p_new.vector()[:] -= float(p_mean)
+    p_new.vector().apply("insert")
+
+    # ------------------------------------------------------------
+    # 7. Refine target mesh using transferred target-scaled fields
+    # ------------------------------------------------------------
+    for lev in range(levels):
+        print0(f"[FOREIGN] refinement level {lev + 1}/{levels}")
+
+        for f in (p_new, u_new, theta_new):
+            try:
+                f.set_allow_extrapolation(True)
+            except Exception:
+                pass
+
+        markers = mark_cells_for_plume_remesh(
+            mesh=mesh_new,
+            theta=theta_new,
+            u=u_new,
+            experiment=target_experiment,
+            scales=sc_tgt,
+            top_fraction=top_fraction,
+            wire_ring_factor=wire_ring_factor,
+        )
+
+        mesh_refined = fenics.refine(mesh_new, markers)
+
+        try:
+            mesh_refined.bounding_box_tree().build(mesh_refined)
+        except Exception:
+            pass
+
+        Vp_ref = fenics.FunctionSpace(mesh_refined, "CG", 1)
+        Vu_ref = fenics.VectorFunctionSpace(mesh_refined, "CG", 2)
+        VT_ref = fenics.FunctionSpace(mesh_refined, "CG", 1)
+
+        for f in (p_new, u_new, theta_new):
+            try:
+                f.set_allow_extrapolation(True)
+            except Exception:
+                pass
+
+        p_new = fenics.interpolate(p_new, Vp_ref)
+        u_new = fenics.interpolate(u_new, Vu_ref)
+        theta_new = fenics.interpolate(theta_new, VT_ref)
+
+        p_new.rename("p_star", "p_star")
+        u_new.rename("u_star", "u_star")
+        theta_new.rename("theta_star", "theta_star")
+
+        mesh_new = mesh_refined
+
+        print0(
+            f"[FOREIGN] refined mesh now has "
+            f"cells={mesh_new.num_cells()}, vertices={mesh_new.num_vertices()}"
+        )
+
+    # ------------------------------------------------------------
+    # 8. Assemble and write checkpoint
+    # ------------------------------------------------------------
+    W_new = build_mixed_space_on_mesh(mesh_new)
+    w_n_new = assign_split_to_mixed(W_new, p_new, u_new, theta_new)
+
+    meta = dict(meta)
+    old_dt = float(meta.get("dt", 1.0e-5))
+
+    meta["step"] = 0
+    meta["time"] = 0.0
+    meta["dt"] = float(dt_factor) * old_dt
+    meta["source"] = "foreign_projected_checkpoint"
+    meta["foreign_projected"] = True
+    meta["foreign_parent_checkpoint"] = os.path.abspath(input_checkpoint_dir)
+    meta["foreign_source_experiment"] = source_experiment.name
+    meta["foreign_target_experiment"] = target_experiment.name
+    meta["foreign_coordinate_factor"] = coord_factor
+    meta["foreign_p_factor"] = p_factor
+    meta["foreign_u_factor"] = u_factor
+    meta["foreign_theta_factor"] = theta_factor
+    meta["foreign_theta_shift"] = theta_shift
+    meta["foreign_dt_factor"] = float(dt_factor)
+
+    write_checkpoint_with_mesh(
+        output_checkpoint_dir,
+        mesh_new,
+        w_n_new,
+        meta,
+    )
+
+    print0(f"[FOREIGN] wrote projected checkpoint: {output_checkpoint_dir}")
+    return output_checkpoint_dir

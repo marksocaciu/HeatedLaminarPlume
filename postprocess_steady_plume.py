@@ -604,7 +604,11 @@ def integrate_control_volume_vertical_momentum(
     visc_right = robust_trapz(visc_r, ys)
 
     adv_total = adv_top + adv_bottom + adv_left + adv_right
+    adv_increase = adv_top + adv_bottom
+    adv_entr = adv_left + adv_right
     pressure_total = pres_top + pres_bottom + pres_left + pres_right
+    pressure_streamwise = pres_top + pres_bottom
+    pressure_edgewise = pres_left + pres_right
     viscous_total = visc_top + visc_bottom + visc_left + visc_right
 
     # Area buoyancy integral by repeated trapezoid integration.
@@ -802,6 +806,10 @@ def main() -> None:
                     help="Multiplicative factor applied to the exported velocity field before all diagnostics. Use this when the saved dimensional velocity was reconstructed with Uref but should be reported with Uplume, or vice versa.")
 
     ap.add_argument("--planes", type=float, nargs="+", default=[0.01, 0.02, 0.04, 0.08], help="Physical heights above wire [m]")
+    ap.add_argument("--eta-origin", choices=["wire", "temperature-virtual-origin", "velocity-virtual-origin"], default="wire",
+                    help="Origin used for eta-profile scaling. 'wire' uses the inferred wire centre; the virtual-origin options use the fitted y0 after the fits are available.")
+    ap.add_argument("--eta-origin-height", type=float, default=None,
+                    help="Optional explicit eta source height above wire centre [m]. Overrides --eta-origin when supplied. For example, use -2*d if you want a virtual line source below the wire.")
     ap.add_argument("--fit-y-min", type=float, default=None, help="Minimum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--fit-y-max", type=float, default=None, help="Maximum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--auto-fit-min-points", type=int, default=30, help="Minimum number of centreline samples in automatic virtual-origin fit window")
@@ -1187,15 +1195,31 @@ def main() -> None:
         # Velocity theory has uy_c ~ (y-y0)^(+1/5), so the automatic fit should
         # use the increasing line-plume-like region before the upper-wall pressure
         # deceleration. Avoid the immediate source region with the same lower cutoff
-        # as the temperature fit; if a clear maximum exists, cap the fit above it.
+        # as the temperature fit; if a clear maximum exists, cap the fit below it.
+        #
+        # IMPORTANT: for the velocity branch the fitted empirical origin may lie
+        # above the physical wire centre in a confined finite-cylinder calculation.
+        # This is not the same object as the temperature virtual origin. Therefore
+        # the velocity selector below must not enforce y0 <= wire_y_m.
         vel_lower = lower
         vel_upper = upper
+        vel_min_span = min_span
         if np.any(np.isfinite(uy_c)):
             imax_u = int(np.nanargmax(uy_c))
             h_umax = float(yy[imax_u] - wire_y_m)
             candidate_upper = h_umax - 3.0 * wire_radius_m
-            if candidate_upper > vel_lower + min_span:
+            if candidate_upper > vel_lower:
                 vel_upper = min(vel_upper, candidate_upper)
+
+            # The usable increasing branch can be shorter than the conservative
+            # temperature-fit span, especially in a closed cavity where uy_c reaches
+            # a maximum and then decelerates before the top wall. Keep the global
+            # default for temperature, but relax the velocity span if necessary.
+            available_vel_span = vel_upper - vel_lower if np.isfinite(vel_upper) else np.nan
+            if np.isfinite(available_vel_span) and available_vel_span > 0.0:
+                vel_min_span = min(min_span, max(0.010, 0.60 * available_vel_span))
+            else:
+                vel_min_span = min(min_span, 0.015)
 
         fitT = select_virtual_origin_window(
             yy, dT_c, -(3.0/5.0), wire_y_m,
@@ -1212,9 +1236,9 @@ def main() -> None:
             y_min_above_wire=vel_lower,
             y_max_above_wire=vel_upper,
             min_points=args.auto_fit_min_points,
-            min_span=min_span,
+            min_span=vel_min_span,
             require_monotone=True,
-            require_y0_below_wire=True,
+            require_y0_below_wire=False,
             field_label="velocity",
         )
     fit_rows = [
@@ -1571,6 +1595,112 @@ def main() -> None:
         "Total vertical energy-flux-density profiles at requested heights",
     )
 
+    # Gebhart/Fujii-style eta profiles.  In the paper notation the vertical
+    # coordinate is x and the transverse coordinate is y; in this script those
+    # correspond to height h above the line source and horizontal coordinate xs.
+    # eta = (x_transverse / h) * Gr_h^(1/4),
+    # Gr_h = g beta Theta h^3 / nu^2, with Theta = q/(rho cp nu) = q/(mu cp).
+    # The same rows also contain the usual similarity-scaled ordinates:
+    #   h(eta)  = DeltaT / (Theta Gr_h^(-1/2))
+    #   f'(eta) = uy / ((nu/h) Gr_h^(1/2))
+    eta_rows = []
+    eta_origin_y_m = wire_y_m
+    eta_origin_mode = args.eta_origin
+    if args.eta_origin_height is not None:
+        eta_origin_y_m = wire_y_m + float(args.eta_origin_height)
+        eta_origin_mode = "explicit-height"
+    elif args.eta_origin == "temperature-virtual-origin" and np.isfinite(fitT.get("y0", np.nan)):
+        eta_origin_y_m = float(fitT["y0"])
+    elif args.eta_origin == "velocity-virtual-origin" and np.isfinite(fitU.get("y0", np.nan)):
+        eta_origin_y_m = float(fitU["y0"])
+
+    eta_enabled = (args.mu is not None and args.beta is not None and
+                   args.q_input_per_length is not None and args.q_input_per_length > 0.0)
+    nu = float(args.mu) / float(args.rho) if args.mu is not None else np.nan
+    theta_line_source = (float(args.q_input_per_length) / (float(args.rho) * float(args.cp) * nu)
+                         if eta_enabled and nu > 0.0 else np.nan)
+
+    if eta_enabled and nu > 0.0 and theta_line_source > 0.0:
+        for r in profile_rows:
+            h_eta = float(r["y_m"]) - eta_origin_y_m
+            Gr_h = (float(args.g) * float(args.beta) * theta_line_source * h_eta**3 / nu**2) if h_eta > 0.0 else np.nan
+            eta = (float(r["x_m"]) / h_eta) * Gr_h**0.25 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            temp_scale = theta_line_source * Gr_h**(-0.5) if np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            vel_scale = (nu / h_eta) * Gr_h**0.5 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            eta_rows.append({
+                **r,
+                "eta": eta,
+                "eta_origin_mode": eta_origin_mode,
+                "eta_origin_y_m": eta_origin_y_m,
+                "height_above_eta_origin_m": h_eta,
+                "Theta_line_source_K": theta_line_source,
+                "nu_m2_per_s": nu,
+                "Gr_x": Gr_h,
+                "DeltaT_similarity_h": float(r["DeltaT_K"]) / temp_scale if np.isfinite(temp_scale) and temp_scale != 0.0 else np.nan,
+                "uy_similarity_fprime": float(r["uy_m_per_s"]) / vel_scale if np.isfinite(vel_scale) and vel_scale != 0.0 else np.nan,
+            })
+        write_csv(outdir / "plane_profiles_eta.csv", eta_rows)
+
+        def combined_eta_plot(filename: str, quantity_key: str, ylabel: str, title: str, xlim_percentile: float = 99.0) -> None:
+            plt.figure(figsize=(7.2, 4.8))
+            all_eta = []
+            for h in args.planes:
+                rows = [rr for rr in eta_rows if abs(rr["height_m"] - h) < 1e-15]
+                if not rows:
+                    continue
+                et = np.array([rr["eta"] for rr in rows], dtype=float)
+                qp = np.array([rr[quantity_key] for rr in rows], dtype=float)
+                m = np.isfinite(et) & np.isfinite(qp)
+                if np.any(m):
+                    all_eta.extend(np.abs(et[m]).tolist())
+                    o = np.argsort(et[m])
+                    plt.plot(et[m][o], qp[m][o], label=f"h={h:g} m")
+            if all_eta:
+                lim = np.nanpercentile(np.array(all_eta), xlim_percentile)
+                if np.isfinite(lim) and lim > 0:
+                    plt.xlim(-lim, lim)
+            plt.xlabel(r"$\eta=(x/h)Gr_h^{1/4}$ [-]")
+            plt.ylabel(ylabel)
+            plt.title(title)
+            plt.grid(True, alpha=0.35)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(outdir / filename, dpi=220)
+            plt.close()
+
+        combined_eta_plot(
+            "profiles_temperature_eta_physical_all_heights.png",
+            "DeltaT_K",
+            r"$T-T_\infty$ [K]",
+            r"Temperature profiles in $\eta$ coordinates",
+        )
+        combined_eta_plot(
+            "profiles_uy_eta_physical_all_heights.png",
+            "uy_m_per_s",
+            r"$u_y$ [m/s]",
+            r"Vertical-velocity profiles in $\eta$ coordinates",
+        )
+        combined_eta_plot(
+            "profiles_temperature_eta_similarity_all_heights.png",
+            "DeltaT_similarity_h",
+            r"$h(\eta)=\Delta T/(\Theta Gr_h^{-1/2})$ [-]",
+            r"Similarity-scaled temperature profiles",
+        )
+        combined_eta_plot(
+            "profiles_uy_eta_similarity_all_heights.png",
+            "uy_similarity_fprime",
+            r"$f'(\eta)=u_y/[(\nu/h)Gr_h^{1/2}]$ [-]",
+            r"Similarity-scaled vertical-velocity profiles",
+        )
+    else:
+        write_csv(outdir / "plane_profiles_eta.csv", [{
+            "eta_profiles_enabled": False,
+            "reason": "requires --mu, --beta, and positive --q-input-per-length",
+            "mu_supplied": args.mu is not None,
+            "beta_supplied": args.beta is not None,
+            "q_input_per_length_supplied": args.q_input_per_length is not None,
+        }])
+
     # Optional thesis-style overlays: numerical solution as solid lines,
     # experimental data as symbols, boundary-layer/self-similar data as dashed lines.
     exp_overlay_rows: List[Dict[str, float]] = []
@@ -1707,9 +1837,24 @@ def main() -> None:
         f.write("  uy_c     ~ C_U * (y - y0_U)^(+1/5)\n")
         f.write(f"Temperature virtual origin y0 = {fitT['y0']:.8e} m, R2={fitT['r2']:.6f}, n={fitT['npoints']}\n")
         f.write(f"Velocity virtual origin    y0 = {fitU['y0']:.8e} m, R2={fitU['r2']:.6f}, n={fitU['npoints']}\n")
+        f.write("\nEta-profile scaling:\n")
+        f.write(f"  eta origin mode: {eta_origin_mode}\n")
+        f.write(f"  eta origin y: {eta_origin_y_m:.16e} m\n")
+        if eta_enabled and np.isfinite(theta_line_source):
+            f.write(f"  nu = mu/rho: {nu:.16e} m^2/s\n")
+            f.write(f"  Theta = q/(rho cp nu) = q/(mu cp): {theta_line_source:.16e} K\n")
+            f.write("  eta = (horizontal coordinate / height above eta origin) * Gr_x^(1/4)\n")
+            f.write("  Gr_x = g beta Theta * height^3 / nu^2\n")
+        else:
+            f.write("  eta profiles were not computed; provide --mu, --beta, and --q-input-per-length.\n")
         f.write("\nBoundary heat escape is integrated over exterior mesh facets; no cell-centred boundary extrapolation is used.\n\nMain outputs:\n")
         f.write("  plane_integrals.csv\n")
         f.write("  plane_profiles.csv\n")
+        f.write("  plane_profiles_eta.csv\n")
+        f.write("  profiles_temperature_eta_physical_all_heights.png\n")
+        f.write("  profiles_uy_eta_physical_all_heights.png\n")
+        f.write("  profiles_temperature_eta_similarity_all_heights.png\n")
+        f.write("  profiles_uy_eta_similarity_all_heights.png\n")
         f.write("  centerline.csv\n")
         f.write("  virtual_origin_fits.csv\n")
         f.write("  near_wire_boundary_layer.csv\n")

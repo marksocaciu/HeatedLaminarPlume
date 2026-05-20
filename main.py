@@ -2126,6 +2126,11 @@ def main():
         default=8.0,
         help="Forced near-wire refinement radius in multiples of wire radius.",
     )
+
+    argparser.add_argument("--foreign-restart-checkpoint", type=str, default="")
+    argparser.add_argument("--foreign-source-experiment-index", type=int, default=-1)
+    argparser.add_argument("--foreign-target-experiment-index", type=int, default=-1)
+    argparser.add_argument("--foreign-checkpoint-out", type=str, default="")
     
     args = argparser.parse_args()
     args.experiment_index = max(0, args.experiment_index)
@@ -2137,6 +2142,43 @@ def main():
     experiment = experiment_list[args.experiment_index]
     print0(f"Running experiment: {experiment.name}")
 
+    if args.foreign_restart_checkpoint:
+        if args.foreign_source_experiment_index < 0:
+            raise ValueError("--foreign-source-experiment-index is required")
+
+        if args.foreign_target_experiment_index < 0:
+            raise ValueError("--foreign-target-experiment-index is required")
+
+        if not args.coarse_remesh_run_root:
+            raise ValueError("--coarse-remesh-run-root is required")
+
+        if not args.foreign_checkpoint_out:
+            raise ValueError("--foreign-checkpoint-out is required")
+
+        source_experiment = experiment_list[args.foreign_source_experiment_index]
+        target_experiment = experiment_list[args.foreign_target_experiment_index]
+
+        coarse_air_cells, coarse_air_facets = generate_coarse_remesh_files(
+            experiment=target_experiment,
+            coarse_run_root=args.coarse_remesh_run_root,
+        )
+
+        foreign_checkpoint_to_target_checkpoint(
+            input_checkpoint_dir=args.foreign_restart_checkpoint,
+            coarse_air_cells_xdmf=coarse_air_cells,
+            coarse_air_facets_xdmf=coarse_air_facets,
+            output_checkpoint_dir=args.foreign_checkpoint_out,
+            source_experiment=source_experiment,
+            target_experiment=target_experiment,
+            top_fraction=args.amr_top_fraction,
+            levels=args.amr_levels,
+            dt_factor=args.amr_dt_factor,
+            wire_ring_factor=args.remesh_wire_ring_factor,
+        )
+
+        print0("Foreign projected checkpoint completed.")
+        return
+    
     if args.refine_restart_checkpoint:
         if not args.refined_checkpoint_out:
             raise ValueError(
