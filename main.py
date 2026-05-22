@@ -261,6 +261,117 @@ def approximate_restart_from_last_saved_transient(
     print0(f"  dt   = {meta['dt']:.6e}")
     return w, w_n, meta
 
+def approximate_restart_from_last_saved_transient_abe(
+    run_root: str,
+    mode_subdir: str,
+    sub_mesh_dim,
+    sub_mesh_star,
+    W,
+    w,
+    w_n,
+    scales,
+    T_ambient: float,
+    rho_air: float,
+    fallback_dt: float,
+):
+    """
+    Rebuild an approximate restart state from the latest saved dimensional transient
+    XDMF snapshots plus transient_history.csv.
+
+    This is intended for one-off recovery of an interrupted run when no true restart
+    checkpoint was written.
+    """
+    import csv
+
+    base_dir = os.path.join(run_root, mode_subdir)
+    history_csv = os.path.join(run_root, 'transient_history.csv')
+    step = _last_transient_step_from_history(history_csv)
+    if step < 0:
+        raise RuntimeError(f"No usable transient_history.csv found at {history_csv}")
+
+    p_xdmf = os.path.join(base_dir, f'air_pressure_transient_{step:05d}.xdmf')
+    u_xdmf = os.path.join(base_dir, f'air_velocity_transient_{step:05d}.xdmf')
+    T_xdmf = os.path.join(base_dir, f'air_temperature_transient_{step:05d}.xdmf')
+    for path in (p_xdmf, u_xdmf, T_xdmf):
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Missing transient snapshot file: {path}")
+
+    # Recover time / dt from history.
+    time_value = 0.0
+    dt_value = float(fallback_dt)
+    with open(history_csv, 'r', newline='') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                if int(row['step']) == step:
+                    time_value = float(row['time'])
+                    dt_value = float(row['dt'])
+            except Exception:
+                continue
+
+    # Read dimensional fields from the last snapshot.
+    Vp_dim = fenics.FunctionSpace(sub_mesh_dim, 'CG', 1)
+    Vu_dim = fenics.VectorFunctionSpace(sub_mesh_dim, 'CG', 2)
+    VT_dim = fenics.FunctionSpace(sub_mesh_dim, 'CG', 1)
+
+    p_dim = fenics.Function(Vp_dim)
+    u_dim = fenics.Function(Vu_dim)
+    T_dim = fenics.Function(VT_dim)
+
+    _load_checkpoint_snapshot_from_xdmf(p_xdmf, p_dim)
+    _load_checkpoint_snapshot_from_xdmf(u_xdmf, u_dim)
+    _load_checkpoint_snapshot_from_xdmf(T_xdmf, T_dim)
+
+    # Convert back to nondimensional variables on the dimensional submesh.
+    p_star_dim = fenics.Function(Vp_dim)
+    u_star_dim = fenics.Function(Vu_dim)
+    theta_dim = fenics.Function(VT_dim)
+
+    p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.rho * scales.Uref_abe**2)
+    u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref_abe)
+    theta_dim.vector()[:] = (T_dim.vector()[:] - float(T_ambient)) / float(scales.dTref)
+    p_star_dim.vector().apply('insert')
+    u_star_dim.vector().apply('insert')
+    theta_dim.vector().apply('insert')
+
+    # Interpolate onto the current star mesh collapsed subspaces.
+    Vp_star, _ = W.sub(0).collapse(True)
+    Vu_star, _ = W.sub(1).collapse(True)
+    VT_star, _ = W.sub(2).collapse(True)
+
+    for fn in (p_star_dim, u_star_dim, theta_dim):
+        try:
+            fn.set_allow_extrapolation(True)
+        except Exception:
+            pass
+
+    p_star = fenics.interpolate(p_star_dim, Vp_star)
+    u_star = fenics.interpolate(u_star_dim, Vu_star)
+    theta_star = fenics.interpolate(theta_dim, VT_star)
+
+    assign_p = fenics.FunctionAssigner(W.sub(0), Vp_star)
+    assign_u = fenics.FunctionAssigner(W.sub(1), Vu_star)
+    assign_T = fenics.FunctionAssigner(W.sub(2), VT_star)
+
+    assign_p.assign(w_n.sub(0), p_star)
+    assign_u.assign(w_n.sub(1), u_star)
+    assign_T.assign(w_n.sub(2), theta_star)
+    w_n.vector().apply('insert')
+    copy_state(w, w_n)
+
+    meta = {
+        'step': int(step),
+        'time': float(time_value),
+        'dt': float(dt_value),
+        'source': 'approximate_xdmf_restart',
+    }
+    print0('Loaded approximate restart from transient snapshots:')
+    print0(f"  step = {meta['step']}")
+    print0(f"  time = {meta['time']:.6e}")
+    print0(f"  dt   = {meta['dt']:.6e}")
+    return w, w_n, meta
+
+
 def check_interface_power(sub_ds, sub_ft, qn_air, scales, experiment, interface_tag=INTERFACE_TAG):
     # 1) dimensionalize qn_air: qn_dim [W/m^2]
     k_inf = float(experiment.fluid.properties["k"])  # use experiment value (not global)
@@ -1536,7 +1647,7 @@ def abs_version(
     if restart_from_checkpoint_mesh != "":
         print0(f"Restarting from checkpoint-owned mesh: {restart_from_checkpoint_mesh}")
 
-        loaded = prepare_loaded_checkpoint_for_base_run(
+        loaded = prepare_loaded_checkpoint_for_abe_run(
             checkpoint_dir=restart_from_checkpoint_mesh,
             experiment=experiment,
         )
@@ -1566,8 +1677,9 @@ def abs_version(
         restart_meta = loaded["restart_meta"]
 
         mu = loaded["mu"]
+        kappa = loaded["kappa"]
         Pr = loaded["Pr"]
-        Ra = loaded["Ra"]
+        Gr = loaded["Gr"]
         f_b = loaded["f_b"]
         T_c = loaded["T_c"]
         T_air_bc = loaded["T_air_bc"]
@@ -1706,7 +1818,7 @@ def abs_version(
         # Solving the problem
         print0("Starting solver...")
         W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, \
-        mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc = solver(
+            mu, kappa, Pr, Gr, f_b, T_h, T_c, T_ref, T_air_bc = solver_abe(
             sub_mesh_star,
             theta_full_star,      # <-- nondimensional theta on star mesh
             0.0,
@@ -1716,7 +1828,7 @@ def abs_version(
         )
 
    # Optional restart
-    if restart_from_checkpoint_mesh == "":
+    if restart_from_checkpoint_mesh == "";
         restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
     if (restart_from_last_transient or steady_from_last_transient) and restart_from_checkpoint_mesh == "":
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
@@ -1731,7 +1843,7 @@ def abs_version(
                 )
             else:
                 print0("Attempting restart from last saved transient snapshot...")
-                w, w_n, restart_meta = approximate_restart_from_last_saved_transient(
+                w, w_n, restart_meta = approximate_restart_from_last_saved_transient_abe(
                     run_root=run_root,
                     mode_subdir="base",
                     sub_mesh_dim=sub_mesh_dim,
@@ -1762,16 +1874,16 @@ def abs_version(
     if not restart_from_last_transient and not steady_from_last_transient and restart_from_checkpoint_mesh == "":
         # Use Stokes initial guess for better convergene
         print0("Solving Stokes problem for initial guess...")
-        w_n = stokes_initial_guess(
-            experiment=experiment,
-            u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-            W=W, w=w,
-            psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-            sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-            w_n=w_n,
-            lambdas=( 0.05, 0.1, 0.3)
-        )
+        # w_n = stokes_initial_guess(
+        #     experiment=experiment,
+        #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
+        #     W=W, w=w,
+        #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+        #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+        #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
+        #     w_n=w_n,
+        #     lambdas=( 0.05, 0.1, 0.3)
+        # )
 
     # Solve the full nonlinear problem with previous initial guess
     print0("Starting checks")
@@ -1827,7 +1939,7 @@ def abs_version(
             psi_u=psi_u,
             psi_T=psi_T,
             mu=mu,
-            Pr=Pr,
+            kappa=kappa,
             f_b=f_b,
             T_c=T_c,
             T_air_bc=T_air_bc,
@@ -1855,7 +1967,7 @@ def abs_version(
             run_root,
             W, w, w_n,
             psi_p, psi_u, psi_T,
-            mu, Pr, f_b, T_c, T_air_bc,
+            mu, kappa, f_b, T_c, T_air_bc,
             sub_dx_star, sub_ds_star, sub_ft_star, qn_air_star,
             dtau_init=1e-5,
             dtau_min=1e-8,
@@ -1890,7 +2002,7 @@ def abs_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uref_abe, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
 
@@ -1927,7 +2039,7 @@ def abs_version(
             w=w,
             w_n=w_n,
             psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-            mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
+            mu=mu, kappa=kappa, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
             sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
             sub_mesh_star=sub_mesh_star,
             sub_mesh_dim=sub_mesh_dim,
@@ -1969,7 +2081,7 @@ def abs_version(
     # Dimensionalize fields (note: mesh is star; dimensionalize handles scaling)
     u_dim, p_dim, T_dim = dimensionalize_fields(
         sub_mesh_star, u_star, p_star, theta,
-        scales.Uref, scales.dTref, T_ambient,
+        scales.Uref_abe, scales.dTref, T_ambient,
         experiment.fluid.properties["rho"]
     )
     k_air = fenics.Constant(experiment.fluid.properties["k"])
@@ -2002,40 +2114,40 @@ def abs_version(
     hmax_star = sub_mesh_star.hmax()
     eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
     # eps_m = 2 * hmin_star * scales.Lref
-    flux_rows = plane_fluxes_slab_star(
-        sub_mesh_star,
-        u_star, theta,                   # your returned nondim u and theta
-        y0_m_list,
-        scales=scales,
-        rho=experiment.fluid.properties["rho"],
-        cp=experiment.fluid.properties["cp"],
-        k=experiment.fluid.properties["k"],
-        eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
-    )
+    # flux_rows = plane_fluxes_slab_star(
+    #     sub_mesh_star,
+    #     u_star, theta,                   # your returned nondim u and theta
+    #     y0_m_list,
+    #     scales=scales,
+    #     rho=experiment.fluid.properties["rho"],
+    #     cp=experiment.fluid.properties["cp"],
+    #     k=experiment.fluid.properties["k"],
+    #     eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
+    # )
 
-    for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-        print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
-            f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
+    # for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+    #     print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
+    #         f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
         
     out_dir=Path.cwd()
     csv_path = os.path.join(out_dir,run_root, "base", "plane_fluxes.csv")
     write_header = not os.path.exists(csv_path)
 
-    if is_rank0():
-        with open(csv_path, "a", newline="") as f:
-            wcsv = csv.writer(f)
-            if write_header:
-                wcsv.writerow([
-                    "time",
-                    "y0_m",
-                    "Qconv_W_per_m",
-                    "Qcond_W_per_m",
-                    "Qtot_W_per_m",
-                    "mdot_kg_per_s_per_m",
-                ])
-            t = 0
-            for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-                wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
+    # if is_rank0():
+    #     with open(csv_path, "a", newline="") as f:
+    #         wcsv = csv.writer(f)
+    #         if write_header:
+    #             wcsv.writerow([
+    #                 "time",
+    #                 "y0_m",
+    #                 "Qconv_W_per_m",
+    #                 "Qcond_W_per_m",
+    #                 "Qtot_W_per_m",
+    #                 "mdot_kg_per_s_per_m",
+    #             ])
+    #         t = 0
+    #         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
+    #             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
 
     COMM.Barrier()
 

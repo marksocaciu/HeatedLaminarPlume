@@ -188,6 +188,71 @@ def solver(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
 
     return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
+def solver_abe(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
+           rho_air: float, beta_air: float, experiment: Experiment):
+    P1 = fenics.FiniteElement('P', sub_mesh.ufl_cell(), 1)
+    P2 = fenics.VectorElement('P', sub_mesh.ufl_cell(), 2)
+    mixed_element = fenics.MixedElement([P1, P2, P1]) 
+    W = fenics.FunctionSpace(sub_mesh, mixed_element)
+
+    psi_p, psi_u, psi_T = fenics.TestFunctions(W)
+
+    w = fenics.Function(W)
+    p, u, T = fenics.split(w)
+
+    mu, kappa, Pr, Gr, f_b, T_h, T_c, T_ref, T_air_bc = set_param_abe(sub_mesh, T_full, T, T_ambient, rho_air, beta_air, experiment)
+
+    # Build mixed initial state
+    w_n = fenics.Function(W)
+
+    # Collapsed subspaces (these are the canonical source spaces for assignment)
+    Vp, p_to_W = W.sub(0).collapse(True)   # scalar
+    Vu, u_to_W = W.sub(1).collapse(True)   # vector
+    VT, T_to_W = W.sub(2).collapse(True)   # scalar
+
+    # Source functions (must live in the collapsed spaces)
+    p0 = fenics.Function(Vp)
+    u0 = fenics.Function(Vu)
+    T0 = fenics.Function(VT)
+
+    p0.vector().zero()
+    u0.vector().zero()
+
+    # Temperature initial guess:
+    # If T_full is already a scalar Function on the *same sub_mesh* (your current pipeline),
+    # interpolate it onto VT (safe even if VT is a different object).
+    # T0.interpolate(T_full)
+    T0.vector().zero()
+    T0.vector().apply("insert")
+
+    # If you ever pass a function on a different mesh, you cannot do this; you'd need restriction/projection.
+
+    # Assign into mixed function using FunctionAssigners that match spaces exactly
+    assign_p = fenics.FunctionAssigner(W.sub(0), Vp)
+    assign_u = fenics.FunctionAssigner(W.sub(1), Vu)
+    assign_T = fenics.FunctionAssigner(W.sub(2), VT)
+
+    assign_p.assign(w_n.sub(0), p0)
+    assign_u.assign(w_n.sub(1), u0)
+    assign_T.assign(w_n.sub(2), T0)
+
+    w_n.vector().apply("insert")
+
+    print0("Init T min/max:",
+        w_n.sub(2).vector().min(),
+        w_n.sub(2).vector().max())
+    print0("Init u min/max:",
+        w_n.sub(1).vector().min(),
+        w_n.sub(1).vector().max())
+
+    # Now split for convenience (these are UFL objects / views; OK for variational forms)
+    p_n, u_n, T_n = fenics.split(w_n)
+
+    print0(f"Initial guess max theta (air): {w_n.sub(2).vector().max():.6e}")
+    print0(f"Initial guess min theta (air): {w_n.sub(2).vector().min():.6e}")
+
+    return W, w, p, u, T, w_n, p_n, u_n, T_n, psi_p, psi_u, psi_T, mu, kappa, Pr, Gr, f_b, T_h, T_c, T_ref, T_air_bc
+
 def base_solver(F, w: fenics.Function, boundary_conditions, JF,
                 relaxation=0.5, maxit=20, atol=1e-9, rtol=1e-8,
                 return_meta: bool = False):
@@ -460,6 +525,102 @@ def solve_linear_problem_temp(a, L, w, boundary_conditions, linear_solver="mumps
     solver.solve(w.vector(), b)
     w.vector().apply("insert")
     return w
+
+def stokes_initial_guess_abe(
+    experiment: Experiment,
+    u_n: fenics.Function, u: fenics.Function, T_n: fenics.Function, T: fenics.Function, p: fenics.Function,
+    W: fenics.FunctionSpace, w: fenics.Function,
+    psi_p, psi_u, psi_T,
+    mu, kappa, f_b, T_c, T_air_bc,
+    sub_dx, sub_ds, sub_ft, qn_air,
+    w_n: fenics.Function,
+    lambdas=(0.10, 0.25, 0.50, 1.00),
+):
+    """
+    Fast linear startup:
+      1) conduction-only solve
+      2) frozen-temperature Stokes solve
+    for each continuation lambda.
+    """
+    scales = compute_nondimensional_scales(experiment)
+    boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
+
+    # cache temperature assignment machinery
+    VT, assign_T = build_temperature_assigner(W)
+    theta_tmp = fenics.Function(VT)
+
+    # reference temperature field for continuation scaling
+    theta_ref = fenics.Function(VT)
+    theta_ref.vector()[:] = w_n.sub(2, deepcopy=True).vector()
+    theta_ref.vector().apply("insert")
+
+    # working storage
+    theta_lam = fenics.Function(VT)
+
+    w.vector()[:] = w_n.vector()
+    w.vector().apply("insert")
+
+    for lam in lambdas:
+        print0(f"\n=== Linear startup lambda = {lam:.2f} ===")
+
+        # scale reference thermal field for the current continuation level
+        theta_lam.vector()[:] = theta_ref.vector()
+        theta_lam.vector()[:] *= float(lam)
+        theta_lam.vector().apply("insert")
+
+        assign_mixed_temperature(w_n, theta_lam, VT, assign_T, theta_tmp)
+
+        # start each stage from latest accepted mixed state
+        w.vector()[:] = w_n.vector()
+        w.vector().apply("insert")
+
+        print0("  -> Stage A: conduction-only solve")
+        a_cond, L_cond = build_linear_startup_problem(
+            experiment=experiment,
+            W=W,
+            mu=mu,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            sub_ds=sub_ds,
+            qn_air=qn_air,
+            qn_scale=lam,
+            frozen_buoyancy_temperature=None,
+            scales=scales,
+        )
+        w = solve_linear_problem(a_cond, L_cond, w, boundary_conditions)
+
+        u_chk = w.sub(1, deepcopy=True)
+
+        Vmag = fenics.FunctionSpace(W.mesh(), "CG", 1)
+        umag = fenics.project(fenics.sqrt(fenics.inner(u_chk, u_chk)), Vmag, solver_type="mumps")
+
+        print0(f"  |u| min/max = {umag.vector().min():.6e}, {umag.vector().max():.6e}")
+
+        theta_cond = w.sub(2, deepcopy=True)
+
+        w_n.assign(w)
+        w_n.vector().apply("insert")
+
+        print0("  -> Stage B: frozen-temperature Stokes solve")
+        a_stokes, L_stokes = build_linear_startup_problem(
+            experiment=experiment,
+            W=W,
+            mu=mu,
+            Pr=Pr,
+            sub_dx=sub_dx,
+            sub_ds=sub_ds,
+            qn_air=qn_air,
+            qn_scale=lam,
+            frozen_buoyancy_temperature=theta_cond,
+            scales=scales,
+        )
+        w = solve_linear_problem(a_stokes, L_stokes, w, boundary_conditions)
+
+        w_n.assign(w)
+        w_n.vector().apply("insert")
+
+    return w_n
+
 
 def stokes_initial_guess(
     experiment: Experiment,

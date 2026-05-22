@@ -32,6 +32,40 @@ def set_param(sub_mesh: fenics.Mesh, T_full: fenics.Function, T: fenics.Function
 
     return mu, Pr, Ra, f_b, T_h, T_c, T_ref, T_air_bc
 
+def set_param_abe(
+        sub_mesh: fenics.Mesh,
+        T_full: fenics.Function,
+        T: fenics.Function,
+        T_ambient: float,
+        rho_air: float,
+        beta_air: float,
+        experiment: Experiment,
+    ):
+    sc = compute_nondimensional_scales(experiment)
+
+    Pr = fenics.Constant(sc.Pr)
+    Gr = fenics.Constant(sc.Gr)
+
+    mu_abe = fenics.Constant(sc.mu_abe)
+    kappa_abe = fenics.Constant(sc.kappa_abe)
+
+    gvec = fenics.Constant((0.0, -1.0))
+
+    # Kis momentum uses: -theta * g_i.
+    # With gvec = (0,-1), -T*gvec points upward for T > 0.
+    f_b_abe = -T * gvec
+
+    T_ref = fenics.Constant(0.0)
+
+    VTa = fenics.FunctionSpace(sub_mesh, "CG", 1)
+    T_air_bc = fenics.Function(VTa)
+    T_air_bc.interpolate(T_full)
+
+    hot_wall_temperature = float(T_air_bc.vector().max())
+    T_h = fenics.Constant(hot_wall_temperature)
+    T_c = fenics.Constant(0.0)
+
+    return mu_abe, kappa_abe, Pr, Gr, f_b_abe, T_h, T_c, T_ref, T_air_bc
 
 def set_bcs(W, sub_ft, T_air_bc, cold_wall_temperature, experiment: Experiment, scales: NondimScales):
     class Hot_wall(fenics.SubDomain):

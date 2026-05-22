@@ -516,6 +516,75 @@ def prepare_loaded_checkpoint_for_base_run(
         "T_ref": T_ref,
     }
 
+def prepare_loaded_checkpoint_for_abe_run(
+    checkpoint_dir: str,
+    experiment,
+):
+    """
+    Load a checkpoint on its own mesh and rebuild the objects abe_version needs.
+    """
+    scales = compute_nondimensional_scales(experiment)
+
+    sub_mesh_star, W, w, w_n, restart_meta = load_checkpoint_on_own_mesh(checkpoint_dir)
+
+    # The checkpoint mesh is already nondimensional/star-scaled.
+    sub_mesh_dim = sub_mesh_star
+
+    sub_ft_star = rebuild_air_facet_tags(sub_mesh_star, experiment, scales)
+    sub_dx_star = fenics.Measure("dx", domain=sub_mesh_star)
+    sub_ds_star = fenics.Measure("ds", domain=sub_mesh_star, subdomain_data=sub_ft_star)
+
+    sub_ft_dim = sub_ft_star
+    sub_dx_dim = sub_dx_star
+    sub_ds_dim = sub_ds_star
+
+    qn_star_value = compute_uniform_qn_star_value(experiment, scales)
+    qn_air_star = build_uniform_qn_air(sub_mesh_star, qn_star_value)
+
+    psi_p, psi_u, psi_T = fenics.TestFunctions(W)
+
+    p_ufl, u_ufl, theta_ufl = fenics.split(w)
+
+    theta_checkpoint = w_n.sub(2, deepcopy=True)
+
+    mu, kappa, Pr, Gr, f_b, T_h, T_c, T_ref, T_air_bc = set_param_abe(
+        sub_mesh_star,
+        theta_checkpoint,
+        theta_ufl,
+        0.0,
+        experiment.fluid.properties["rho"],
+        experiment.fluid.properties["beta"],
+        experiment,
+    )
+
+    return {
+        "sub_mesh_star": sub_mesh_star,
+        "sub_mesh_dim": sub_mesh_dim,
+        "W": W,
+        "w": w,
+        "w_n": w_n,
+        "psi_p": psi_p,
+        "psi_u": psi_u,
+        "psi_T": psi_T,
+        "sub_ft_star": sub_ft_star,
+        "sub_dx_star": sub_dx_star,
+        "sub_ds_star": sub_ds_star,
+        "sub_ft_dim": sub_ft_dim,
+        "sub_dx_dim": sub_dx_dim,
+        "sub_ds_dim": sub_ds_dim,
+        "qn_air_star": qn_air_star,
+        "restart_meta": restart_meta,
+        "T_air_bc": T_air_bc,
+        "T_c": T_c,
+        "mu": mu,
+        "kappa": kappa,
+        "Pr": Pr,
+        "Gr": Gr,
+        "f_b": f_b,
+        "T_h": T_h,
+        "T_ref": T_ref,
+    }
+
 def mark_cells_for_plume_remesh(
     mesh: fenics.Mesh,
     theta: fenics.Function,
