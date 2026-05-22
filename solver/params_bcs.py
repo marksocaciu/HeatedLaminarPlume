@@ -53,7 +53,7 @@ def set_param_abe(
 
     # Kis momentum uses: -theta * g_i.
     # With gvec = (0,-1), -T*gvec points upward for T > 0.
-    f_b_abe = -T * gvec
+    f_b_abe = T * gvec
 
     T_ref = fenics.Constant(0.0)
 
