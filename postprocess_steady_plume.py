@@ -62,6 +62,39 @@ import warnings
 import matplotlib.tri as mtri
 
 
+def configure_plot_style(font_size: float = 12.0) -> None:
+    matplotlib.rcParams.update({
+        "font.size": font_size,
+        "axes.titlesize": font_size,
+        "axes.labelsize": font_size,
+        "xtick.labelsize": font_size,
+        "ytick.labelsize": font_size,
+        "legend.fontsize": font_size,
+        "figure.titlesize": font_size,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.02,
+    })
+
+
+def thesis_figsize(width_in: float, height_in: Optional[float] = None) -> Tuple[float, float]:
+    width = float(width_in)
+    if height_in is None:
+        height = 0.72 * width
+    else:
+        height = float(height_in)
+    return (width, height)
+
+
+def maybe_set_title(title: str, show_titles: bool) -> None:
+    if show_titles and title:
+        plt.title(title)
+
+
+def maybe_set_ax_title(ax, title: str, show_titles: bool) -> None:
+    if show_titles and title:
+        ax.set_title(title)
+
+
 @dataclass
 class FieldData:
     points_mesh: np.ndarray          # (n, 2), original mesh coordinates
@@ -527,6 +560,212 @@ def integrate_boundary_heat_escape_from_facets(
 
 
 
+
+def sample_energy_flux_vector(Ti, uxi, uyi, xpts: np.ndarray, ypts: np.ndarray, rho: float, cp: float, T_inf: float, k: float, qx_i=None, qy_i=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return total, convective, conductive heat-flux vectors sampled at arbitrary points.
+
+    F_total = rho*cp*(T-T_inf)*u + q_cond, where q_cond = -k*grad(T) unless
+    a supplied cell-centred heat-flux interpolator is available. Units are W/m^2;
+    line integration gives W/m per unit out-of-plane depth.
+    """
+    xpts = np.asarray(xpts, dtype=float)
+    ypts = np.asarray(ypts, dtype=float)
+    Tloc = finite_or_nan(Ti(xpts, ypts))
+    ux = finite_or_nan(uxi(xpts, ypts))
+    uy = finite_or_nan(uyi(xpts, ypts))
+    theta = Tloc - float(T_inf)
+    qconv_x = float(rho) * float(cp) * ux * theta
+    qconv_y = float(rho) * float(cp) * uy * theta
+
+    if qx_i is not None and qy_i is not None:
+        qcond_x = finite_or_nan(qx_i(xpts, ypts))
+        qcond_y = finite_or_nan(qy_i(xpts, ypts))
+    else:
+        dTdx, dTdy = Ti.gradient(xpts, ypts)
+        qcond_x = -float(k) * finite_or_nan(dTdx)
+        qcond_y = -float(k) * finite_or_nan(dTdy)
+
+    qtot_x = qconv_x + qcond_x
+    qtot_y = qconv_y + qcond_y
+    return qtot_x, qtot_y, qconv_x, qconv_y, qcond_x, qcond_y
+
+
+def eta_halfwidth_at_y(ypts: np.ndarray, eta_abs: float, eta_origin_y: float, q_input_per_length: float, rho: float, cp: float, mu: float, beta: float, g: float) -> np.ndarray:
+    """Physical half-width x(y) corresponding to |eta| = eta_abs for the line-plume scaling."""
+    ypts = np.asarray(ypts, dtype=float)
+    nu = float(mu) / float(rho)
+    theta_line = float(q_input_per_length) / (float(rho) * float(cp) * nu) if nu > 0 else np.nan
+    h = ypts - float(eta_origin_y)
+    Gr_h = np.where(h > 0.0, float(g) * float(beta) * theta_line * h**3 / nu**2, np.nan)
+    return np.where(np.isfinite(Gr_h) & (Gr_h > 0.0) & (h > 0.0), float(eta_abs) * h / (Gr_h**0.2), np.nan)
+
+
+def integrate_energy_control_volume(
+    Ti, uxi, uyi,
+    x_left: float, x_right: float, y_bottom: float, y_top: float,
+    rho: float, cp: float, T_inf: float, k: float,
+    qx_i=None, qy_i=None,
+    n_x: int = 1201, n_y: int = 801,
+    x_half_fun=None,
+    eta_below_origin_policy: str = "freeze",
+) -> Tuple[List[Dict[str, float | str]], Dict[str, float | str]]:
+    """Integrate convective and conductive heat transport over a rectangular or eta-width CV.
+
+    Positive values mean outward through the named control-surface boundary.
+
+    For an eta-width CV, x_half_fun(y) supplies the curved side half-width. If
+    x_half_fun is not finite at the requested lower boundary, eta_below_origin_policy
+    controls the near-source behavior:
+
+      * "freeze": keep the first valid eta half-width constant down to y_bottom.
+      * "error" : stop with an explicit error.
+      * "shift" : old behavior; shift the effective bottom to first valid eta height.
+    """
+    if y_top <= y_bottom:
+        raise ValueError("Control-volume y_top must be larger than y_bottom.")
+
+    rows: List[Dict[str, float | str]] = []
+    meta: Dict[str, float | str] = {
+        "cv_y_bottom_requested_m": float(y_bottom),
+        "cv_y_bottom_effective_m": float(y_bottom),
+        "eta_first_valid_y_m": float("nan"),
+        "eta_frozen_width_used": "false",
+        "eta_frozen_half_width_m": float("nan"),
+        "eta_below_origin_policy": eta_below_origin_policy if x_half_fun is not None else "",
+    }
+
+    def _diagnostics(qconv_integrand: np.ndarray, qcond_integrand: np.ndarray) -> Dict[str, float | str]:
+        qconv_integrand = np.asarray(qconv_integrand, dtype=float)
+        qcond_integrand = np.asarray(qcond_integrand, dtype=float)
+        n = int(max(qconv_integrand.size, qcond_integrand.size))
+        nvc = int(np.count_nonzero(np.isfinite(qconv_integrand)))
+        nvk = int(np.count_nonzero(np.isfinite(qcond_integrand)))
+        return {
+            "n_samples": n,
+            "n_valid_convection": nvc,
+            "n_valid_conduction": nvk,
+            "valid_fraction_convection": float(nvc / n) if n else float("nan"),
+            "valid_fraction_conduction": float(nvk / n) if n else float("nan"),
+        }
+
+    def add_row(
+        boundary: str,
+        qtot_integrand: np.ndarray,
+        qconv_integrand: np.ndarray,
+        qcond_integrand: np.ndarray,
+        coord: np.ndarray,
+        extra: Dict[str, float | str],
+    ):
+        rows.append({
+            "boundary": boundary,
+            "Q_total_out_W_per_m": robust_trapz(qtot_integrand, coord),
+            "Q_convection_out_W_per_m": robust_trapz(qconv_integrand, coord),
+            "Q_conduction_out_W_per_m": robust_trapz(qcond_integrand, coord),
+            "positive_means": "out_of_control_volume",
+            **_diagnostics(qconv_integrand, qcond_integrand),
+            **extra,
+        })
+
+    if x_half_fun is None:
+        xs = np.linspace(float(x_left), float(x_right), int(n_x))
+        for boundary, yy, ny in (("bottom", y_bottom, -1.0), ("top", y_top, 1.0)):
+            xline = xs
+            yline = np.full_like(xline, yy)
+            qtx, qty, qcx, qcy, qkx, qky = sample_energy_flux_vector(Ti, uxi, uyi, xline, yline, rho, cp, T_inf, k, qx_i, qy_i)
+            add_row(boundary, qty * ny, qcy * ny, qky * ny, xline, {"x_left_m": x_left, "x_right_m": x_right, "y_m": yy})
+
+        ys = np.linspace(float(y_bottom), float(y_top), int(n_y))
+        for boundary, xx, nx in (("left", x_left, -1.0), ("right", x_right, 1.0)):
+            xline = np.full_like(ys, xx)
+            yline = ys
+            qtx, qty, qcx, qcy, qkx, qky = sample_energy_flux_vector(Ti, uxi, uyi, xline, yline, rho, cp, T_inf, k, qx_i, qy_i)
+            add_row(boundary, qtx * nx, qcx * nx, qkx * nx, ys, {"x_m": xx, "y_bottom_m": y_bottom, "y_top_m": y_top})
+    else:
+        policy = str(eta_below_origin_policy).lower()
+        if policy not in {"freeze", "error", "shift"}:
+            raise ValueError(f"Unknown eta_below_origin_policy={eta_below_origin_policy!r}")
+
+        ys_full = np.linspace(float(y_bottom), float(y_top), int(n_y))
+        xh_raw = np.asarray(x_half_fun(ys_full), dtype=float)
+        valid = np.isfinite(xh_raw) & (xh_raw > 0.0)
+        if np.count_nonzero(valid) < 4:
+            raise ValueError("Eta-width control volume is not valid over the selected y-range.")
+
+        first_valid_idx = int(np.where(valid)[0][0])
+        first_valid_y = float(ys_full[first_valid_idx])
+        first_valid_xh = float(xh_raw[first_valid_idx])
+        meta["eta_first_valid_y_m"] = first_valid_y
+
+        if first_valid_idx > 0:
+            if policy == "error":
+                raise ValueError(
+                    f"Requested eta CV bottom y={y_bottom:g} m is below the first valid eta height "
+                    f"y={first_valid_y:g} m. Use --energy-cv-eta-below-origin-policy freeze or pass a higher bottom."
+                )
+            if policy == "shift":
+                ys = ys_full[valid]
+                xh = xh_raw[valid]
+                meta["cv_y_bottom_effective_m"] = float(ys[0])
+                meta["eta_frozen_width_used"] = "false"
+            else:
+                ys = ys_full
+                xh = xh_raw.copy()
+                xh[:first_valid_idx] = first_valid_xh
+                bad = ~np.isfinite(xh) | (xh <= 0.0)
+                if np.any(bad):
+                    good = ~bad
+                    if np.count_nonzero(good) < 4:
+                        raise ValueError("Eta-width CV has too few valid widths for freeze interpolation.")
+                    xh[bad] = np.interp(ys[bad], ys[good], xh[good])
+                meta["cv_y_bottom_effective_m"] = float(y_bottom)
+                meta["eta_frozen_width_used"] = "true"
+                meta["eta_frozen_half_width_m"] = first_valid_xh
+        else:
+            ys = ys_full
+            xh = xh_raw.copy()
+            bad = ~np.isfinite(xh) | (xh <= 0.0)
+            if np.any(bad):
+                good = ~bad
+                if np.count_nonzero(good) < 4:
+                    raise ValueError("Eta-width CV has too few valid widths.")
+                xh[bad] = np.interp(ys[bad], ys[good], xh[good])
+
+        dxh_dy = np.gradient(xh, ys)
+
+        for boundary, yy, ny in (("bottom", ys[0], -1.0), ("top", ys[-1], 1.0)):
+            half = float(xh[0] if boundary == "bottom" else xh[-1])
+            xline = np.linspace(-half, half, int(n_x))
+            yline = np.full_like(xline, yy)
+            qtx, qty, qcx, qcy, qkx, qky = sample_energy_flux_vector(Ti, uxi, uyi, xline, yline, rho, cp, T_inf, k, qx_i, qy_i)
+            add_row(boundary, qty * ny, qcy * ny, qky * ny, xline, {"x_left_m": -half, "x_right_m": half, "y_m": yy})
+
+        for side, sign in (("left", -1.0), ("right", 1.0)):
+            xline = sign * xh
+            yline = ys
+            nx = sign
+            ny_ds = -dxh_dy
+            qtx, qty, qcx, qcy, qkx, qky = sample_energy_flux_vector(Ti, uxi, uyi, xline, yline, rho, cp, T_inf, k, qx_i, qy_i)
+            add_row(
+                side,
+                qtx * nx + qty * ny_ds,
+                qcx * nx + qcy * ny_ds,
+                qkx * nx + qky * ny_ds,
+                ys,
+                {"y_bottom_m": float(ys[0]), "y_top_m": float(ys[-1]), "x_half_min_m": float(np.nanmin(xh)), "x_half_max_m": float(np.nanmax(xh))},
+            )
+
+    total = {
+        "boundary": "TOTAL",
+        "Q_total_out_W_per_m": float(np.nansum([r["Q_total_out_W_per_m"] for r in rows])),
+        "Q_convection_out_W_per_m": float(np.nansum([r["Q_convection_out_W_per_m"] for r in rows])),
+        "Q_conduction_out_W_per_m": float(np.nansum([r["Q_conduction_out_W_per_m"] for r in rows])),
+        "positive_means": "out_of_control_volume",
+        **meta,
+    }
+    for r in rows:
+        r.update(meta)
+    return rows, total
+
 def integrate_control_volume_vertical_momentum(
     Ti,
     uxi,
@@ -650,6 +889,327 @@ def integrate_control_volume_vertical_momentum(
         "momentum_balance_residual_relative": float(residual / scale),
     }
 
+
+
+def integrate_selected_control_volume_vertical_momentum(
+    Ti, uxi, uyi, pi,
+    geom: Dict[str, object],
+    rho: float, mu: float, beta: float, g: float, T_inf: float,
+    n_side: int = 801,
+    n_bottom_top: int = 1201,
+    n_area_y: int = 151,
+) -> Dict[str, float | str]:
+    """Vertical momentum budget for either fixed-width or eta-width selected CV."""
+    if pi is None:
+        return {}
+    y_bottom = float(geom["y_bottom"])
+    y_top = float(geom["y_top"])
+    if y_top <= y_bottom:
+        return {"enabled": "false", "reason": "invalid vertical control-volume extent"}
+    mode = str(geom.get("mode", "fixed"))
+    x_half_fun = geom.get("x_half_fun", None)
+
+    def line_terms_with_normal_measure(xv, yv, nxm, nym):
+        xv = np.asarray(xv, dtype=float)
+        yv = np.asarray(yv, dtype=float)
+        nxm = np.asarray(nxm, dtype=float) + np.zeros_like(xv)
+        nym = np.asarray(nym, dtype=float) + np.zeros_like(xv)
+        Tline = finite_or_nan(Ti(xv, yv))
+        ux = finite_or_nan(uxi(xv, yv))
+        uy = finite_or_nan(uyi(xv, yv))
+        pp = finite_or_nan(pi(xv, yv))
+        dux_dx, dux_dy = uxi.gradient(xv, yv)
+        duy_dx, duy_dy = uyi.gradient(xv, yv)
+        dux_dy = finite_or_nan(dux_dy)
+        duy_dx = finite_or_nan(duy_dx)
+        duy_dy = finite_or_nan(duy_dy)
+        un_measure = ux * nxm + uy * nym
+        adv = float(rho) * uy * un_measure
+        tau_yx = float(mu) * (duy_dx + dux_dy)
+        tau_yy = 2.0 * float(mu) * duy_dy
+        pressure = -pp * nym
+        viscous = tau_yx * nxm + tau_yy * nym
+        return adv, pressure, viscous
+
+    meta: Dict[str, float | str] = {
+        "cv_width_mode": mode,
+        "cv_y_bottom_m": y_bottom,
+        "cv_y_top_m": y_top,
+        "cv_y_bottom_mode": str(geom.get("y_bottom_mode", "")),
+        "positive_vertical_direction": "upward",
+        "surface_term_sign_convention": "positive is upward force on the selected fluid CV; advective terms use outward normal",
+    }
+
+    if mode == "fixed" or x_half_fun is None:
+        x_left = float(geom["x_left"])
+        x_right = float(geom["x_right"])
+        if x_right <= x_left:
+            return {"enabled": "false", "reason": "invalid fixed control-volume width"}
+        xb = np.linspace(x_left, x_right, int(n_bottom_top))
+        ys = np.linspace(y_bottom, y_top, int(n_side))
+        x_left_y = np.full_like(ys, x_left)
+        x_right_y = np.full_like(ys, x_right)
+        xh_for_area = lambda yy: (x_left, x_right)
+        meta.update({"x_left_bottom_m": x_left, "x_right_bottom_m": x_right, "x_left_top_m": x_left, "x_right_top_m": x_right})
+        adv_t, pres_t, visc_t = line_terms_with_normal_measure(xb, np.full_like(xb, y_top), 0.0, 1.0)
+        adv_b, pres_b, visc_b = line_terms_with_normal_measure(xb, np.full_like(xb, y_bottom), 0.0, -1.0)
+        adv_l, pres_l, visc_l = line_terms_with_normal_measure(x_left_y, ys, -1.0, 0.0)
+        adv_r, pres_r, visc_r = line_terms_with_normal_measure(x_right_y, ys, 1.0, 0.0)
+        x_bottom_coord = xb; x_top_coord = xb
+        y_side_coord = ys
+    else:
+        ys_full = np.linspace(y_bottom, y_top, int(n_side))
+        xh_raw = np.asarray(x_half_fun(ys_full), dtype=float)
+        valid = np.isfinite(xh_raw) & (xh_raw > 0.0)
+        if np.count_nonzero(valid) < 4:
+            return {"enabled": "false", "reason": "eta-width control volume has too few valid widths"}
+        first_valid_idx = int(np.where(valid)[0][0])
+        first_valid_xh = float(xh_raw[first_valid_idx])
+        xh = xh_raw.copy()
+        if first_valid_idx > 0:
+            xh[:first_valid_idx] = first_valid_xh
+        bad = ~np.isfinite(xh) | (xh <= 0.0)
+        if np.any(bad):
+            good = ~bad
+            xh[bad] = np.interp(ys_full[bad], ys_full[good], xh[good])
+        ys = ys_full
+        dxh_dy = np.gradient(xh, ys)
+        xb = np.linspace(-float(xh[0]), float(xh[0]), int(n_bottom_top))
+        xt = np.linspace(-float(xh[-1]), float(xh[-1]), int(n_bottom_top))
+        meta.update({
+            "eta_half_width": float(geom.get("eta_half_width", np.nan)),
+            "eta_origin_y_m": float(geom.get("eta_origin_y", np.nan)),
+            "x_left_bottom_m": -float(xh[0]), "x_right_bottom_m": float(xh[0]),
+            "x_left_top_m": -float(xh[-1]), "x_right_top_m": float(xh[-1]),
+            "eta_width_frozen_below_first_valid": "true" if first_valid_idx > 0 else "false",
+        })
+        adv_t, pres_t, visc_t = line_terms_with_normal_measure(xt, np.full_like(xt, y_top), 0.0, 1.0)
+        adv_b, pres_b, visc_b = line_terms_with_normal_measure(xb, np.full_like(xb, y_bottom), 0.0, -1.0)
+        # normal measure for sides, integrated with respect to y
+        adv_l, pres_l, visc_l = line_terms_with_normal_measure(-xh, ys, -1.0, dxh_dy)
+        adv_r, pres_r, visc_r = line_terms_with_normal_measure( xh, ys,  1.0, -dxh_dy)
+        x_bottom_coord = xb; x_top_coord = xt; y_side_coord = ys
+        def xh_for_area(yy):
+            half = float(np.interp(yy, ys, xh))
+            return -half, half
+
+    adv_top = robust_trapz(adv_t, x_top_coord)
+    adv_bottom = robust_trapz(adv_b, x_bottom_coord)
+    pres_top = robust_trapz(pres_t, x_top_coord)
+    pres_bottom = robust_trapz(pres_b, x_bottom_coord)
+    visc_top = robust_trapz(visc_t, x_top_coord)
+    visc_bottom = robust_trapz(visc_b, x_bottom_coord)
+    adv_left = robust_trapz(adv_l, y_side_coord)
+    adv_right = robust_trapz(adv_r, y_side_coord)
+    pres_left = robust_trapz(pres_l, y_side_coord)
+    pres_right = robust_trapz(pres_r, y_side_coord)
+    visc_left = robust_trapz(visc_l, y_side_coord)
+    visc_right = robust_trapz(visc_r, y_side_coord)
+
+    ya = np.linspace(y_bottom, y_top, int(n_area_y))
+    bint = np.full_like(ya, np.nan, dtype=float)
+    for i, yy_ in enumerate(ya):
+        xl, xr = xh_for_area(float(yy_))
+        xs_area = np.linspace(float(xl), float(xr), int(max(401, min(n_bottom_top, 1201))))
+        Tline = finite_or_nan(Ti(xs_area, np.full_like(xs_area, yy_)))
+        bint[i] = robust_trapz(float(rho) * float(g) * float(beta) * (Tline - float(T_inf)), xs_area)
+    buoyancy_total = robust_trapz(bint, ya)
+
+    adv_total = adv_top + adv_bottom + adv_left + adv_right
+    pressure_total = pres_top + pres_bottom + pres_left + pres_right
+    viscous_total = visc_top + visc_bottom + visc_left + visc_right
+    side_adv = adv_left + adv_right
+    side_pressure = pres_left + pres_right
+    side_viscous = visc_left + visc_right
+    loading_adv = adv_top + adv_bottom
+    loading_pressure = pres_top + pres_bottom
+    loading_viscous = visc_top + visc_bottom
+    residual = adv_total - pressure_total - viscous_total - buoyancy_total
+    rhs_total = pressure_total + viscous_total + buoyancy_total
+    scale = max(abs(adv_total), abs(pressure_total), abs(viscous_total), abs(buoyancy_total), abs(rhs_total), 1e-300)
+    out = {
+        **meta,
+        "buoyancy_integral_N_per_m": float(buoyancy_total),
+        "momentum_entrainment_convection_sides_N_per_m": float(side_adv),
+        "momentum_entrainment_pressure_sides_N_per_m": float(side_pressure),
+        "momentum_entrainment_viscous_sides_N_per_m": float(side_viscous),
+        "momentum_loading_convection_top_bottom_N_per_m": float(loading_adv),
+        "momentum_loading_pressure_top_bottom_N_per_m": float(loading_pressure),
+        "momentum_loading_viscous_top_bottom_N_per_m": float(loading_viscous),
+        "convection_total_boundary_N_per_m": float(adv_total),
+        "pressure_total_boundary_N_per_m": float(pressure_total),
+        "viscous_total_boundary_N_per_m": float(viscous_total),
+        "convection_top_N_per_m": float(adv_top),
+        "convection_bottom_N_per_m": float(adv_bottom),
+        "convection_left_N_per_m": float(adv_left),
+        "convection_right_N_per_m": float(adv_right),
+        "pressure_top_N_per_m": float(pres_top),
+        "pressure_bottom_N_per_m": float(pres_bottom),
+        "pressure_left_N_per_m": float(pres_left),
+        "pressure_right_N_per_m": float(pres_right),
+        "viscous_top_N_per_m": float(visc_top),
+        "viscous_bottom_N_per_m": float(visc_bottom),
+        "viscous_left_N_per_m": float(visc_left),
+        "viscous_right_N_per_m": float(visc_right),
+        "rhs_pressure_plus_viscous_plus_buoyancy_N_per_m": float(rhs_total),
+        "momentum_balance_residual_N_per_m": float(residual),
+        "momentum_balance_residual_relative": float(residual / scale),
+    }
+    return out
+
+def integrate_cylinder_traction_from_facets(
+    points: np.ndarray,
+    cells: np.ndarray,
+    pi,
+    uxi,
+    uyi,
+    mu: float,
+) -> Dict[str, float | str]:
+    """Integrate pressure and viscous traction over inner/non-rectangular boundary facets.
+
+    The mesh convention used by this project has the physical outer box on x=xmin,
+    x=xmax, y=ymin, y=ymax. Any remaining exterior facets are treated as the wire/cylinder
+    boundary.  Normals point outward from the fluid domain, i.e. into the solid wire.
+
+    Reported ``force_on_fluid_*`` values are the traction exerted by the cylinder boundary
+    on the fluid, integral (-p I + tau) n ds.  The hydrodynamic drag on the cylinder is the
+    opposite sign and is reported as ``drag_on_cylinder_*``.
+    """
+    if pi is None:
+        return {}
+    edges = boundary_edges_with_cells(cells)
+    centroids = cell_centres(points, cells)
+    xmin, xmax = float(np.min(points[:, 0])), float(np.max(points[:, 0]))
+    ymin, ymax = float(np.min(points[:, 1])), float(np.max(points[:, 1]))
+    tol = 1e-8 * max(xmax - xmin, ymax - ymin, 1.0)
+
+    pressure_force = np.zeros(2, dtype=float)
+    viscous_force = np.zeros(2, dtype=float)
+    length = 0.0
+    count = 0
+
+    for a, b, ci in edges:
+        p0 = points[a]
+        p1 = points[b]
+        mid = 0.5 * (p0 + p1)
+        if (abs(mid[1] - ymax) <= tol or abs(mid[1] - ymin) <= tol or
+            abs(mid[0] - xmin) <= tol or abs(mid[0] - xmax) <= tol):
+            continue
+
+        edge_vec = p1 - p0
+        L = float(np.linalg.norm(edge_vec))
+        if L <= 0.0:
+            continue
+
+        nvec = np.array([edge_vec[1], -edge_vec[0]], dtype=float)
+        nvec /= np.linalg.norm(nvec)
+        outward_hint = mid - centroids[ci]
+        if np.dot(nvec, outward_hint) < 0.0:
+            nvec *= -1.0
+
+        xm = np.array([mid[0]], dtype=float)
+        ym = np.array([mid[1]], dtype=float)
+        pp = float(finite_or_nan(pi(xm, ym))[0])
+        dux_dx, dux_dy = uxi.gradient(xm, ym)
+        duy_dx, duy_dy = uyi.gradient(xm, ym)
+        dux_dx = float(finite_or_nan(dux_dx)[0])
+        dux_dy = float(finite_or_nan(dux_dy)[0])
+        duy_dx = float(finite_or_nan(duy_dx)[0])
+        duy_dy = float(finite_or_nan(duy_dy)[0])
+        if not all(np.isfinite(v) for v in (pp, dux_dx, dux_dy, duy_dx, duy_dy)):
+            continue
+
+        tau_xx = 2.0 * float(mu) * dux_dx
+        tau_xy = float(mu) * (dux_dy + duy_dx)
+        tau_yx = tau_xy
+        tau_yy = 2.0 * float(mu) * duy_dy
+        tau = np.array([[tau_xx, tau_xy], [tau_yx, tau_yy]], dtype=float)
+
+        pressure = -pp * nvec
+        viscous = tau @ nvec
+        pressure_force += pressure * L
+        viscous_force += viscous * L
+        length += L
+        count += 1
+
+    force_on_fluid = pressure_force + viscous_force
+    drag_on_cylinder = -force_on_fluid
+    return {
+        "cylinder_boundary_edge_count": int(count),
+        "cylinder_boundary_integrated_length_m": float(length),
+        "force_on_fluid_pressure_x_N_per_m": float(pressure_force[0]),
+        "force_on_fluid_pressure_y_N_per_m": float(pressure_force[1]),
+        "force_on_fluid_viscous_x_N_per_m": float(viscous_force[0]),
+        "force_on_fluid_viscous_y_N_per_m": float(viscous_force[1]),
+        "force_on_fluid_total_x_N_per_m": float(force_on_fluid[0]),
+        "force_on_fluid_total_y_N_per_m": float(force_on_fluid[1]),
+        "drag_on_cylinder_pressure_x_N_per_m": float(-pressure_force[0]),
+        "drag_on_cylinder_pressure_y_N_per_m": float(-pressure_force[1]),
+        "drag_on_cylinder_viscous_x_N_per_m": float(-viscous_force[0]),
+        "drag_on_cylinder_viscous_y_N_per_m": float(-viscous_force[1]),
+        "drag_on_cylinder_total_x_N_per_m": float(drag_on_cylinder[0]),
+        "drag_on_cylinder_total_y_N_per_m": float(drag_on_cylinder[1]),
+        "normal_convention": "normal points outward from fluid domain; cylinder drag is opposite of force_on_fluid",
+    }
+
+
+def momentum_cv_geometry_from_energy_settings(args, xmin: float, xmax: float, ymin: float, ymax: float,
+                                              wire_y_m: float, wire_radius_m: float,
+                                              thermal_bl_mean_m: float,
+                                              rho: float, cp: float, mu: float, beta: float, g: float):
+    """Construct the selected control-volume geometry used for the momentum CSV."""
+    wire_bottom_y_m = wire_y_m - wire_radius_m
+    if args.energy_cv_y_bottom is None:
+        if np.isfinite(thermal_bl_mean_m):
+            y_bottom = wire_bottom_y_m - thermal_bl_mean_m
+            y_bottom_mode = "lower_wire_surface_minus_angular_mean_thermal_BL"
+        else:
+            y_bottom = wire_bottom_y_m
+            y_bottom_mode = "lower_wire_surface_no_valid_thermal_BL"
+    else:
+        y_bottom = wire_y_m + float(args.energy_cv_y_bottom)
+        y_bottom_mode = "user_height_above_wire_center"
+    y_top = wire_y_m + float(args.energy_cv_y_top)
+    y_bottom = max(float(y_bottom), ymin + 1e-10 * max(ymax - ymin, 1.0))
+    y_top = min(float(y_top), ymax - 1e-10 * max(ymax - ymin, 1.0))
+
+    mode = args.energy_cv_width_mode
+    can_eta = (args.q_input_per_length is not None and mu is not None and beta is not None and args.q_input_per_length > 0)
+    if mode == "auto":
+        mode = "eta" if can_eta else "fixed"
+    if mode == "eta" and not can_eta:
+        mode = "fixed"
+
+    if mode == "fixed":
+        hw = float(args.energy_cv_fixed_half_width)
+        return {
+            "mode": "fixed",
+            "x_left": max(xmin, -hw),
+            "x_right": min(xmax, hw),
+            "y_bottom": y_bottom,
+            "y_top": y_top,
+            "y_bottom_mode": y_bottom_mode,
+            "eta_origin_y": float("nan"),
+            "eta_half_width": float("nan"),
+            "x_half_fun": None,
+        }
+
+    eta_origin_y = wire_y_m + float(args.eta_origin_height) if args.eta_origin_height is not None else wire_y_m
+    def x_half_fun(ys):
+        return eta_halfwidth_at_y(ys, float(args.energy_cv_eta_half_width), eta_origin_y,
+                                  float(args.q_input_per_length), float(rho), float(cp), float(mu), float(beta), float(g))
+    return {
+        "mode": "eta",
+        "x_left": float("nan"),
+        "x_right": float("nan"),
+        "y_bottom": y_bottom,
+        "y_top": y_top,
+        "y_bottom_mode": y_bottom_mode,
+        "eta_origin_y": eta_origin_y,
+        "eta_half_width": float(args.energy_cv_eta_half_width),
+        "x_half_fun": x_half_fun,
+    }
+
 def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
     if not rows:
         return
@@ -666,8 +1226,8 @@ def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
 
 
 
-def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, ylabel: str, title: str, semilogy: bool = False) -> None:
-    plt.figure(figsize=(7.2, 4.8))
+def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, ylabel: str, title: str, semilogy: bool = False, *, figsize: Tuple[float, float] = (3.0, 2.16), show_titles: bool = False, dpi: int = 220) -> None:
+    plt.figure(figsize=figsize)
     for label, y in ys:
         if semilogy:
             plt.semilogy(x, y, label=label)
@@ -675,12 +1235,12 @@ def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, yl
             plt.plot(x, y, label=label)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.title(title)
+    maybe_set_title(title, show_titles)
     plt.grid(True, which="both", alpha=0.35)
     if len(ys) > 1:
         plt.legend()
     plt.tight_layout()
-    plt.savefig(path, dpi=180)
+    plt.savefig(path, dpi=dpi)
     plt.close()
 
 
@@ -773,6 +1333,39 @@ def fit_loglog_powerlaw(h: np.ndarray, a: np.ndarray, hmin: float, hmax: float) 
     return {"C": float(np.exp(logC)), "exponent": float(n), "r2": float(r2),
             "npoints": int(np.count_nonzero(mask)), "fit_height_min_m": float(hmin), "fit_height_max_m": float(hmax)}
 
+
+def fit_fixed_exponent_powerlaw(h: np.ndarray, a: np.ndarray, exponent: float, hmin: float, hmax: float) -> Dict[str, float]:
+    """Fit only C in a = C h^exponent over a selected positive h-window."""
+    h = np.asarray(h, dtype=float)
+    a = np.asarray(a, dtype=float)
+    mask = np.isfinite(h) & np.isfinite(a) & (h > 0.0) & (a > 0.0)
+    mask &= h >= hmin
+    mask &= h <= hmax
+    if np.count_nonzero(mask) < 4:
+        return {"C": np.nan, "exponent": float(exponent), "r2": np.nan, "npoints": int(np.count_nonzero(mask)),
+                "fit_height_min_m": hmin, "fit_height_max_m": hmax}
+    x = np.log(h[mask])
+    y = np.log(a[mask])
+    logC = float(np.mean(y - exponent * x))
+    yhat = exponent * x + logC
+    ss_res = float(np.sum((y - yhat) ** 2))
+    ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return {"C": float(np.exp(logC)), "exponent": float(exponent), "r2": float(r2),
+            "npoints": int(np.count_nonzero(mask)), "fit_height_min_m": float(hmin), "fit_height_max_m": float(hmax)}
+
+
+def fit_loglog_powerlaw_about_origin(y: np.ndarray, a: np.ndarray, y0: float, y_min: float, y_max: float) -> Dict[str, float]:
+    """Fit a = C (y-y0)^n on y_min <= y <= y_max."""
+    h_shifted = np.asarray(y, dtype=float) - float(y0)
+    return fit_loglog_powerlaw(h_shifted, a, float(y_min) - float(y0), float(y_max) - float(y0))
+
+
+def fit_fixed_exponent_powerlaw_about_origin(y: np.ndarray, a: np.ndarray, y0: float, exponent: float, y_min: float, y_max: float) -> Dict[str, float]:
+    """Fit only C in a = C (y-y0)^exponent on y_min <= y <= y_max."""
+    h_shifted = np.asarray(y, dtype=float) - float(y0)
+    return fit_fixed_exponent_powerlaw(h_shifted, a, exponent, float(y_min) - float(y0), float(y_max) - float(y0))
+
 def main() -> None:
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--temperature-xdmf", required=True)
@@ -804,19 +1397,47 @@ def main() -> None:
     ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error")
     ap.add_argument("--velocity-scale-factor", type=float, default=1.0,
                     help="Multiplicative factor applied to the exported velocity field before all diagnostics. Use this when the saved dimensional velocity was reconstructed with Uref but should be reported with Uplume, or vice versa.")
+    ap.add_argument("--energy-eta-half-width", type=float, default=8.0,
+                    help="Eta half-width used for the plume enthalpy-flow balance, i.e. integrate only samples with |eta| <= this value. Use 9 for the wider measured plume window.")
+    ap.add_argument("--energy-cv", action="store_true",
+                    help="Compute a separate control-volume energy budget with convection and conduction on each CV boundary.")
+    ap.add_argument("--energy-cv-width-mode", choices=["auto", "fixed", "eta"], default="auto",
+                    help="Control-volume lateral boundary: fixed uses |x|=--energy-cv-fixed-half-width; eta uses |eta|=--energy-cv-eta-half-width; auto uses eta when all required dimensional inputs are available, otherwise fixed.")
+    ap.add_argument("--energy-cv-fixed-half-width", type=float, default=0.015,
+                    help="Fixed half-width [m] for the energy control volume, default |x|=1.5 cm.")
+    ap.add_argument("--energy-cv-eta-half-width", type=float, default=9.0,
+                    help="Eta half-width for the energy control volume, default |eta|=9.")
+    ap.add_argument("--energy-cv-eta-below-origin-policy", choices=["freeze", "error", "shift"], default="freeze",
+                    help="Behavior when an eta-width CV is requested below the first height where eta is defined. 'freeze' keeps the first valid eta half-width constant down to the requested bottom; 'error' stops; 'shift' reproduces the old behavior by moving the effective bottom upward.")
+    ap.add_argument("--energy-cv-y-bottom", type=float, default=None,
+                    help="Optional lower CV boundary as height above wire centre [m]. Default: lower wire surface minus the angular-mean thermal boundary-layer thickness.")
+    ap.add_argument("--energy-cv-y-top", type=float, default=0.035,
+                    help="Upper CV boundary as height above wire centre [m]. Default: 3.5 cm above the wire centre.")
+    ap.add_argument("--energy-cv-nx", type=int, default=1201, help="Samples on horizontal CV boundaries.")
+    ap.add_argument("--energy-cv-ny", type=int, default=801, help="Samples on vertical/curved CV boundaries.")
+    ap.add_argument("--plot-width-inch", type=float, default=3.0,
+                    help="Width of saved plot figures in inches. Default is thesis-friendly for two plots per row.")
+    ap.add_argument("--plot-height-inch", type=float, default=None,
+                    help="Optional height of saved plot figures in inches. Default is 0.72 * plot width.")
+    ap.add_argument("--plot-font-size", type=float, default=12.0,
+                    help="Base font size for all plots.")
+    ap.add_argument("--plot-titles", action="store_true",
+                    help="Enable titles inside plot images. Default: no plot titles, because captions provide them in the thesis.")
 
     ap.add_argument("--planes", type=float, nargs="+", default=[0.01, 0.02, 0.04, 0.08], help="Physical heights above wire [m]")
     ap.add_argument("--eta-origin", choices=["wire", "temperature-virtual-origin", "velocity-virtual-origin"], default="wire",
                     help="Origin used for eta-profile scaling. 'wire' uses the inferred wire centre; the virtual-origin options use the fitted y0 after the fits are available.")
     ap.add_argument("--eta-origin-height", type=float, default=None,
                     help="Optional explicit eta source height above wire centre [m]. Overrides --eta-origin when supplied. For example, use -2*d if you want a virtual line source below the wire.")
+    ap.add_argument("--eta-plot-half-width", type=float, default=8.0,
+                    help="Eta half-width used only for eta-coordinate plots. Default: 8, so eta plots show |eta| <= 8. Use a value <= 0 to plot the full sampled eta range.")
     ap.add_argument("--fit-y-min", type=float, default=None, help="Minimum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--fit-y-max", type=float, default=None, help="Maximum physical height above wire [m] used for virtual-origin fits. If omitted, an automatic window is selected.")
     ap.add_argument("--auto-fit-min-points", type=int, default=30, help="Minimum number of centreline samples in automatic virtual-origin fit window")
     ap.add_argument("--auto-fit-min-span", type=float, default=None, help="Minimum physical height span [m] of automatic virtual-origin fit window. Default: max(0.025 m, 25*r)")
     ap.add_argument("--auto-fit-lower-cutoff", type=float, default=None, help="Minimum height above wire [m] for automatic fits. Default: max(12*r, 0.010 m)")
     ap.add_argument("--auto-fit-upper-cutoff", type=float, default=None,
-                    help="Maximum height above wire [m] allowed for automatic virtual-origin fits. Default: stop at 90% of the distance from wire centre to the top boundary, to avoid fitting the cooled top-wall region.")
+                    help="Maximum height above wire [m] allowed for automatic virtual-origin fits. Default: stop at 90%% of the distance from wire centre to the top boundary, to avoid fitting the cooled top-wall region.")
     ap.add_argument("--boundary-n", type=int, default=2001, help="Number of samples per rectangular boundary side for boundary heat-escape integration")
     ap.add_argument("--profile-half-width", type=float, default=None, help="Sample only |x|<=this physical half-width [m]. Default: full mesh width.")
     ap.add_argument("--comparison-profile-half-width", type=float, default=None,
@@ -834,7 +1455,7 @@ def main() -> None:
     ap.add_argument("--momentum-cv-half-width", type=float, default=None, help="Half-width [m] of the rectangular momentum-balance control volume. Default: same as profile-half-width, or full mesh half-width.")
     ap.add_argument("--momentum-cv-y0", type=float, default=None, help="Lower height above wire [m] for cumulative control-volume momentum balance. Default: balance-y-min.")
     ap.add_argument("--balance-y-max", type=float, default=None,
-                    help="Maximum height above wire [m] for continuous centreline and balance diagnostics. Default: 90% of available height from wire to top boundary.")
+                    help="Maximum height above wire [m] for continuous centreline and balance diagnostics. Default: 90%% of available height from wire to top boundary.")
     ap.add_argument("--balance-y-min", type=float, default=None,
                     help="Minimum height above wire [m] for continuous centreline and balance diagnostics. Default: just above the wire/source region.")
     ap.add_argument("--threshold", type=float, default=0.01, help="Boundary-layer threshold fraction of local near-surface temperature excess")
@@ -842,6 +1463,8 @@ def main() -> None:
     ap.add_argument("--bl-r-max", type=float, default=None, help="Maximum radial distance from cylinder surface [m] for boundary-layer search. Default: largest distance fitting in domain")
     ap.add_argument("--bl-nr", type=int, default=600, help="Number of radial samples per angular direction for boundary-layer search")
     args = ap.parse_args()
+    configure_plot_style(args.plot_font_size)
+    plot_figsize = thesis_figsize(args.plot_width_inch, args.plot_height_inch)
 
     if args.coords_are_dimensionless:
         if args.lref is None:
@@ -1012,6 +1635,8 @@ def main() -> None:
                 "DeltaT_K": Ti_ - args.T_inf,
                 "ux_m_per_s": uxi_,
                 "uy_m_per_s": uyi_,
+                "qconv_y_W_per_m2": args.rho * args.cp * uyi_ * (Ti_ - args.T_inf),
+                "qcond_y_W_per_m2": qt_ - args.rho * args.cp * uyi_ * (Ti_ - args.T_inf),
                 "qtotal_y_W_per_m2": qt_,
             })
 
@@ -1160,6 +1785,76 @@ def main() -> None:
         "thermal_boundary_layer_thickness_max_over_r": thermal_bl_max_m / wire_radius_m if np.isfinite(thermal_bl_max_m) and wire_radius_m else np.nan,
     }])
 
+
+    # Optional control-volume energy budget.
+    # Default lower boundary: one angular-mean thermal boundary-layer thickness below
+    # the lower wire surface; default upper boundary: 3.5 cm above the wire centre.
+    energy_cv_rows: List[Dict[str, float | str]] = []
+    energy_cv_total: Dict[str, float | str] = {}
+    if args.energy_cv:
+        wire_bottom_y_m = wire_y_m - wire_radius_m
+        if args.energy_cv_y_bottom is None:
+            if not np.isfinite(thermal_bl_mean_m):
+                raise SystemExit("--energy-cv needs a finite thermal boundary-layer estimate, or pass --energy-cv-y-bottom explicitly.")
+            cv_y_bottom = wire_bottom_y_m - thermal_bl_mean_m
+            cv_y_bottom_mode = "lower_wire_surface_minus_angular_mean_thermal_BL"
+        else:
+            cv_y_bottom = wire_y_m + float(args.energy_cv_y_bottom)
+            cv_y_bottom_mode = "user_height_above_wire_center"
+        cv_y_top = wire_y_m + float(args.energy_cv_y_top)
+        cv_y_bottom = max(cv_y_bottom, ymin)
+        cv_y_top = min(cv_y_top, ymax)
+        if cv_y_top <= cv_y_bottom:
+            raise SystemExit(f"Invalid energy CV y-range: bottom={cv_y_bottom:g}, top={cv_y_top:g}.")
+
+        width_mode = args.energy_cv_width_mode
+        eta_possible = (args.q_input_per_length is not None and args.mu is not None and args.beta is not None and args.rho > 0 and args.cp > 0)
+        if width_mode == "auto":
+            width_mode = "eta" if eta_possible else "fixed"
+        if width_mode == "eta" and not eta_possible:
+            raise SystemExit("--energy-cv-width-mode eta requires --q-input-per-length, --mu, --beta, --rho, and --cp.")
+
+        if width_mode == "fixed":
+            cv_hw = float(args.energy_cv_fixed_half_width)
+            cv_x_left = max(xmin, -cv_hw)
+            cv_x_right = min(xmax, cv_hw)
+            energy_cv_rows, energy_cv_total = integrate_energy_control_volume(
+                Ti, uxi, uyi, cv_x_left, cv_x_right, cv_y_bottom, cv_y_top,
+                rho=float(args.rho), cp=float(args.cp), T_inf=float(args.T_inf), k=float(args.k),
+                qx_i=qx_i, qy_i=qy_i, n_x=max(101, args.energy_cv_nx), n_y=max(101, args.energy_cv_ny),
+                x_half_fun=None,
+            )
+            cv_width_description = f"fixed |x| <= {cv_hw:g} m"
+        else:
+            # Use the same eta origin convention as the eta-profile block; if a fitted
+            # virtual origin is requested, it becomes available only later, so the CV uses
+            # the wire origin unless --eta-origin-height is supplied explicitly.
+            cv_eta_origin_y = wire_y_m + float(args.eta_origin_height) if args.eta_origin_height is not None else wire_y_m
+            def _xh(ys_):
+                return eta_halfwidth_at_y(ys_, float(args.energy_cv_eta_half_width), cv_eta_origin_y, float(args.q_input_per_length), float(args.rho), float(args.cp), float(args.mu), float(args.beta), float(args.g))
+            energy_cv_rows, energy_cv_total = integrate_energy_control_volume(
+                Ti, uxi, uyi, np.nan, np.nan, cv_y_bottom, cv_y_top,
+                rho=float(args.rho), cp=float(args.cp), T_inf=float(args.T_inf), k=float(args.k),
+                qx_i=qx_i, qy_i=qy_i, n_x=max(101, args.energy_cv_nx), n_y=max(101, args.energy_cv_ny),
+                x_half_fun=_xh,
+                eta_below_origin_policy=str(args.energy_cv_eta_below_origin_policy),
+            )
+            cv_width_description = f"hybrid/curved |eta| <= {float(args.energy_cv_eta_half_width):g}, below-origin policy={args.energy_cv_eta_below_origin_policy}"
+
+        for row in energy_cv_rows + [energy_cv_total]:
+            row["cv_width_mode"] = width_mode
+            row["cv_width_description"] = cv_width_description
+            row["cv_y_bottom_m"] = cv_y_bottom
+            row["cv_y_top_m"] = cv_y_top
+            row["cv_y_bottom_height_above_wire_m"] = cv_y_bottom - wire_y_m
+            row["cv_y_top_height_above_wire_m"] = cv_y_top - wire_y_m
+            row["cv_y_bottom_mode"] = cv_y_bottom_mode
+            row["thermal_bl_mean_m_used_for_default_bottom"] = thermal_bl_mean_m
+            if args.q_input_per_length:
+                row["fraction_of_input_total"] = float(row["Q_total_out_W_per_m"]) / float(args.q_input_per_length)
+                row["Q_total_out_minus_input_W_per_m"] = float(row["Q_total_out_W_per_m"]) - float(args.q_input_per_length)
+        write_csv(outdir / "energy_control_volume_budget.csv", energy_cv_rows + [energy_cv_total])
+
     # Virtual origin fits. Classical laminar line-source similarity suggests
     # DeltaT_c ~ (y-y0)^(-3/5), uy_c ~ (y-y0)^(+1/5).
     if args.fit_y_min is not None or args.fit_y_max is not None:
@@ -1280,6 +1975,48 @@ def main() -> None:
         "all_boundary_net_W_per_m": boundary_totals.get("Q_escape_all_boundaries_W_per_m", np.nan),
         "inferred_source_input_from_inner_boundary_W_per_m": boundary_totals.get("Q_source_inferred_from_inner_boundary_W_per_m", np.nan),
     }])
+
+    # Selected control-volume vertical momentum budget.
+    # This is the new thesis-facing output requested for the CV momentum balance.
+    # It deliberately does not modify the older momentum proxy/full plots.
+    selected_momentum_rows: List[Dict[str, float | str]] = []
+    if pi is not None and args.mu is not None and args.beta is not None:
+        selected_geom = momentum_cv_geometry_from_energy_settings(
+            args, xmin, xmax, ymin, ymax, wire_y_m, wire_radius_m, thermal_bl_mean_m,
+            rho=float(args.rho), cp=float(args.cp), mu=float(args.mu), beta=float(args.beta), g=float(args.g),
+        )
+        selected_momentum = integrate_selected_control_volume_vertical_momentum(
+            Ti, uxi, uyi, pi, selected_geom,
+            rho=float(args.rho), mu=float(args.mu), beta=float(args.beta), g=float(args.g), T_inf=float(args.T_inf),
+            n_side=max(201, int(args.energy_cv_ny)),
+            n_bottom_top=max(401, int(args.energy_cv_nx)),
+            n_area_y=max(51, min(int(args.energy_cv_ny), 401)),
+        )
+        if selected_momentum:
+            selected_momentum["cv_y_bottom_height_above_wire_m"] = float(selected_momentum.get("cv_y_bottom_m", np.nan)) - wire_y_m
+            selected_momentum["cv_y_top_height_above_wire_m"] = float(selected_momentum.get("cv_y_top_m", np.nan)) - wire_y_m
+            selected_momentum["description"] = (
+                "Single selected CV momentum budget: buoyancy area integral, cylinder drag, "
+                "side entrainment terms, and top/bottom loading terms."
+            )
+            drag = integrate_cylinder_traction_from_facets(Tdata.points_m, Tdata.cells, pi, uxi, uyi, float(args.mu))
+            selected_momentum.update(drag)
+            selected_momentum_rows.append(selected_momentum)
+        write_csv(outdir / "momentum_control_volume_budget.csv", selected_momentum_rows)
+    else:
+        missing = []
+        if pi is None:
+            missing.append("--pressure-xdmf")
+        if args.mu is None:
+            missing.append("--mu")
+        if args.beta is None:
+            missing.append("--beta")
+        selected_momentum_rows.append({
+            "enabled": "false",
+            "reason": "requires " + ", ".join(missing),
+            "description": "Selected CV momentum budget was not computed because pressure/viscosity/buoyancy inputs are incomplete.",
+        })
+        write_csv(outdir / "momentum_control_volume_budget.csv", selected_momentum_rows)
 
     # Approximate balance curves at many y-levels using the same x sampling.
     balance_rows = []
@@ -1417,10 +2154,10 @@ def main() -> None:
         vals = [args.q_input_per_length if args.q_input_per_length else np.nan,
                 boundary_totals["Q_escape_total_W_per_m"],
                 float(np.nanmax([r["Q_total_W_per_m"] for r in plane_rows])) if plane_rows else np.nan]
-        plt.figure(figsize=(7.2, 4.8))
+        plt.figure(figsize=plot_figsize)
         plt.bar(labels, vals)
         plt.ylabel("heat rate per unit depth [W/m]")
-        plt.title("Global/diagnostic heat budget")
+        maybe_set_title("Global/diagnostic heat budget", args.plot_titles)
         plt.grid(True, axis="y", alpha=0.35)
         plt.tight_layout()
         plt.savefig(outdir / "energy_budget_summary.png", dpi=180)
@@ -1494,7 +2231,7 @@ def main() -> None:
     # Linearized virtual-origin convergence plots. Intercept with zero gives y0.
     def plot_linearized_virtual_origin(path, yy_, amp_, exponent, fit, ylabel, title):
         mask = np.isfinite(yy_) & np.isfinite(amp_) & (amp_ > 0)
-        plt.figure(figsize=(7.2, 4.8))
+        plt.figure(figsize=plot_figsize)
         z = np.full_like(yy_, np.nan, dtype=float)
         z[mask] = amp_[mask] ** (1.0 / exponent)
         plt.plot(yy_[mask] - wire_y_m, z[mask], label="transformed centreline")
@@ -1508,7 +2245,7 @@ def main() -> None:
                 plt.axvline(fit["y0"] - wire_y_m, linestyle="--", label="virtual origin")
         plt.xlabel("height above wire centre [m]")
         plt.ylabel(ylabel)
-        plt.title(title)
+        maybe_set_title(title, args.plot_titles)
         plt.grid(True, alpha=0.35)
         plt.legend()
         plt.tight_layout()
@@ -1523,13 +2260,13 @@ def main() -> None:
     # Angular near-wire boundary-layer plot.
     angle_deg = np.array([r["angle_deg"] for r in ray_rows], dtype=float)
     delta_ang = np.array([r["thermal_boundary_layer_thickness_m"] for r in ray_rows], dtype=float)
-    plt.figure(figsize=(7.2, 4.8))
+    plt.figure(figsize=plot_figsize)
     plt.plot(angle_deg, delta_ang / wire_radius_m)
     if np.isfinite(thermal_bl_mean_m):
         plt.axhline(thermal_bl_mean_m / wire_radius_m, linestyle="--", label=f"mean={thermal_bl_mean_m / wire_radius_m:.4g} r")
     plt.xlabel("angle around cylinder [deg]; 0=right, 90=up")
     plt.ylabel("1% thermal thickness / r")
-    plt.title("Near-wire angular thermal boundary-layer thickness")
+    maybe_set_title("Near-wire angular thermal boundary-layer thickness", args.plot_titles)
     plt.grid(True, alpha=0.35)
     plt.legend()
     plt.tight_layout()
@@ -1537,12 +2274,12 @@ def main() -> None:
     plt.close()
 
     # Polar-style visualization of the same radial thickness values.
-    plt.figure(figsize=(6.2, 6.2))
+    plt.figure(figsize=(args.plot_width_inch, args.plot_width_inch))
     ax = plt.subplot(111, projection="polar")
     ax.plot(angles, delta_ang / wire_radius_m)
     if np.isfinite(thermal_bl_mean_m):
         ax.plot(angles, np.full_like(angles, thermal_bl_mean_m / wire_radius_m), linestyle="--", label="mean")
-    ax.set_title("Angular 1% thermal thickness / r")
+    maybe_set_ax_title(ax, "Angular 1% thermal thickness / r", args.plot_titles)
     ax.legend(loc="upper right")
     plt.tight_layout()
     plt.savefig(outdir / "near_wire_boundary_layer_polar.png", dpi=180)
@@ -1550,7 +2287,7 @@ def main() -> None:
 
     # Combined profile plots: one figure per quantity, with all requested heights overlaid.
     def combined_profile_plot(filename: str, quantity_key: str, ylabel: str, title: str) -> None:
-        plt.figure(figsize=(7.2, 4.8))
+        plt.figure(figsize=plot_figsize)
         for h in args.planes:
             rows = [r for r in profile_rows if abs(r["height_m"] - h) < 1e-15]
             if not rows:
@@ -1563,7 +2300,7 @@ def main() -> None:
             plt.plot(xp[order], qp[order], label=f"h={h:g} m")
         plt.xlabel("x [m]")
         plt.ylabel(ylabel)
-        plt.title(title)
+        maybe_set_title(title, args.plot_titles)
         plt.grid(True, alpha=0.35)
         plt.legend()
         plt.tight_layout()
@@ -1595,6 +2332,7 @@ def main() -> None:
         "Total vertical energy-flux-density profiles at requested heights",
     )
 
+
     # Gebhart/Fujii-style eta profiles.  In the paper notation the vertical
     # coordinate is x and the transverse coordinate is y; in this script those
     # correspond to height h above the line source and horizontal coordinate xs.
@@ -1624,9 +2362,9 @@ def main() -> None:
         for r in profile_rows:
             h_eta = float(r["y_m"]) - eta_origin_y_m
             Gr_h = (float(args.g) * float(args.beta) * theta_line_source * h_eta**3 / nu**2) if h_eta > 0.0 else np.nan
-            eta = (float(r["x_m"]) / h_eta) * Gr_h**0.25 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
-            temp_scale = theta_line_source * Gr_h**(-0.5) if np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
-            vel_scale = (nu / h_eta) * Gr_h**0.5 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            eta = (float(r["x_m"]) / h_eta) * Gr_h**0.2 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            temp_scale = theta_line_source * Gr_h**(-0.2) if np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
+            vel_scale = (nu / h_eta) * Gr_h**0.4 if h_eta > 0.0 and np.isfinite(Gr_h) and Gr_h > 0.0 else np.nan
             eta_rows.append({
                 **r,
                 "eta": eta,
@@ -1642,8 +2380,10 @@ def main() -> None:
         write_csv(outdir / "plane_profiles_eta.csv", eta_rows)
 
         def combined_eta_plot(filename: str, quantity_key: str, ylabel: str, title: str, xlim_percentile: float = 99.0) -> None:
-            plt.figure(figsize=(7.2, 4.8))
+            plt.figure(figsize=plot_figsize)
             all_eta = []
+            eta_plot_half_width = float(args.eta_plot_half_width) if args.eta_plot_half_width is not None else 0.0
+            use_eta_window = np.isfinite(eta_plot_half_width) and eta_plot_half_width > 0.0
             for h in args.planes:
                 rows = [rr for rr in eta_rows if abs(rr["height_m"] - h) < 1e-15]
                 if not rows:
@@ -1651,17 +2391,21 @@ def main() -> None:
                 et = np.array([rr["eta"] for rr in rows], dtype=float)
                 qp = np.array([rr[quantity_key] for rr in rows], dtype=float)
                 m = np.isfinite(et) & np.isfinite(qp)
+                if use_eta_window:
+                    m &= np.abs(et) <= eta_plot_half_width
                 if np.any(m):
                     all_eta.extend(np.abs(et[m]).tolist())
                     o = np.argsort(et[m])
                     plt.plot(et[m][o], qp[m][o], label=f"h={h:g} m")
-            if all_eta:
+            if use_eta_window:
+                plt.xlim(-eta_plot_half_width, eta_plot_half_width)
+            elif all_eta:
                 lim = np.nanpercentile(np.array(all_eta), xlim_percentile)
                 if np.isfinite(lim) and lim > 0:
                     plt.xlim(-lim, lim)
-            plt.xlabel(r"$\eta=(x/h)Gr_h^{1/4}$ [-]")
+            plt.xlabel(r"$\eta=(x/h)Gr_h^{1/5}$ [-]")
             plt.ylabel(ylabel)
-            plt.title(title)
+            maybe_set_title(title, args.plot_titles)
             plt.grid(True, alpha=0.35)
             plt.legend()
             plt.tight_layout()
@@ -1683,13 +2427,13 @@ def main() -> None:
         combined_eta_plot(
             "profiles_temperature_eta_similarity_all_heights.png",
             "DeltaT_similarity_h",
-            r"$h(\eta)=\Delta T/(\Theta Gr_h^{-1/2})$ [-]",
+            r"$h(\eta)=\Delta T/(\Theta Gr_h^{-1/5})$ [-]",
             r"Similarity-scaled temperature profiles",
         )
         combined_eta_plot(
             "profiles_uy_eta_similarity_all_heights.png",
             "uy_similarity_fprime",
-            r"$f'(\eta)=u_y/[(\nu/h)Gr_h^{1/2}]$ [-]",
+            r"$f'(\eta)=u_y/[(\nu/h)Gr_h^{2/5}]$ [-]",
             r"Similarity-scaled vertical-velocity profiles",
         )
     else:
@@ -1700,6 +2444,136 @@ def main() -> None:
             "beta_supplied": args.beta is not None,
             "q_input_per_length_supplied": args.q_input_per_length is not None,
         }])
+
+    # Plume enthalpy-flow balance over a constant eta width.
+    # This is intentionally separate from Q_total_W_per_m: here we integrate only
+    # the convective enthalpy flux rho*cp*uy*(T-T_inf) inside |eta| <= eta_half_width.
+    enthalpy_balance_rows = []
+    if eta_enabled and eta_rows:
+        eta_hw = float(args.energy_eta_half_width)
+        for h in args.planes:
+            rows_h = [rr for rr in eta_rows if abs(rr["height_m"] - h) < 1e-15]
+            if not rows_h:
+                continue
+            xh = np.array([rr["x_m"] for rr in rows_h], dtype=float)
+            etah = np.array([rr.get("eta", np.nan) for rr in rows_h], dtype=float)
+            qh = np.array([rr.get("qconv_y_W_per_m2", np.nan) for rr in rows_h], dtype=float)
+            uyh = np.array([rr.get("uy_m_per_s", np.nan) for rr in rows_h], dtype=float)
+            dth = np.array([rr.get("DeltaT_K", np.nan) for rr in rows_h], dtype=float)
+            mask = np.isfinite(xh) & np.isfinite(etah) & np.isfinite(qh) & (np.abs(etah) <= eta_hw)
+            if np.count_nonzero(mask) >= 2:
+                order = np.argsort(xh[mask])
+                xx = xh[mask][order]
+                qq = qh[mask][order]
+                uu = uyh[mask][order]
+                dd = dth[mask][order]
+                H_signed = robust_trapz(qq, xx)
+                H_upward = robust_trapz(np.where(uu > 0.0, qq, 0.0), xx)
+                H_downward = robust_trapz(np.where(uu < 0.0, qq, 0.0), xx)
+                H_positive_heat_upward = robust_trapz(np.where((uu > 0.0) & (dd > 0.0), qq, 0.0), xx)
+                x_min_eta = float(np.nanmin(xx))
+                x_max_eta = float(np.nanmax(xx))
+            else:
+                H_signed = H_upward = H_downward = H_positive_heat_upward = np.nan
+                x_min_eta = x_max_eta = np.nan
+            qin = float(args.q_input_per_length) if args.q_input_per_length is not None else np.nan
+            if np.isfinite(qin) and abs(qin) > 0.0:
+                signed_diff = H_signed - qin
+                upward_diff = H_upward - qin
+                signed_pct = 100.0 * signed_diff / qin
+                upward_pct = 100.0 * upward_diff / qin
+            else:
+                signed_diff = upward_diff = signed_pct = upward_pct = np.nan
+            enthalpy_balance_rows.append({
+                "height_m": float(h),
+                "eta_half_width": eta_hw,
+                "x_min_eta_window_m": x_min_eta,
+                "x_max_eta_window_m": x_max_eta,
+                "physical_width_eta_window_m": x_max_eta - x_min_eta if np.isfinite(x_min_eta) and np.isfinite(x_max_eta) else np.nan,
+                "n_samples_in_eta_window": int(np.count_nonzero(mask)),
+                "enthalpy_signed_W_per_m": H_signed,
+                "enthalpy_upward_only_W_per_m": H_upward,
+                "enthalpy_downward_only_W_per_m": H_downward,
+                "enthalpy_upward_positive_temperature_W_per_m": H_positive_heat_upward,
+                "supplied_heat_W_per_m": qin,
+                "signed_minus_supplied_W_per_m": signed_diff,
+                "signed_deviation_percent": signed_pct,
+                "upward_minus_supplied_W_per_m": upward_diff,
+                "upward_deviation_percent": upward_pct,
+            })
+        write_csv(outdir / "plume_enthalpy_balance.csv", enthalpy_balance_rows)
+    else:
+        enthalpy_balance_rows.append({
+            "enthalpy_balance_enabled": False,
+            "reason": "requires eta profiles, hence --mu, --beta, and positive --q-input-per-length",
+            "eta_half_width": float(args.energy_eta_half_width),
+        })
+        write_csv(outdir / "plume_enthalpy_balance.csv", enthalpy_balance_rows)
+
+    def format_enthalpy_balance_summary(rows: List[Dict[str, float | str]]) -> str:
+        if not rows or rows[0].get("enthalpy_balance_enabled", True) is False:
+            return ("\nPlume enthalpy-flow balance\n"
+                    "============================\n"
+                    f"Disabled: {rows[0].get('reason', 'missing data') if rows else 'missing data'}\n")
+        lines = []
+        lines.append("\nPlume enthalpy-flow balance")
+        lines.append("============================")
+        lines.append("Definition: integral rho cp uy (T - T_inf) dx over |eta| <= eta_half_width. Units are W/m.")
+        lines.append("")
+        header = ("height[m]   eta_hw   width[m]   signed[W/m]   upward[W/m]   "
+                  "signed-Qin[W/m]   signed dev[%]   upward dev[%]")
+        lines.append(header)
+        for rr in rows:
+            lines.append(
+                f"{rr['height_m']:9.4e}  {rr['eta_half_width']:6.2f}  "
+                f"{rr['physical_width_eta_window_m']:9.3e}  "
+                f"{rr['enthalpy_signed_W_per_m']:12.6e}  "
+                f"{rr['enthalpy_upward_only_W_per_m']:12.6e}  "
+                f"{rr['signed_minus_supplied_W_per_m']:14.6e}  "
+                f"{rr['signed_deviation_percent']:12.3f}  "
+                f"{rr['upward_deviation_percent']:12.3f}"
+            )
+        signed_err = np.array([rr.get("signed_deviation_percent", np.nan) for rr in rows], dtype=float)
+        upward_err = np.array([rr.get("upward_deviation_percent", np.nan) for rr in rows], dtype=float)
+        signed_err = signed_err[np.isfinite(signed_err)]
+        upward_err = upward_err[np.isfinite(upward_err)]
+        if signed_err.size:
+            lines.append("")
+            lines.append(f"Signed deviation: mean={np.mean(signed_err):.3f} %, min={np.min(signed_err):.3f} %, max={np.max(signed_err):.3f} %.")
+        if upward_err.size:
+            lines.append(f"Upward-only deviation: mean={np.mean(upward_err):.3f} %, min={np.min(upward_err):.3f} %, max={np.max(upward_err):.3f} %.")
+        return "\n".join(lines) + "\n"
+
+    def format_selected_momentum_summary(rows: List[Dict[str, float | str]]) -> str:
+        lines = []
+        lines.append("\nSelected control-volume momentum budget")
+        lines.append("=======================================")
+        if not rows:
+            lines.append("No rows were produced.")
+            return "\n".join(lines) + "\n"
+        rr = rows[0]
+        if str(rr.get("enabled", "true")).lower() == "false":
+            lines.append(f"Disabled: {rr.get('reason', 'missing inputs')}")
+            return "\n".join(lines) + "\n"
+        lines.append("Output file: momentum_control_volume_budget.csv")
+        lines.append("Signs: positive vertical force is upward; boundary convection uses the outward normal of the selected fluid CV.")
+        lines.append(f"CV mode: {rr.get('cv_width_mode', '')}, y_bottom={float(rr.get('cv_y_bottom_m', np.nan)):.6e} m, y_top={float(rr.get('cv_y_top_m', np.nan)):.6e} m.")
+        lines.append(f"Buoyancy integral: {float(rr.get('buoyancy_integral_N_per_m', np.nan)):.6e} N/m")
+        lines.append("Cylinder drag on the solid, decomposed into pressure and viscous parts:")
+        lines.append(f"  pressure: ({float(rr.get('drag_on_cylinder_pressure_x_N_per_m', np.nan)):.6e}, {float(rr.get('drag_on_cylinder_pressure_y_N_per_m', np.nan)):.6e}) N/m")
+        lines.append(f"  viscous : ({float(rr.get('drag_on_cylinder_viscous_x_N_per_m', np.nan)):.6e}, {float(rr.get('drag_on_cylinder_viscous_y_N_per_m', np.nan)):.6e}) N/m")
+        lines.append(f"  total   : ({float(rr.get('drag_on_cylinder_total_x_N_per_m', np.nan)):.6e}, {float(rr.get('drag_on_cylinder_total_y_N_per_m', np.nan)):.6e}) N/m")
+        lines.append("Momentum entrainment through the lateral CV boundaries:")
+        lines.append(f"  convection={float(rr.get('momentum_entrainment_convection_sides_N_per_m', np.nan)):.6e}, pressure={float(rr.get('momentum_entrainment_pressure_sides_N_per_m', np.nan)):.6e}, viscous={float(rr.get('momentum_entrainment_viscous_sides_N_per_m', np.nan)):.6e} N/m")
+        lines.append("Momentum loading through top/bottom CV boundaries:")
+        lines.append(f"  convection={float(rr.get('momentum_loading_convection_top_bottom_N_per_m', np.nan)):.6e}, pressure={float(rr.get('momentum_loading_pressure_top_bottom_N_per_m', np.nan)):.6e}, viscous={float(rr.get('momentum_loading_viscous_top_bottom_N_per_m', np.nan)):.6e} N/m")
+        lines.append(f"Closed-CV residual: {float(rr.get('momentum_balance_residual_N_per_m', np.nan)):.6e} N/m; relative={float(rr.get('momentum_balance_residual_relative', np.nan)):.6e}")
+        return "\n".join(lines) + "\n"
+
+    enthalpy_balance_summary = format_enthalpy_balance_summary(enthalpy_balance_rows)
+    print(enthalpy_balance_summary)
+    selected_momentum_summary = format_selected_momentum_summary(selected_momentum_rows)
+    print(selected_momentum_summary)
 
     # Optional thesis-style overlays: numerical solution as solid lines,
     # experimental data as symbols, boundary-layer/self-similar data as dashed lines.
@@ -1728,7 +2602,7 @@ def main() -> None:
             if comp_half_width is not None:
                 mask &= np.abs(xp) <= comp_half_width
             order = np.argsort(xp[mask])
-            plt.figure(figsize=(7.2, 4.8))
+            plt.figure(figsize=plot_figsize)
             plt.plot(args.comparison_x_scale * xp[mask][order], qp[mask][order], label="numerical", linewidth=2.0)
 
             exp_grouped = group_overlay_rows_by_label_and_height(exp_overlay_rows, h, args.comparison_height_tol)
@@ -1756,7 +2630,7 @@ def main() -> None:
             xunit = "mm" if abs(args.comparison_x_scale - 1000.0) < 1e-12 else f"{args.comparison_x_scale:g} x m"
             plt.xlabel(f"x [{xunit}]")
             plt.ylabel(ylabel)
-            plt.title(f"{title_prefix}, h={h:g} m")
+            maybe_set_title(f"{title_prefix}, h={h:g} m", args.plot_titles)
             plt.grid(True, alpha=0.35)
             plt.legend()
             plt.tight_layout()
@@ -1779,35 +2653,82 @@ def main() -> None:
         fitU["fit_height_min_m"] if np.isfinite(fitU.get("fit_height_min_m", np.nan)) else np.nanmin(h_center[h_center > 0]),
         fitU["fit_height_max_m"] if np.isfinite(fitU.get("fit_height_max_m", np.nan)) else np.nanmax(h_center),
     )
+    temp_bl_power = fit_fixed_exponent_powerlaw(
+        h_center, dT_c, -(3.0 / 5.0),
+        temp_power["fit_height_min_m"], temp_power["fit_height_max_m"],
+    )
+    vel_bl_power = fit_fixed_exponent_powerlaw(
+        h_center, uy_c, +(1.0 / 5.0),
+        vel_power["fit_height_min_m"], vel_power["fit_height_max_m"],
+    )
+
+    temp_vo_power = {"C": np.nan, "exponent": np.nan, "r2": np.nan, "npoints": 0,
+                     "fit_height_min_m": np.nan, "fit_height_max_m": np.nan}
+    temp_vo_bl_power = dict(temp_vo_power)
+    vel_vo_power = dict(temp_vo_power)
+    vel_vo_bl_power = dict(temp_vo_power)
+    if np.isfinite(fitT.get("y0", np.nan)) and np.isfinite(fitT.get("fit_y_min_m", np.nan)) and np.isfinite(fitT.get("fit_y_max_m", np.nan)):
+        temp_vo_power = fit_loglog_powerlaw_about_origin(yy, dT_c, fitT["y0"], fitT["fit_y_min_m"], fitT["fit_y_max_m"])
+        temp_vo_bl_power = fit_fixed_exponent_powerlaw_about_origin(yy, dT_c, fitT["y0"], -(3.0 / 5.0), fitT["fit_y_min_m"], fitT["fit_y_max_m"])
+    if np.isfinite(fitU.get("y0", np.nan)) and np.isfinite(fitU.get("fit_y_min_m", np.nan)) and np.isfinite(fitU.get("fit_y_max_m", np.nan)):
+        vel_vo_power = fit_loglog_powerlaw_about_origin(yy, uy_c, fitU["y0"], fitU["fit_y_min_m"], fitU["fit_y_max_m"])
+        vel_vo_bl_power = fit_fixed_exponent_powerlaw_about_origin(yy, uy_c, fitU["y0"], +(1.0 / 5.0), fitU["fit_y_min_m"], fitU["fit_y_max_m"])
+
     write_csv(outdir / "centerline_loglog_powerlaw_fits.csv", [
-        {"field": "temperature_centerline", **temp_power},
-        {"field": "velocity_centerline", **vel_power},
+        {"field": "temperature_centerline_height_from_wire_free_exponent", **temp_power},
+        {"field": "temperature_centerline_height_from_wire_boundary_layer_exponent", **temp_bl_power},
+        {"field": "velocity_centerline_height_from_wire_free_exponent", **vel_power},
+        {"field": "velocity_centerline_height_from_wire_boundary_layer_exponent", **vel_bl_power},
+        {"field": "temperature_centerline_virtual_origin_free_exponent", **temp_vo_power},
+        {"field": "temperature_centerline_virtual_origin_boundary_layer_exponent", **temp_vo_bl_power},
+        {"field": "velocity_centerline_virtual_origin_free_exponent", **vel_vo_power},
+        {"field": "velocity_centerline_virtual_origin_boundary_layer_exponent", **vel_vo_bl_power},
     ])
 
-    def plot_centerline_loglog(path: Path, amp: np.ndarray, fit: Dict[str, float], ylabel: str, title: str) -> None:
-        plt.figure(figsize=(7.2, 4.8))
-        mask = np.isfinite(h_center) & np.isfinite(amp) & (h_center > 0.0) & (amp > 0.0)
-        plt.loglog(h_center[mask], amp[mask], label="numerical centreline")
-        if np.isfinite(fit.get("C", np.nan)) and np.isfinite(fit.get("exponent", np.nan)):
-            hfit = h_center[mask]
-            w = (hfit >= fit["fit_height_min_m"]) & (hfit <= fit["fit_height_max_m"])
+    def plot_centerline_loglog(path: Path, h_axis: np.ndarray, amp: np.ndarray, free_fit: Dict[str, float],
+                               bl_fit: Dict[str, float], ylabel: str, xlabel: str, title: str,
+                               theory_exponent: float) -> None:
+        plt.figure(figsize=plot_figsize)
+        mask = np.isfinite(h_axis) & np.isfinite(amp) & (h_axis > 0.0) & (amp > 0.0)
+        plt.loglog(h_axis[mask], amp[mask], label="numerical centreline")
+        hfit = h_axis[mask]
+        if np.isfinite(free_fit.get("C", np.nan)) and np.isfinite(free_fit.get("exponent", np.nan)):
+            w = (hfit >= free_fit["fit_height_min_m"]) & (hfit <= free_fit["fit_height_max_m"])
             if np.any(w):
-                plt.loglog(hfit[w], fit["C"] * hfit[w] ** fit["exponent"],
-                           linestyle="--", label=f"fit: exponent={fit['exponent']:.3f}, R2={fit['r2']:.4f}")
-                plt.axvspan(fit["fit_height_min_m"], fit["fit_height_max_m"], alpha=0.12, label="fit window")
-        plt.xlabel("height above wire centre [m]")
+                plt.loglog(hfit[w], free_fit["C"] * hfit[w] ** free_fit["exponent"],
+                           linestyle="--", label=f"free fit: n={free_fit['exponent']:.3f}, R2={free_fit['r2']:.4f}")
+                plt.axvspan(free_fit["fit_height_min_m"], free_fit["fit_height_max_m"], alpha=0.12, label="fit window")
+        if np.isfinite(bl_fit.get("C", np.nan)):
+            w = (hfit >= bl_fit["fit_height_min_m"]) & (hfit <= bl_fit["fit_height_max_m"])
+            if np.any(w):
+                plt.loglog(hfit[w], bl_fit["C"] * hfit[w] ** theory_exponent,
+                           linestyle=":", linewidth=2.0, label=f"BL theory: n={theory_exponent:.3f}")
+        plt.xlabel(xlabel)
         plt.ylabel(ylabel)
-        plt.title(title)
+        maybe_set_title(title, args.plot_titles)
         plt.grid(True, which="both", alpha=0.35)
         plt.legend()
         plt.tight_layout()
         plt.savefig(path, dpi=220)
         plt.close()
 
-    plot_centerline_loglog(outdir / "centerline_temperature_loglog_powerlaw.png", dT_c, temp_power,
-                           r"$\Delta T_c$ [K]", "Centreline temperature decay on log-log axes")
-    plot_centerline_loglog(outdir / "centerline_velocity_loglog_powerlaw.png", uy_c, vel_power,
-                           r"$u_{y,c}$ [m/s]", "Centreline vertical velocity on log-log axes")
+    plot_centerline_loglog(outdir / "centerline_temperature_loglog_powerlaw.png", h_center, dT_c, temp_power, temp_bl_power,
+                           r"$\Delta T_c$ [K]", "height above wire centre [m]",
+                           "Centreline temperature decay on log-log axes", -(3.0 / 5.0))
+    plot_centerline_loglog(outdir / "centerline_velocity_loglog_powerlaw.png", h_center, uy_c, vel_power, vel_bl_power,
+                           r"$u_{y,c}$ [m/s]", "height above wire centre [m]",
+                           "Centreline vertical velocity on log-log axes", +(1.0 / 5.0))
+
+    if np.isfinite(fitT.get("y0", np.nan)):
+        hT_vo = yy - fitT["y0"]
+        plot_centerline_loglog(outdir / "virtual_origin_temperature_loglog.png", hT_vo, dT_c, temp_vo_power, temp_vo_bl_power,
+                               r"$\Delta T_c$ [K]", r"$y-y_{0,T}$ [m]",
+                               "Centreline temperature using fitted virtual origin", -(3.0 / 5.0))
+    if np.isfinite(fitU.get("y0", np.nan)):
+        hU_vo = yy - fitU["y0"]
+        plot_centerline_loglog(outdir / "virtual_origin_velocity_loglog.png", hU_vo, uy_c, vel_vo_power, vel_vo_bl_power,
+                               r"$u_{y,c}$ [m/s]", r"$y-y_{0,U}$ [m]",
+                               "Centreline vertical velocity using fitted virtual origin", +(1.0 / 5.0))
 
     summary_path = outdir / "README_summary.txt"
     with summary_path.open("w") as f:
@@ -1837,30 +2758,20 @@ def main() -> None:
         f.write("  uy_c     ~ C_U * (y - y0_U)^(+1/5)\n")
         f.write(f"Temperature virtual origin y0 = {fitT['y0']:.8e} m, R2={fitT['r2']:.6f}, n={fitT['npoints']}\n")
         f.write(f"Velocity virtual origin    y0 = {fitU['y0']:.8e} m, R2={fitU['r2']:.6f}, n={fitU['npoints']}\n")
-        f.write("\nEta-profile scaling:\n")
-        f.write(f"  eta origin mode: {eta_origin_mode}\n")
-        f.write(f"  eta origin y: {eta_origin_y_m:.16e} m\n")
-        if eta_enabled and np.isfinite(theta_line_source):
-            f.write(f"  nu = mu/rho: {nu:.16e} m^2/s\n")
-            f.write(f"  Theta = q/(rho cp nu) = q/(mu cp): {theta_line_source:.16e} K\n")
-            f.write("  eta = (horizontal coordinate / height above eta origin) * Gr_x^(1/4)\n")
-            f.write("  Gr_x = g beta Theta * height^3 / nu^2\n")
-        else:
-            f.write("  eta profiles were not computed; provide --mu, --beta, and --q-input-per-length.\n")
-        f.write("\nBoundary heat escape is integrated over exterior mesh facets; no cell-centred boundary extrapolation is used.\n\nMain outputs:\n")
+        f.write("\nBoundary heat escape is integrated over exterior mesh facets; no cell-centred boundary extrapolation is used.\n")
+        f.write(enthalpy_balance_summary)
+        f.write(selected_momentum_summary)
+        f.write("\nMain outputs:\n")
         f.write("  plane_integrals.csv\n")
         f.write("  plane_profiles.csv\n")
-        f.write("  plane_profiles_eta.csv\n")
-        f.write("  profiles_temperature_eta_physical_all_heights.png\n")
-        f.write("  profiles_uy_eta_physical_all_heights.png\n")
-        f.write("  profiles_temperature_eta_similarity_all_heights.png\n")
-        f.write("  profiles_uy_eta_similarity_all_heights.png\n")
+        f.write("  plume_enthalpy_balance.csv\n")
         f.write("  centerline.csv\n")
         f.write("  virtual_origin_fits.csv\n")
         f.write("  near_wire_boundary_layer.csv\n")
         f.write("  near_wire_boundary_layer_by_angle.csv\n")
         f.write("  balance_curves.csv\n")
         f.write("  momentum_balance_proxy.csv\n")
+        f.write("  momentum_control_volume_budget.csv\n")
         if full_momentum_rows:
             f.write("  momentum_balance_full.csv\n")
             f.write("  momentum_balance_full_terms.png\n")
@@ -1873,6 +2784,9 @@ def main() -> None:
     print(f"Velocity virtual origin    y0 = {fitU['y0']:.6e} m, R2={fitU['r2']:.4f}")
     print(f"Near-wire 1% thermal boundary-layer thickness angular mean = {thermal_bl_mean_m:.6e} m")
     print(f"Valid boundary-layer ray crossings = {delta_arr.size}/{args.bl_angles}")
+    print("Plume enthalpy-flow balance written to plume_enthalpy_balance.csv")
+    if args.energy_cv:
+        print(f"Energy control-volume budget written to energy_control_volume_budget.csv; total outward heat = {energy_cv_total.get('Q_total_out_W_per_m', np.nan):.6e} W/m")
 
 
 if __name__ == "__main__":

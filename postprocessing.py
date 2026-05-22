@@ -762,7 +762,60 @@ def main() -> None:
         help="Folder for CSV and PNG output. Defaults to results_dir/postprocess_temperature.",
     )
 
+    parser.add_argument(
+        "--plot-label-font-size",
+        type=float,
+        default=12.0,
+        help="Font size for x/y axis labels in generated plots.",
+    )
+
+    parser.add_argument(
+        "--plot-tick-font-size",
+        type=float,
+        default=11.0,
+        help="Font size for tick labels in generated plots.",
+    )
+
+    parser.add_argument(
+        "--plot-legend-font-size",
+        type=float,
+        default=8.5,
+        help="Font size for plot legends.",
+    )
+
+    parser.add_argument(
+        "--plot-figure-width",
+        type=float,
+        default=3.3,
+        help="Figure width in inches. 3.0--3.4 in is suitable for two figures side by side on A4.",
+    )
+
+    parser.add_argument(
+        "--plot-figure-height",
+        type=float,
+        default=2.45,
+        help="Figure height in inches.",
+    )
+
+    parser.add_argument(
+        "--plot-dpi",
+        type=int,
+        default=300,
+        help="Resolution used when saving PNG figures.",
+    )
+
     args = parser.parse_args()
+
+    plt.rcParams.update({
+        "figure.figsize": (args.plot_figure_width, args.plot_figure_height),
+        "figure.dpi": args.plot_dpi,
+        "savefig.dpi": args.plot_dpi,
+        "axes.labelsize": args.plot_label_font_size,
+        "xtick.labelsize": args.plot_tick_font_size,
+        "ytick.labelsize": args.plot_tick_font_size,
+        "legend.fontsize": args.plot_legend_font_size,
+        "font.size": args.plot_label_font_size,
+    })
 
     if args.workers < 1:
         raise ValueError("--workers must be >= 1")
@@ -970,7 +1023,7 @@ def main() -> None:
     plt.ylabel("Relative L2 update in box")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_box_relative_l2_update.png", dpi=200)
+    plt.savefig(output_dir / "temperature_box_relative_l2_update.png", dpi=300)
     plt.close()
 
     plt.figure()
@@ -979,7 +1032,7 @@ def main() -> None:
     plt.ylabel("L∞ update in box [K]")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_box_linf_update.png", dpi=200)
+    plt.savefig(output_dir / "temperature_box_linf_update.png", dpi=300)
     plt.close()
 
     plt.figure()
@@ -988,7 +1041,7 @@ def main() -> None:
     plt.ylabel(r"Maximum temperature excess in box $\max(T-T_\infty)$ [K]")
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_excess_box_peak.png", dpi=200)
+    plt.savefig(output_dir / "temperature_excess_box_peak.png", dpi=300)
     plt.close()
 
     peak_steps = np.asarray([row["step"] for row in plane_peak_rows], dtype=float)
@@ -1008,7 +1061,7 @@ def main() -> None:
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "temperature_excess_plane_peak_evolution.png", dpi=200)
+    plt.savefig(output_dir / "temperature_excess_plane_peak_evolution.png", dpi=300)
     plt.close()
 
     flux_steps = np.asarray([row["step"] for row in enthalpy_flux_rows], dtype=float)
@@ -1036,13 +1089,12 @@ def main() -> None:
         )
         plt.xlabel("Saved step")
         plt.ylabel(r"$Q_{conv,net}$ [W/m]")
-        plt.title(f"Convective enthalpy flux, y = {offset * 100:.0f} cm above wire")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(
             output_dir / f"enthalpy_flux_net_window_evolution_y_plus_{offset:.3f}_m.png",
-            dpi=200,
+            dpi=300,
         )
         plt.close()
 
@@ -1087,13 +1139,12 @@ def main() -> None:
         )
         plt.xlabel("Saved step")
         plt.ylabel(r"$Q_{conv,up/down}$ [W/m]")
-        plt.title(f"Up/down convective enthalpy flux, y = {offset * 100:.0f} cm above wire")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(
             output_dir / f"enthalpy_flux_up_down_window_evolution_y_plus_{offset:.3f}_m.png",
-            dpi=200,
+            dpi=300,
         )
         plt.close()
 
@@ -1113,13 +1164,12 @@ def main() -> None:
 
         plt.xlabel("Saved step")
         plt.ylabel(r"$|\int u_y dx| / \int |u_y| dx$")
-        plt.title(f"Vertical velocity net fraction, y = {offset * 100:.0f} cm above wire")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(
             output_dir / f"uy_net_fraction_window_evolution_y_plus_{offset:.3f}_m.png",
-            dpi=200,
+            dpi=300,
         )
         plt.close()
 
@@ -1143,11 +1193,10 @@ def main() -> None:
     plt.axhline(0.0, linewidth=0.8)
     plt.xlabel("Saved step")
     plt.ylabel(r"$\oint \rho c_p (T-T_\infty)(\mathbf{u}\cdot\mathbf{n})\,ds$ [W/m]")
-    plt.title("Outward convective enthalpy flow through outer boundary")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_evolution.png", dpi=200)
+    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_evolution.png", dpi=300)
     plt.close()
 
     plt.figure()
@@ -1166,11 +1215,10 @@ def main() -> None:
     plt.axhline(0.0, linewidth=0.8)
     plt.xlabel("Saved step")
     plt.ylabel(r"Boundary enthalpy flow [W/m]")
-    plt.title("Positive, negative, and net outward boundary enthalpy flow")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_positive_negative_evolution.png", dpi=200)
+    plt.savefig(output_dir / "enthalpy_flux_outer_boundary_positive_negative_evolution.png", dpi=300)
     plt.close()
 
     final_step = processed[-1]["step"]
@@ -1222,11 +1270,10 @@ def main() -> None:
 
     plt.xlabel("x [m]")
     plt.ylabel(r"Temperature excess $T-T_\infty$ [K]")
-    plt.title(f"Temperature excess profiles at saved step {final_step}")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / f"temperature_excess_profiles_step_{final_step}.png", dpi=200)
+    plt.savefig(output_dir / f"temperature_excess_profiles_step_{final_step}.png", dpi=300)
     plt.close()
 
     plt.figure()
@@ -1275,11 +1322,10 @@ def main() -> None:
     plt.axhline(0.0, linewidth=0.8)
     plt.xlabel("x [m]")
     plt.ylabel(r"Velocity [m/s], with $10u_x$ scaled")
-    plt.title(f"Velocity profiles across box width at saved step {final_step}")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.savefig(output_dir / f"velocity_profiles_uy_and_10ux_step_{final_step}.png", dpi=200)
+    plt.savefig(output_dir / f"velocity_profiles_uy_and_10ux_step_{final_step}.png", dpi=300)
     plt.close()
 
     plt.figure()
@@ -1333,13 +1379,12 @@ def main() -> None:
 
     plt.xlabel("x [m]")
     plt.ylabel(r"$\rho c_p (T - T_\infty) u_y$ [W/m²]")
-    plt.title(f"Convective enthalpy flux density at saved step {final_step}")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
     plt.savefig(
         output_dir / f"enthalpy_flux_density_profiles_step_{final_step}.png",
-        dpi=200,
+        dpi=300,
     )
     plt.close()
 
@@ -1415,7 +1460,7 @@ def plot_enthalpy_flux_1_4_8cm(
         "down": "Q_conv_down",
     }[flux_kind]
 
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(3.3, 2.45))
 
     for y_plus, label in y_planes.items():
         col = (
@@ -1433,17 +1478,12 @@ def plot_enthalpy_flux_1_4_8cm(
 
     plt.xlabel("Saved step")
     plt.ylabel("Convective enthalpy flux [W/m]")
-    plt.title(
-        f"{flux_kind.capitalize()} convective enthalpy flux "
-        f"at 1, 4, and 8 cm above wire\n"
-        f"Integration half-width = {halfwidth:.3f} m"
-    )
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
 
     if output_png is not None:
-        plt.savefig(output_png, dpi=200)
+        plt.savefig(output_png, dpi=300)
         print(f"Saved: {output_png}")
 
     plt.show()
