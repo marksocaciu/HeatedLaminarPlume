@@ -221,9 +221,9 @@ def solver_abe(sub_mesh: fenics.Mesh, T_full: fenics.Function, T_ambient: float,
     # Temperature initial guess:
     # If T_full is already a scalar Function on the *same sub_mesh* (your current pipeline),
     # interpolate it onto VT (safe even if VT is a different object).
-    # T0.interpolate(T_full)
-    T0.vector().zero()
-    T0.vector().apply("insert")
+    T0.interpolate(T_full)
+    # T0.vector().zero()
+    # T0.vector().apply("insert")
 
     # If you ever pass a function on a different mesh, you cannot do this; you'd need restriction/projection.
 
