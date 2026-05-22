@@ -1828,7 +1828,7 @@ def abs_version(
         )
 
    # Optional restart
-    if restart_from_checkpoint_mesh == "";
+    if restart_from_checkpoint_mesh == "":
         restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-5, "source": "fresh_start"}
     if (restart_from_last_transient or steady_from_last_transient) and restart_from_checkpoint_mesh == "":
         checkpoint_dir = os.path.join(run_root, "base", "restart_checkpoint")
