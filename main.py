@@ -1700,7 +1700,7 @@ def abs_version(
         print0(f"Using heat volume: {heat_volume} W/m^3")
 
         T_full, k_func = initial_guess(mesh, mc, mf, OUTPUT_XDMF_PATH_TEMP,
-                                        heat_volume, experiment, dx)
+                                        heat_volume * 0.1, experiment, dx)
 
         # --- 4) restrict/interpolate to submesh (dim) → theta_full_dim
         # (DO NOT project across meshes; interpolate T_full onto submesh space first)
@@ -2342,7 +2342,7 @@ def main():
         print0("Offline coarse-mesh remeshing completed.")
         return
 
-    basev = True
+    basev = False
     if basev:
         base_version(
             experiment,
