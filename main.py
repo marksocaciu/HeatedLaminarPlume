@@ -2218,7 +2218,7 @@ def main():
             steady_from_last_transient=args.steady_from_last_transient,
             restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
         )
-    elif args.formulation == "abs":
+    elif args.formulation == "abe":
         abs_version(
             experiment,
             restart_from_last_transient=args.restart_from_last_transient,
