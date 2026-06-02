@@ -2525,7 +2525,7 @@ def main() -> None:
             if cumulative_selected_momentum_rows:
                 hc = np.array([r["top_height_above_wire_m"] for r in cumulative_selected_momentum_rows], dtype=float)
                 plot_xy(outdir / "selected_cv_momentum_cumulative_terms.png", hc,
-                        [("increase of momentum", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                        [("momentum gain", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                          ("buoyancy force", np.array([r["buoyancy_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                          ("entrainment", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                          ("pressure force", np.array([r["pressure_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
@@ -2950,7 +2950,7 @@ def main() -> None:
                                theory_exponent: float) -> None:
         plt.figure(figsize=plot_figsize)
         mask = np.isfinite(h_axis) & np.isfinite(amp) & (h_axis > 0.0) & (amp > 0.0)
-        plt.loglog(h_axis[mask], amp[mask], label="numerical centreline")
+        plt.loglog(h_axis[mask], amp[mask], label="numerical")
         hfit = h_axis[mask]
         if np.isfinite(free_fit.get("C", np.nan)) and np.isfinite(free_fit.get("exponent", np.nan)):
             w = (hfit >= free_fit["fit_height_min_m"]) & (hfit <= free_fit["fit_height_max_m"])
@@ -2965,6 +2965,8 @@ def main() -> None:
                            linestyle=":", linewidth=2.0, label=f"BL theory: n={theory_exponent:.3f}")
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
+        plt.xlim(left=4e-3, right=5e-2)
+        plt.ylim(bottom=2e-2)
         maybe_set_title(title, args.plot_titles)
         plt.grid(True, which="both", alpha=0.35)
         plt.legend()

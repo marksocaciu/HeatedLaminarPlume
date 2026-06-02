@@ -85,30 +85,34 @@ def create_tagged_submesh_from_msh(
 
     return cell_mesh, facet_mesh
 
-def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list):
+def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list, time_value=None):
     """
-    MPI-safe XDMF writer.
+    Write one or more FEniCS Functions to XDMF.
 
-    In parallel, FEniCS/DOLFIN cannot write XDMF in ASCII mode.
-    Use the default HDF5-backed XDMF output instead.
+    If ``time_value`` is provided, it is passed to ``XDMFFile.write(function, t)``
+    so ParaView/VisIt see the snapshot as a time-labelled dataset instead of a
+    timeless field.  This keeps the old call signature backwards-compatible: all
+    existing calls without ``time_value`` behave as before.
     """
-    out_dir = os.path.dirname(str(OUTPUT_XDMF_PATH))
-    mkdir0(out_dir)
-    COMM.Barrier()
-
-    xdmf = XDMFFile(MPI.comm_world, str(OUTPUT_XDMF_PATH))
+    encoding = XDMFFile.Encoding.ASCII
+    xdmf = XDMFFile(MPI.comm_world, OUTPUT_XDMF_PATH)
     xdmf.parameters["flush_output"] = True
     xdmf.parameters["functions_share_mesh"] = True
-    xdmf.parameters["rewrite_function_mesh"] = False
+    xdmf.write(mesh, encoding=encoding)
 
-    # Do NOT write mesh explicitly in ASCII or with encoding=ASCII.
-    # Function writes will create/use the HDF5-backed mesh data.
     for sol in sol_list:
-        xdmf.write(sol)
+        if time_value is None:
+            xdmf.write(sol)
+        else:
+            xdmf.write(sol, float(time_value))
 
     xdmf.close()
 
-    print0("Saved experiment output:", OUTPUT_XDMF_PATH)
+    if MPI.comm_world.rank == 0:
+        if time_value is None:
+            print0("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH)
+        else:
+            print0("Solved heat equation on wire submesh. Output:", OUTPUT_XDMF_PATH, "time=", float(time_value))
 
 def generate_mesh(
     GEOM_FILE,

@@ -1397,7 +1397,7 @@ def solve_ptc_continuation(
         "status": "continuation_complete",
         "history": continuation_history,
     }
-
+    
 def run_post_continuation_transient(
     experiment: Experiment,
     W: fenics.FunctionSpace,
@@ -1476,10 +1476,45 @@ def run_post_continuation_transient(
     rejected_steps = 0
     history = []
     status = "transient_complete"
+
+    def _load_existing_history_csv(path):
+        """Load existing transient history so restart runs continue the same CSV."""
+        if not path or not os.path.exists(path) or os.path.getsize(path) == 0:
+            return []
+        import csv
+        rows = []
+        try:
+            with open(path, "r", newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    converted = {}
+                    for key, value in row.items():
+                        if key is None:
+                            continue
+                        if value is None or value == "":
+                            converted[key] = value
+                            continue
+                        try:
+                            converted[key] = int(value) if key == "step" else float(value)
+                        except Exception:
+                            converted[key] = value
+                    rows.append(converted)
+        except Exception as err:
+            print0(f"Warning: could not read existing transient history {path}: {err}")
+            rows = []
+        return rows
+
+    if history_csv_path:
+        history = _load_existing_history_csv(history_csv_path)
+        if history:
+            print0(
+                f"Continuing transient history from {history_csv_path} "
+                f"with {len(history)} existing rows."
+            )
     restart_settle_steps = 10
     restart_rel_update_reject = 5.0e-2
-    restart_rel_u_reject = 2.5e-1
-    restart_rel_theta_reject = 1.0e0
+    restart_rel_u_reject = 2.0e-1
+    restart_rel_theta_reject = 1.0e-1
     restart_u_abs_max = 1.0e3
     restart_theta_min = -1.0
     restart_theta_max = 20.0
@@ -1606,6 +1641,7 @@ def run_post_continuation_transient(
         return diag
 
     def _write_history_csv(path, rows):
+        """Rewrite the complete history table, preserving all discovered columns."""
         if not path or not rows:
             return
         import csv
@@ -1621,6 +1657,71 @@ def run_post_continuation_transient(
                 writer.writerows(rows)
 
         COMM.Barrier()
+
+    def _append_history_csv(path, row):
+        """
+        Append a single accepted transient step to transient_history.csv.
+
+        If the existing file has an older/incomplete header, rewrite once with the
+        union of old and new columns.  Otherwise append normally.
+        """
+        if not path or not row:
+            return
+        import csv
+        if is_rank0():
+            existing_rows = []
+            existing_fields = []
+            file_exists = os.path.exists(path) and os.path.getsize(path) > 0
+
+            if file_exists:
+                try:
+                    with open(path, "r", newline="") as f:
+                        reader = csv.DictReader(f)
+                        existing_fields = list(reader.fieldnames or [])
+                        existing_rows = list(reader)
+                except Exception as err:
+                    print0(f"Warning: could not inspect existing history CSV {path}: {err}")
+                    file_exists = False
+                    existing_rows = []
+                    existing_fields = []
+
+            fieldnames = list(existing_fields)
+            for key in row.keys():
+                if key not in fieldnames:
+                    fieldnames.append(key)
+
+            if (not file_exists) or (set(row.keys()) - set(existing_fields)):
+                with open(path, "w", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+                    for old_row in existing_rows:
+                        writer.writerow(old_row)
+                    writer.writerow(row)
+            else:
+                with open(path, "a", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writerow(row)
+
+        COMM.Barrier()
+
+    def _xdmf_time_seconds(t_value):
+        """Convert solver time to dimensional seconds for time-labelled XDMF."""
+        try:
+            velocity_scale = float(scales.Uplume if getattr(scales, "Uplume", None) is not None else scales.Uref)
+            if np.isfinite(velocity_scale) and velocity_scale > 0.0:
+                return float(t_value) * float(scales.Lref) / velocity_scale
+        except Exception:
+            pass
+        return float(t_value)
+
+    def _xdmf_dt_seconds(dt_value):
+        try:
+            velocity_scale = float(scales.Uplume if getattr(scales, "Uplume", None) is not None else scales.Uref)
+            if np.isfinite(velocity_scale) and velocity_scale > 0.0:
+                return float(dt_value) * float(scales.Lref) / velocity_scale
+        except Exception:
+            pass
+        return float(dt_value)
 
     def _window_mean(values):
         vals = [float(v) for v in values if np.isfinite(v)]
@@ -1845,6 +1946,8 @@ def run_post_continuation_transient(
             "candidate_u_max": float(candidate_diag.get("u_max", float("nan"))),
             "candidate_theta_min": float(candidate_diag.get("theta_min", float("nan"))),
             "candidate_theta_max": float(candidate_diag.get("theta_max", float("nan"))),
+            "time_dim_s": _xdmf_time_seconds(t),
+            "dt_dim_s": _xdmf_dt_seconds(dt),
         }
         row.update(_sample_probes(w_n))
         if diagnostic_every > 0 and (step % diagnostic_every == 0):
@@ -1863,7 +1966,7 @@ def run_post_continuation_transient(
             print0(f"  probes: {probe_str}")
 
         if history_csv_path:
-            _write_history_csv(history_csv_path, history)
+            _append_history_csv(history_csv_path, row)
 
         if (
             save_every > 0 and step % save_every == 0 and
@@ -1873,7 +1976,7 @@ def run_post_continuation_transient(
             p_star, u_star, theta = w_n.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uref, scales.dTref, T_ambient,
+                scales.Uplume, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
             k_air = fenics.Constant(experiment.fluid.properties["k"])
@@ -1921,12 +2024,12 @@ def run_post_continuation_transient(
             )
             J_out = T_path.split(".xdmf")[0] + f"_entropy_flux_transient_{step:05d}.xdmf"
             
-            # save_experiment(p_out, sub_mesh_dim, [p_dim])
-            save_experiment(u_out, sub_mesh_dim, [u_dim])
-            save_experiment(t_out, sub_mesh_dim, [T_dim])
-            save_experiment(q_out, sub_mesh_dim, [q_heat])
-            save_experiment(J_out, sub_mesh_dim, [J_dim])
-            # save_experiment(qmag_out, sub_mesh_dim, [q_mag])
+            # save_experiment(p_out, sub_mesh_dim, [p_dim], time_value=_xdmf_time_seconds(t))
+            save_experiment(u_out, sub_mesh_dim, [u_dim], time_value=_xdmf_time_seconds(t))
+            save_experiment(t_out, sub_mesh_dim, [T_dim], time_value=_xdmf_time_seconds(t))
+            save_experiment(q_out, sub_mesh_dim, [q_heat], time_value=_xdmf_time_seconds(t))
+            save_experiment(J_out, sub_mesh_dim, [J_dim], time_value=_xdmf_time_seconds(t))
+            # save_experiment(qmag_out, sub_mesh_dim, [q_mag], time_value=_xdmf_time_seconds(t))
 
             Lref_dim = float(scales.Lref)
             plane_fluxes = compute_horizontal_plane_heat_fluxes(
@@ -2176,12 +2279,11 @@ def solve_steady_from_loaded_checkpoint(
         u_star,
         p_star,
         theta,
-        scales.Uref,
+        scales.Uplume,
         scales.dTref,
         T_ambient,
         rho_air,
     )
-    step = int(checkpoint_meta.get('step', 0))
     k_air = fenics.Constant(experiment.fluid.properties["k"])
     q_heat, q_mag = compute_heat_flux_dim(T_dim, k_air)
     q_out = T_path.split(".xdmf")[0] + f"_heatflux_final_steady_{step:05d}.xdmf"

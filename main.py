@@ -849,24 +849,6 @@ def base_version(
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print0("Checks complete")
 
-    # w = solve_steady_newton_continuation(
-    #     experiment=experiment,
-    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-    #     W=W, w=w,
-    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-    #     w_n=w_n,
-    #     lambdas=[0.1, 0.2], #0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-    #     relaxation_schedule=(0.9, 0.7, 0.5),# 0.4, 0.35, 0.30, 0.27, 0.25, 0.22, 0.20, 0.15, 0.10),
-    #     stokes_startup=False,
-    #     sub_mesh_star=sub_mesh_star,
-    #     sub_mesh_dim=sub_mesh_dim,
-    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
-    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
-    #     T_path=OUTPUT_XDMF_PATH_AIR_T
-    # )
-
     save_obj = (
         sub_ds_star,
         sub_mesh_dim,
@@ -1289,27 +1271,6 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
             print0("Falling back to fresh transient start from steady state.")
             copy_state(w, w_n)
             restart_meta = {"step": 0, "time": 0.0, "dt": 1.0e-4, "source": "fresh_start"}
-
-    # if not restart_from_last_transient:
-    #     # Use Stokes initial guess for better convergene
-    #     print0("Solving Stokes problem for initial guess...")
-    #     w_n = stokes_initial_guess(
-    #         experiment=experiment,
-    #         u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-    #         W=W, w=w,
-    #         psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-    #         mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-    #         sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-    #         w_n=w_n,
-    #         lambdas=( 0.05, 0.1, 0.3)
-    #     )
-    #     # theta_ambient = w_n.sub(2).vector().min()  # update ambient temperature based on initial guess
-    #     update_material_from_mixed_nondimensional_temperature(
-    #         fluid_material=fluid_material,
-    #         w_mixed=w_n,
-    #         scales=scales,
-    #         T_ambient=T_ambient,
-    #     )
     
 
     print0("Starting checks")
@@ -1324,26 +1285,6 @@ def temperature_dependent_version(experiment: Experiment, restart_from_last_tran
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print0("Checks complete")
-
-    # w = temp_dep_solver(F,w, boundary_conditions, JF, w_n, fluid_material)
-    # w = solve_temp_newton_continuation(
-    #     experiment=experiment,
-    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-    #     W=W, w=w,
-    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-    #     w_n=w_n,
-    #     lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-    #     relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
-    #     stokes_startup=False,
-    #     sub_mesh_star=sub_mesh_star,
-    #     sub_mesh_dim=sub_mesh_dim,
-    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
-    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
-    #     T_path=OUTPUT_XDMF_PATH_AIR_T,
-    #     fluid_material=fluid_material,
-    # )
 
     save_obj = (
         sub_ds_star,
@@ -1874,16 +1815,7 @@ def abs_version(
     if not restart_from_last_transient and not steady_from_last_transient and restart_from_checkpoint_mesh == "":
         # Use Stokes initial guess for better convergene
         print0("Solving Stokes problem for initial guess...")
-        # w_n = stokes_initial_guess(
-        #     experiment=experiment,
-        #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-        #     W=W, w=w,
-        #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-        #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-        #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-        #     w_n=w_n,
-        #     lambdas=( 0.05, 0.1, 0.3)
-        # )
+
 
     # Solve the full nonlinear problem with previous initial guess
     print0("Starting checks")
@@ -1898,24 +1830,6 @@ def abs_version(
                                   sub_dx=sub_dx_star,sub_ds=sub_ds_star,sub_ft=sub_ft_star,
                                   qn_air=qn_air_star,T_c=T_c,T_air_bc=T_air_bc,w_n=w_n)
     print0("Checks complete")
-
-    # w = solve_ABE_newton_continuation(
-    #     experiment=experiment,
-    #     u_n=u_n, u=u, T_n=T_n, T=T, p=p,
-    #     W=W, w=w,
-    #     psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-    #     mu=mu, Pr=Pr, f_b=f_b, T_c=T_c, T_air_bc=T_air_bc,
-    #     sub_dx=sub_dx_star, sub_ds=sub_ds_star, sub_ft=sub_ft_star, qn_air=qn_air_star,
-    #     w_n=w_n,
-    #     lambdas=[0.01, 0.02, 0.03, 0.04, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.00],
-    #     relaxation_schedule=(0.9, 0.7, 0.5), #0.4, 0.35, 0.30, 0.8, 0.27, 0.25, 0.22, 0.20, 0.7, 0.15, 0.10, 0.05, 0.02, 0.01),
-    #     stokes_startup=False,
-    #     sub_mesh_star=sub_mesh_star,
-    #     sub_mesh_dim=sub_mesh_dim,
-    #     p_path=OUTPUT_XDMF_PATH_AIR_P,
-    #     u_path=OUTPUT_XDMF_PATH_AIR_V,
-    #     T_path=OUTPUT_XDMF_PATH_AIR_T
-    # )
 
     save_obj = (
         sub_ds_star,
@@ -2102,53 +2016,6 @@ def abs_version(
     save_experiment(OUTPUT_XDMF_PATH_AIR_V, sub_mesh_star, [u_dim])
     save_experiment(OUTPUT_XDMF_PATH_AIR_T, sub_mesh_star, [T_dim])
 
-    # Example: Brodowicz-style heights 1, 4, 8 cm above wire center
-    y0_m_list = [0.01, 0.04, 0.08]
-    hmin_star = sub_mesh_star.hmin()   # dimensionless
-    hmax_star = sub_mesh_star.hmax()
-    eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
-    # eps_m = 2 * hmin_star * scales.Lref
-
-    y0_m_list = [0.01, 0.04, 0.08]
-    hmin_star = sub_mesh_star.hmin()   # dimensionless
-    hmax_star = sub_mesh_star.hmax()
-    eps_m = 3 * 0.5*(hmin_star + hmax_star) * scales.Lref
-    # eps_m = 2 * hmin_star * scales.Lref
-    # flux_rows = plane_fluxes_slab_star(
-    #     sub_mesh_star,
-    #     u_star, theta,                   # your returned nondim u and theta
-    #     y0_m_list,
-    #     scales=scales,
-    #     rho=experiment.fluid.properties["rho"],
-    #     cp=experiment.fluid.properties["cp"],
-    #     k=experiment.fluid.properties["k"],
-    #     eps_m=eps_m             # e.g. 1 mm slab half-thickness (tune to mesh)
-    # )
-
-    # for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-    #     print0(f"y0={y0_m:.3f} m: Qconv={Qconv:.6e} W/m, Qcond={Qcond:.6e} W/m, "
-    #         f"Qtot={Qtot:.6e} W/m, mdot={mdot:.6e} kg/(s·m)")
-        
-    out_dir=Path.cwd()
-    csv_path = os.path.join(out_dir,run_root, "base", "plane_fluxes.csv")
-    write_header = not os.path.exists(csv_path)
-
-    # if is_rank0():
-    #     with open(csv_path, "a", newline="") as f:
-    #         wcsv = csv.writer(f)
-    #         if write_header:
-    #             wcsv.writerow([
-    #                 "time",
-    #                 "y0_m",
-    #                 "Qconv_W_per_m",
-    #                 "Qcond_W_per_m",
-    #                 "Qtot_W_per_m",
-    #                 "mdot_kg_per_s_per_m",
-    #             ])
-    #         t = 0
-    #         for (y0_m, Qconv, Qcond, Qtot, mdot) in flux_rows:
-    #             wcsv.writerow([float(t), y0_m, Qconv, Qcond, Qtot, mdot])
-
     COMM.Barrier()
 
 
@@ -2164,6 +2031,7 @@ def main():
     argparser.add_argument("--restart-from-last-transient", action="store_true")
     argparser.add_argument("--existing-run-root", type=str, default="")
     argparser.add_argument("--steady-from-last-transient", action="store_true")
+    argparser.add_argument("--formulation", type=str, default="abe", help="Solver formulation to use")
 
     argparser.add_argument(
         "--refine-restart-checkpoint",
@@ -2342,8 +2210,7 @@ def main():
         print0("Offline coarse-mesh remeshing completed.")
         return
 
-    basev = False
-    if basev:
+    if args.formulation == "base":
         base_version(
             experiment,
             restart_from_last_transient=args.restart_from_last_transient,
@@ -2351,7 +2218,7 @@ def main():
             steady_from_last_transient=args.steady_from_last_transient,
             restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
         )
-    else:
+    elif args.formulation == "abs":
         abs_version(
             experiment,
             restart_from_last_transient=args.restart_from_last_transient,
@@ -2359,7 +2226,13 @@ def main():
             steady_from_last_transient=args.steady_from_last_transient,
             restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
         )
-    # temperature_dependent_version(experiment)
+    else:
+        temperature_dependent_version(
+            experiment,
+            restart_from_last_transient=args.restart_from_last_transient,
+            existing_run_root=args.existing_run_root,
+        )
+
 
 
 if __name__ == "__main__":
