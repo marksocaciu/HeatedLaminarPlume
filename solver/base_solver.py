@@ -1707,7 +1707,7 @@ def run_post_continuation_transient(
     def _xdmf_time_seconds(t_value):
         """Convert solver time to dimensional seconds for time-labelled XDMF."""
         try:
-            velocity_scale = float(scales.Uplume if getattr(scales, "Uplume", None) is not None else scales.Uref)
+            velocity_scale = float(scales.Uref if getattr(scales, "Uref", None) is not None else scales.Uref)
             if np.isfinite(velocity_scale) and velocity_scale > 0.0:
                 return float(t_value) * float(scales.Lref) / velocity_scale
         except Exception:
@@ -1716,7 +1716,7 @@ def run_post_continuation_transient(
 
     def _xdmf_dt_seconds(dt_value):
         try:
-            velocity_scale = float(scales.Uplume if getattr(scales, "Uplume", None) is not None else scales.Uref)
+            velocity_scale = float(scales.Uref if getattr(scales, "Uref", None) is not None else scales.Uref)
             if np.isfinite(velocity_scale) and velocity_scale > 0.0:
                 return float(dt_value) * float(scales.Lref) / velocity_scale
         except Exception:
@@ -1976,7 +1976,7 @@ def run_post_continuation_transient(
             p_star, u_star, theta = w_n.split(deepcopy=True)
             u_dim, p_dim, T_dim = dimensionalize_fields(
                 sub_mesh_star, u_star, p_star, theta,
-                scales.Uplume, scales.dTref, T_ambient,
+                scales.Uref, scales.dTref, T_ambient,
                 experiment.fluid.properties["rho"],
             )
             k_air = fenics.Constant(experiment.fluid.properties["k"])
@@ -2279,7 +2279,7 @@ def solve_steady_from_loaded_checkpoint(
         u_star,
         p_star,
         theta,
-        scales.Uplume,
+        scales.Uref,
         scales.dTref,
         T_ambient,
         rho_air,

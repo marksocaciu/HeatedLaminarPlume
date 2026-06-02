@@ -94,7 +94,7 @@ def save_experiment(OUTPUT_XDMF_PATH, mesh, sol_list, time_value=None):
     timeless field.  This keeps the old call signature backwards-compatible: all
     existing calls without ``time_value`` behave as before.
     """
-    encoding = XDMFFile.Encoding.ASCII
+    encoding = XDMFFile.Encoding.HDF5
     xdmf = XDMFFile(MPI.comm_world, OUTPUT_XDMF_PATH)
     xdmf.parameters["flush_output"] = True
     xdmf.parameters["functions_share_mesh"] = True
