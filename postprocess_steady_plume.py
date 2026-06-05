@@ -1153,6 +1153,292 @@ def integrate_control_volume_vertical_momentum(
         "momentum_balance_residual_relative": float(residual / scale),
     }
 
+
+def classify_boundary_edge_name(mid: np.ndarray, xmin: float, xmax: float, ymin: float, ymax: float, tol: float) -> str:
+    """Classify an exterior mesh edge by midpoint location."""
+    if abs(float(mid[1]) - ymax) <= tol:
+        return "top"
+    if abs(float(mid[1]) - ymin) <= tol:
+        return "bottom"
+    if abs(float(mid[0]) - xmin) <= tol:
+        return "left"
+    if abs(float(mid[0]) - xmax) <= tol:
+        return "right"
+    return "other"
+
+
+def compute_wire_nusselt_diagnostics(
+    points: np.ndarray,
+    cells: np.ndarray,
+    T: np.ndarray,
+    Ti,
+    *,
+    T_inf: float,
+    k: float,
+    q_input_per_length: float,
+    wire_center_x_m: float,
+    wire_center_y_m: float,
+    wire_radius_m: float,
+    rho: Optional[float] = None,
+    mu: Optional[float] = None,
+    beta: Optional[float] = None,
+    g: float = 9.81,
+    solid_k: Optional[float] = None,
+    n_angles: int = 361,
+    surface_offset_m: Optional[float] = None,
+) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
+    """
+    Compute local and overall wire/cylinder Nusselt diagnostics.
+
+    Base definition:
+        Nu_D = h D / k, with D = 2R.
+
+    Overall value:
+        h = Q_L / (S_w*(Tbar_s - T_inf)),
+        Nu_D = Q_L*D/(S_w*k*(Tbar_s - T_inf)).
+
+    Optional extended values:
+        Gr_D = g*beta*(T_s - T_inf)*D^3/nu^2, with nu=mu/rho,
+        Nu_delta = Nu_D/Gr_D^(1/5),
+        Bi = Nu_D*k/k_s.
+    """
+    if q_input_per_length is None or not np.isfinite(float(q_input_per_length)):
+        raise ValueError("Nusselt diagnostics require a finite --q-input-per-length.")
+    if wire_radius_m <= 0.0:
+        raise ValueError("Nusselt diagnostics require a positive wire radius.")
+    if k <= 0.0:
+        raise ValueError("Nusselt diagnostics require a positive fluid thermal conductivity --k.")
+
+    D = 2.0 * float(wire_radius_m)
+    nominal_perimeter = math.pi * D
+    QL = float(q_input_per_length)
+
+    have_gr = (
+        rho is not None and mu is not None and beta is not None
+        and np.isfinite(float(rho)) and np.isfinite(float(mu)) and np.isfinite(float(beta))
+        and float(rho) > 0.0 and float(mu) > 0.0 and float(beta) > 0.0
+    )
+    nu = float(mu) / float(rho) if have_gr else np.nan
+
+    have_bi = solid_k is not None and np.isfinite(float(solid_k)) and float(solid_k) > 0.0
+    solid_k_value = float(solid_k) if have_bi else np.nan
+
+    def _gr_d(delta_t: float) -> float:
+        if not have_gr or not np.isfinite(delta_t) or delta_t <= 0.0:
+            return np.nan
+        return float(g) * float(beta) * float(delta_t) * D**3 / (nu**2)
+
+    def _nu_delta(nu_d: float, gr_d: float) -> float:
+        if not np.isfinite(nu_d) or not np.isfinite(gr_d) or gr_d <= 0.0:
+            return np.nan
+        return float(nu_d) / (float(gr_d) ** 0.2)
+
+    def _bi(nu_d: float) -> float:
+        if not have_bi or not np.isfinite(nu_d):
+            return np.nan
+        return float(nu_d) * float(k) / solid_k_value
+
+    xmin, xmax = float(np.min(points[:, 0])), float(np.max(points[:, 0]))
+    ymin, ymax = float(np.min(points[:, 1])), float(np.max(points[:, 1]))
+    tol = 1e-8 * max(xmax - xmin, ymax - ymin, 1.0)
+
+    inner_length = 0.0
+    inner_T_int = 0.0
+    inner_dT_int = 0.0
+    inner_Nu_int = 0.0
+    inner_count = 0
+
+    for a, b, ci in boundary_edges_with_cells(cells):
+        p0 = points[a]
+        p1 = points[b]
+        mid = 0.5 * (p0 + p1)
+        if classify_boundary_edge_name(mid, xmin, xmax, ymin, ymax, tol) != "other":
+            continue
+        L = float(np.linalg.norm(p1 - p0))
+        if L <= 0.0:
+            continue
+        Tmid = 0.5 * (float(T[a]) + float(T[b]))
+        dTmid = Tmid - float(T_inf)
+        inner_length += L
+        inner_T_int += Tmid * L
+        inner_dT_int += dTmid * L
+        inner_count += 1
+
+    if inner_length <= 0.0 or inner_count == 0:
+        raise ValueError("Could not identify the inner wire boundary. Expected non-outer boundary facets classified as 'other'.")
+
+    Tbar_edge = inner_T_int / inner_length
+    dTbar_edge = Tbar_edge - float(T_inf)
+    qpp_actual = QL / inner_length
+    qpp_nominal = QL / nominal_perimeter
+
+    Nu_overall_actual = qpp_actual * D / (float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
+    Nu_overall_nominal = qpp_nominal * D / (float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
+    Nu_overall_formula = QL / (math.pi * float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
+
+    GrD_overall = _gr_d(dTbar_edge)
+    Nu_delta_overall_actual = _nu_delta(Nu_overall_actual, GrD_overall)
+    Nu_delta_overall_nominal = _nu_delta(Nu_overall_nominal, GrD_overall)
+    Bi_overall_actual = _bi(Nu_overall_actual)
+    Bi_overall_nominal = _bi(Nu_overall_nominal)
+
+    if surface_offset_m is None:
+        surface_offset_m = max(1e-9, 1e-4 * wire_radius_m)
+    surface_offset_m = float(surface_offset_m)
+
+    angles = np.linspace(0.0, 2.0 * np.pi, int(n_angles), endpoint=False)
+    local_rows: List[Dict[str, float | str]] = []
+    Nu_loc_values = []
+    Ts_values = []
+    GrD_values = []
+    Nu_delta_values = []
+    Bi_values = []
+
+    for phi in angles:
+        c = math.cos(float(phi))
+        s = math.sin(float(phi))
+        xs = float(wire_center_x_m) + (wire_radius_m + surface_offset_m) * c
+        ys = float(wire_center_y_m) + (wire_radius_m + surface_offset_m) * s
+        Ts = float(finite_or_nan(Ti(np.array([xs]), np.array([ys])))[0])
+        dTs = Ts - float(T_inf) if np.isfinite(Ts) else np.nan
+        Nu_loc_actual = qpp_actual * D / (float(k) * dTs) if np.isfinite(dTs) and dTs > 0.0 else np.nan
+        Nu_loc_nominal = qpp_nominal * D / (float(k) * dTs) if np.isfinite(dTs) and dTs > 0.0 else np.nan
+        GrD_loc = _gr_d(dTs)
+        Nu_delta_loc_actual = _nu_delta(Nu_loc_actual, GrD_loc)
+        Nu_delta_loc_nominal = _nu_delta(Nu_loc_nominal, GrD_loc)
+        Bi_loc_actual = _bi(Nu_loc_actual)
+        Bi_loc_nominal = _bi(Nu_loc_nominal)
+
+        local_rows.append({
+            "angle_rad": float(phi),
+            "angle_deg": float(np.degrees(phi)),
+            "x_m": xs,
+            "y_m": ys,
+            "T_surface_sample_K": Ts,
+            "DeltaT_surface_sample_K": dTs,
+            "Nu_local_perimeter_corrected": Nu_loc_actual,
+            "Nu_local_nominal_circle": Nu_loc_nominal,
+            "Gr_D_local_from_surface_sample": GrD_loc,
+            "Nu_delta_local_perimeter_corrected": Nu_delta_loc_actual,
+            "Nu_delta_local_nominal_circle": Nu_delta_loc_nominal,
+            "Bi_local_perimeter_corrected": Bi_loc_actual,
+            "Bi_local_nominal_circle": Bi_loc_nominal,
+            "qpp_perimeter_corrected_W_per_m2": qpp_actual,
+            "qpp_nominal_circle_W_per_m2": qpp_nominal,
+            "sampling_offset_from_surface_m": surface_offset_m,
+        })
+        if np.isfinite(Nu_loc_actual):
+            Nu_loc_values.append(Nu_loc_actual)
+        if np.isfinite(Ts):
+            Ts_values.append(Ts)
+        if np.isfinite(GrD_loc):
+            GrD_values.append(GrD_loc)
+        if np.isfinite(Nu_delta_loc_actual):
+            Nu_delta_values.append(Nu_delta_loc_actual)
+        if np.isfinite(Bi_loc_actual):
+            Bi_values.append(Bi_loc_actual)
+
+    for a, b, ci in boundary_edges_with_cells(cells):
+        p0 = points[a]
+        p1 = points[b]
+        mid = 0.5 * (p0 + p1)
+        if classify_boundary_edge_name(mid, xmin, xmax, ymin, ymax, tol) != "other":
+            continue
+        L = float(np.linalg.norm(p1 - p0))
+        if L <= 0.0:
+            continue
+        Tmid = 0.5 * (float(T[a]) + float(T[b]))
+        dTmid = Tmid - float(T_inf)
+        Nu_mid = qpp_actual * D / (float(k) * dTmid) if dTmid > 0.0 else np.nan
+        if np.isfinite(Nu_mid):
+            inner_Nu_int += Nu_mid * L
+
+    Nu_arr = np.asarray(Nu_loc_values, dtype=float)
+    Ts_arr = np.asarray(Ts_values, dtype=float)
+    GrD_arr = np.asarray(GrD_values, dtype=float)
+    Nu_delta_arr = np.asarray(Nu_delta_values, dtype=float)
+    Bi_arr = np.asarray(Bi_values, dtype=float)
+
+    summary_rows: List[Dict[str, float | str]] = [{
+        "definition": "Nu_D=hD/k, Gr_D=g*beta*(T_s-T_inf)*D^3/nu^2, Nu_delta=Nu_D/Gr_D^(1/5), Bi=Nu_D*k/k_s",
+        "wire_center_x_m": float(wire_center_x_m),
+        "wire_center_y_m": float(wire_center_y_m),
+        "wire_radius_m": float(wire_radius_m),
+        "wire_diameter_m": D,
+        "wire_perimeter_integrated_from_mesh_m": inner_length,
+        "wire_perimeter_nominal_circle_m": nominal_perimeter,
+        "wire_perimeter_relative_error_vs_nominal": (inner_length - nominal_perimeter) / nominal_perimeter if nominal_perimeter > 0.0 else np.nan,
+        "wire_boundary_edge_count": int(inner_count),
+        "T_surface_mean_edge_length_weighted_K": Tbar_edge,
+        "DeltaT_surface_mean_edge_length_weighted_K": dTbar_edge,
+        "q_input_per_length_W_per_m": QL,
+        "qpp_perimeter_corrected_W_per_m2": qpp_actual,
+        "qpp_nominal_circle_W_per_m2": qpp_nominal,
+        "Nu_overall_perimeter_corrected": Nu_overall_actual,
+        "Nu_overall_nominal_circle": Nu_overall_nominal,
+        "Nu_overall_Q_over_pi_k_DeltaT": Nu_overall_formula,
+        "rho_kg_per_m3_for_Gr_D": float(rho) if rho is not None else np.nan,
+        "mu_Pa_s_for_Gr_D": float(mu) if mu is not None else np.nan,
+        "nu_m2_per_s_for_Gr_D": nu,
+        "beta_1_per_K_for_Gr_D": float(beta) if beta is not None else np.nan,
+        "g_m_per_s2_for_Gr_D": float(g),
+        "Gr_D_overall_from_mean_surface_DeltaT": GrD_overall,
+        "Nu_delta_overall_perimeter_corrected": Nu_delta_overall_actual,
+        "Nu_delta_overall_nominal_circle": Nu_delta_overall_nominal,
+        "solid_k_W_per_mK_for_Bi": solid_k_value,
+        "Bi_overall_perimeter_corrected": Bi_overall_actual,
+        "Bi_overall_nominal_circle": Bi_overall_nominal,
+        "Nu_local_surface_average_edge_length_weighted": inner_Nu_int / inner_length if inner_length > 0.0 else np.nan,
+        "Nu_local_sample_mean_perimeter_corrected": float(np.mean(Nu_arr)) if Nu_arr.size else np.nan,
+        "Nu_local_sample_min_perimeter_corrected": float(np.min(Nu_arr)) if Nu_arr.size else np.nan,
+        "Nu_local_sample_max_perimeter_corrected": float(np.max(Nu_arr)) if Nu_arr.size else np.nan,
+        "Gr_D_local_sample_mean": float(np.mean(GrD_arr)) if GrD_arr.size else np.nan,
+        "Gr_D_local_sample_min": float(np.min(GrD_arr)) if GrD_arr.size else np.nan,
+        "Gr_D_local_sample_max": float(np.max(GrD_arr)) if GrD_arr.size else np.nan,
+        "Nu_delta_local_sample_mean_perimeter_corrected": float(np.mean(Nu_delta_arr)) if Nu_delta_arr.size else np.nan,
+        "Nu_delta_local_sample_min_perimeter_corrected": float(np.min(Nu_delta_arr)) if Nu_delta_arr.size else np.nan,
+        "Nu_delta_local_sample_max_perimeter_corrected": float(np.max(Nu_delta_arr)) if Nu_delta_arr.size else np.nan,
+        "Bi_local_sample_mean_perimeter_corrected": float(np.mean(Bi_arr)) if Bi_arr.size else np.nan,
+        "Bi_local_sample_min_perimeter_corrected": float(np.min(Bi_arr)) if Bi_arr.size else np.nan,
+        "Bi_local_sample_max_perimeter_corrected": float(np.max(Bi_arr)) if Bi_arr.size else np.nan,
+        "T_surface_sample_mean_K": float(np.mean(Ts_arr)) if Ts_arr.size else np.nan,
+        "T_surface_sample_min_K": float(np.min(Ts_arr)) if Ts_arr.size else np.nan,
+        "T_surface_sample_max_K": float(np.max(Ts_arr)) if Ts_arr.size else np.nan,
+        "n_local_angle_samples_requested": int(n_angles),
+        "n_local_angle_samples_valid": int(Nu_arr.size),
+        "local_sampling_offset_from_surface_m": surface_offset_m,
+        "notes": "Use Nu_overall_perimeter_corrected as the primary total wire Nusselt number. Nu_delta requires rho, mu, beta. Bi requires --solid-k.",
+    }]
+    return summary_rows, local_rows
+
+
+def plot_local_nusselt(path: Path, rows: List[Dict[str, float | str]], *, figsize: Tuple[float, float], show_titles: bool = False) -> None:
+    if not rows:
+        return
+    phi = np.asarray([r["angle_deg"] for r in rows], dtype=float)
+    Nu = np.asarray([r["Nu_local_perimeter_corrected"] for r in rows], dtype=float)
+    Nu_delta = np.asarray([r["Nu_delta_local_perimeter_corrected"] for r in rows], dtype=float)
+    mask = np.isfinite(phi) & np.isfinite(Nu)
+    if np.count_nonzero(mask) < 2:
+        return
+    order = np.argsort(phi[mask])
+    plt.figure(figsize=figsize)
+    plt.plot(phi[mask][order], Nu[mask][order], linewidth=1.8, label=r"$Nu_D$")
+    if np.any(np.isfinite(Nu_delta)):
+        maskd = np.isfinite(phi) & np.isfinite(Nu_delta)
+        orderd = np.argsort(phi[maskd])
+        plt.plot(phi[maskd][orderd], Nu_delta[maskd][orderd], linewidth=1.8, label=r"$Nu_\delta$")
+        plt.legend()
+    plt.xlabel(r"surface angle $\phi$ [deg]")
+    plt.ylabel(r"Nusselt number [-]")
+    maybe_set_title("Local wire Nusselt diagnostics", show_titles)
+    plt.grid(True, alpha=0.35)
+    plt.tight_layout()
+    plt.savefig(path, dpi=220)
+    plt.close()
+
+
+
 def write_csv(path: Path, rows: List[Dict[str, float | str]]) -> None:
     if not rows:
         return
@@ -1309,212 +1595,6 @@ def fit_fixed_exponent_powerlaw_about_origin(y: np.ndarray, a: np.ndarray, y0: f
     h_shifted = np.asarray(y, dtype=float) - float(y0)
     return fit_fixed_exponent_powerlaw(h_shifted, a, exponent, float(y_min) - float(y0), float(y_max) - float(y0))
 
-
-def classify_boundary_edge_name(mid: np.ndarray, xmin: float, xmax: float, ymin: float, ymax: float, tol: float) -> str:
-    """Classify an exterior mesh edge by midpoint location."""
-    if abs(float(mid[1]) - ymax) <= tol:
-        return "top"
-    if abs(float(mid[1]) - ymin) <= tol:
-        return "bottom"
-    if abs(float(mid[0]) - xmin) <= tol:
-        return "left"
-    if abs(float(mid[0]) - xmax) <= tol:
-        return "right"
-    return "other"
-
-
-def compute_wire_nusselt_diagnostics(
-    points: np.ndarray,
-    cells: np.ndarray,
-    T: np.ndarray,
-    Ti,
-    *,
-    T_inf: float,
-    k: float,
-    q_input_per_length: float,
-    wire_center_x_m: float,
-    wire_center_y_m: float,
-    wire_radius_m: float,
-    n_angles: int = 361,
-    surface_offset_m: Optional[float] = None,
-) -> Tuple[List[Dict[str, float | str]], List[Dict[str, float | str]]]:
-    """
-    Compute local and overall Nusselt numbers for the finite heat-flux wire/cylinder.
-
-    Definitions use the cylinder diameter D = 2R and the imposed heat per unit length Q_L.
-    The overall value is based on the line integral of T over the actual inner boundary facets.
-    Local values are sampled on a circle slightly outside the wire surface.
-
-    For a perfectly circular boundary with perimeter pi*D,
-        Nu = Q_L / (pi*k*(T_s - T_inf)).
-    The implementation also reports a perimeter-corrected value using the actual integrated
-    inner-boundary length, which is usually the safer number for a discrete mesh.
-    """
-    if q_input_per_length is None or not np.isfinite(q_input_per_length):
-        raise ValueError("Nusselt diagnostics require a finite --q-input-per-length.")
-    if wire_radius_m <= 0.0:
-        raise ValueError("Nusselt diagnostics require a positive wire radius.")
-    if k <= 0.0:
-        raise ValueError("Nusselt diagnostics require a positive thermal conductivity.")
-
-    D = 2.0 * float(wire_radius_m)
-    nominal_perimeter = math.pi * D
-    QL = float(q_input_per_length)
-
-    xmin, xmax = float(np.min(points[:, 0])), float(np.max(points[:, 0]))
-    ymin, ymax = float(np.min(points[:, 1])), float(np.max(points[:, 1]))
-    tol = 1e-8 * max(xmax - xmin, ymax - ymin, 1.0)
-
-    inner_rows: List[Dict[str, float | str]] = []
-    inner_length = 0.0
-    inner_T_int = 0.0
-    inner_dT_int = 0.0
-    inner_Nu_int = 0.0
-    inner_count = 0
-
-    for a, b, ci in boundary_edges_with_cells(cells):
-        p0 = points[a]
-        p1 = points[b]
-        mid = 0.5 * (p0 + p1)
-        name = classify_boundary_edge_name(mid, xmin, xmax, ymin, ymax, tol)
-        if name != "other":
-            continue
-        L = float(np.linalg.norm(p1 - p0))
-        if L <= 0.0:
-            continue
-        Tmid = 0.5 * (float(T[a]) + float(T[b]))
-        dTmid = Tmid - float(T_inf)
-        # Perimeter-corrected local value on this edge, using actual total perimeter later.
-        inner_length += L
-        inner_T_int += Tmid * L
-        inner_dT_int += dTmid * L
-        inner_count += 1
-
-    if inner_length <= 0.0 or inner_count == 0:
-        raise ValueError("Could not identify the inner wire boundary. Expected non-outer boundary facets classified as 'other'.")
-
-    Tbar_edge = inner_T_int / inner_length
-    dTbar_edge = Tbar_edge - float(T_inf)
-    qpp_actual = QL / inner_length
-    qpp_nominal = QL / nominal_perimeter
-
-    Nu_overall_actual_perimeter = qpp_actual * D / (float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
-    Nu_overall_nominal_circle = qpp_nominal * D / (float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
-    Nu_overall_formula = QL / (math.pi * float(k) * dTbar_edge) if dTbar_edge > 0.0 else np.nan
-
-    if surface_offset_m is None:
-        # Small offset outside the wire; large enough to avoid masked boundary interpolation,
-        # small enough not to smear the near-wall temperature distribution.
-        surface_offset_m = max(1e-9, 1e-4 * wire_radius_m)
-    surface_offset_m = float(surface_offset_m)
-
-    angles = np.linspace(0.0, 2.0 * np.pi, int(n_angles), endpoint=False)
-    local_rows: List[Dict[str, float | str]] = []
-    Nu_loc_values = []
-    Ts_values = []
-
-    for phi in angles:
-        c = math.cos(float(phi))
-        s = math.sin(float(phi))
-        xs = float(wire_center_x_m) + (wire_radius_m + surface_offset_m) * c
-        ys = float(wire_center_y_m) + (wire_radius_m + surface_offset_m) * s
-        Ts = float(finite_or_nan(Ti(np.array([xs]), np.array([ys])))[0])
-        dTs = Ts - float(T_inf) if np.isfinite(Ts) else np.nan
-        Nu_loc_actual = qpp_actual * D / (float(k) * dTs) if np.isfinite(dTs) and dTs > 0.0 else np.nan
-        Nu_loc_nominal = qpp_nominal * D / (float(k) * dTs) if np.isfinite(dTs) and dTs > 0.0 else np.nan
-        # Convention: phi=0 is right/east, phi=pi/2 is top/north, phi=pi is left/west, phi=3pi/2 is bottom/south.
-        local_rows.append({
-            "angle_rad": float(phi),
-            "angle_deg": float(np.degrees(phi)),
-            "x_m": xs,
-            "y_m": ys,
-            "T_surface_sample_K": Ts,
-            "DeltaT_surface_sample_K": dTs,
-            "Nu_local_perimeter_corrected": Nu_loc_actual,
-            "Nu_local_nominal_circle": Nu_loc_nominal,
-            "qpp_perimeter_corrected_W_per_m2": qpp_actual,
-            "qpp_nominal_circle_W_per_m2": qpp_nominal,
-            "sampling_offset_from_surface_m": surface_offset_m,
-        })
-        if np.isfinite(Nu_loc_actual):
-            Nu_loc_values.append(Nu_loc_actual)
-        if np.isfinite(Ts):
-            Ts_values.append(Ts)
-
-    Nu_loc_arr = np.asarray(Nu_loc_values, dtype=float)
-    Ts_arr = np.asarray(Ts_values, dtype=float)
-
-    # Compute a length-weighted edge-average of local Nu using the final actual perimeter flux.
-    for a, b, ci in boundary_edges_with_cells(cells):
-        p0 = points[a]
-        p1 = points[b]
-        mid = 0.5 * (p0 + p1)
-        name = classify_boundary_edge_name(mid, xmin, xmax, ymin, ymax, tol)
-        if name != "other":
-            continue
-        L = float(np.linalg.norm(p1 - p0))
-        if L <= 0.0:
-            continue
-        Tmid = 0.5 * (float(T[a]) + float(T[b]))
-        dTmid = Tmid - float(T_inf)
-        Nu_mid = qpp_actual * D / (float(k) * dTmid) if dTmid > 0.0 else np.nan
-        if np.isfinite(Nu_mid):
-            inner_Nu_int += Nu_mid * L
-
-    Nu_local_surface_average_edge = inner_Nu_int / inner_length if inner_length > 0.0 else np.nan
-
-    summary_rows: List[Dict[str, float | str]] = [{
-        "definition": "Nu_D = h D / k, with D = 2R and h = Q_L/(surface_length*(Tbar_s-T_inf))",
-        "wire_center_x_m": float(wire_center_x_m),
-        "wire_center_y_m": float(wire_center_y_m),
-        "wire_radius_m": float(wire_radius_m),
-        "wire_diameter_m": D,
-        "wire_perimeter_integrated_from_mesh_m": inner_length,
-        "wire_perimeter_nominal_circle_m": nominal_perimeter,
-        "wire_perimeter_relative_error_vs_nominal": (inner_length - nominal_perimeter) / nominal_perimeter if nominal_perimeter > 0.0 else np.nan,
-        "wire_boundary_edge_count": int(inner_count),
-        "T_surface_mean_edge_length_weighted_K": Tbar_edge,
-        "DeltaT_surface_mean_edge_length_weighted_K": dTbar_edge,
-        "q_input_per_length_W_per_m": QL,
-        "qpp_perimeter_corrected_W_per_m2": qpp_actual,
-        "qpp_nominal_circle_W_per_m2": qpp_nominal,
-        "Nu_overall_perimeter_corrected": Nu_overall_actual_perimeter,
-        "Nu_overall_nominal_circle": Nu_overall_nominal_circle,
-        "Nu_overall_Q_over_pi_k_DeltaT": Nu_overall_formula,
-        "Nu_local_surface_average_edge_length_weighted": Nu_local_surface_average_edge,
-        "Nu_local_sample_mean_perimeter_corrected": float(np.mean(Nu_loc_arr)) if Nu_loc_arr.size else np.nan,
-        "Nu_local_sample_min_perimeter_corrected": float(np.min(Nu_loc_arr)) if Nu_loc_arr.size else np.nan,
-        "Nu_local_sample_max_perimeter_corrected": float(np.max(Nu_loc_arr)) if Nu_loc_arr.size else np.nan,
-        "T_surface_sample_mean_K": float(np.mean(Ts_arr)) if Ts_arr.size else np.nan,
-        "T_surface_sample_min_K": float(np.min(Ts_arr)) if Ts_arr.size else np.nan,
-        "T_surface_sample_max_K": float(np.max(Ts_arr)) if Ts_arr.size else np.nan,
-        "n_local_angle_samples_requested": int(n_angles),
-        "n_local_angle_samples_valid": int(Nu_loc_arr.size),
-        "local_sampling_offset_from_surface_m": surface_offset_m,
-        "notes": "Use Nu_overall_perimeter_corrected as the primary total wire Nusselt number; nominal_circle is equivalent when the integrated mesh perimeter equals pi*D.",
-    }]
-    return summary_rows, local_rows
-
-
-def plot_local_nusselt(path: Path, rows: List[Dict[str, float | str]], *, figsize: Tuple[float, float], show_titles: bool = False) -> None:
-    if not rows:
-        return
-    phi = np.asarray([r["angle_deg"] for r in rows], dtype=float)
-    Nu = np.asarray([r["Nu_local_perimeter_corrected"] for r in rows], dtype=float)
-    mask = np.isfinite(phi) & np.isfinite(Nu)
-    if np.count_nonzero(mask) < 2:
-        return
-    order = np.argsort(phi[mask])
-    plt.figure(figsize=figsize)
-    plt.plot(phi[mask][order], Nu[mask][order], linewidth=1.8)
-    plt.xlabel(r"surface angle $\phi$ [deg]")
-    plt.ylabel(r"local $Nu_D(\phi)$ [-]")
-    maybe_set_title("Local wire Nusselt number", show_titles)
-    plt.grid(True, alpha=0.35)
-    plt.tight_layout()
-    plt.savefig(path, dpi=220)
-    plt.close()
-
 def main() -> None:
     ap = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     ap.add_argument("--temperature-xdmf", required=True)
@@ -1539,13 +1619,15 @@ def main() -> None:
     ap.add_argument("--T-inf", type=float, required=True, help="Ambient/reference temperature [K]")
     ap.add_argument("--rho", type=float, required=True, help="Density [kg/m^3]")
     ap.add_argument("--cp", type=float, required=True, help="Specific heat [J/(kg K)]")
-    ap.add_argument("--k", type=float, required=True, help="Thermal conductivity [W/(m K)]")
-    ap.add_argument("--mu", type=float, default=None, help="Dynamic viscosity [Pa s]; used for Re-like diagnostics")
-    ap.add_argument("--beta", type=float, default=None, help="Thermal expansion coefficient [1/K]; used for buoyancy diagnostics")
+    ap.add_argument("--k", type=float, required=True, help="Thermal conductivity of the fluid [W/(m K)]")
+    ap.add_argument("--solid-k", type=float, default=None,
+                    help="Thermal conductivity of the wire/cylinder solid [W/(m K)] for Bi = Nu_D*k/solid_k.")
+    ap.add_argument("--mu", type=float, default=None, help="Dynamic viscosity [Pa s]; used for Re-like diagnostics and Gr_D if --nusselt is active")
+    ap.add_argument("--beta", type=float, default=None, help="Thermal expansion coefficient [1/K]; used for buoyancy diagnostics and Gr_D if --nusselt is active")
     ap.add_argument("--g", type=float, default=9.81, help="Gravity magnitude [m/s^2]")
-    ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error")
+    ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error and Nusselt diagnostics")
     ap.add_argument("--nusselt", action="store_true",
-                    help="Compute local and overall wire/cylinder Nusselt numbers from the imposed heat input and surface temperature.")
+                    help="Compute local and overall wire/cylinder Nusselt numbers, Gr_D-scaled Nu_delta, and optional Biot number.")
     ap.add_argument("--nusselt-angles", type=int, default=361,
                     help="Number of angular samples for the local surface Nusselt-number distribution.")
     ap.add_argument("--nusselt-surface-offset", type=float, default=None,
@@ -2074,6 +2156,11 @@ def main() -> None:
             wire_center_x_m=args.wire_center_x,
             wire_center_y_m=wire_y_m,
             wire_radius_m=wire_radius_m,
+            rho=args.rho,
+            mu=args.mu,
+            beta=args.beta,
+            g=args.g,
+            solid_k=args.solid_k,
             n_angles=args.nusselt_angles,
             surface_offset_m=args.nusselt_surface_offset,
         )
@@ -3286,7 +3373,7 @@ def main() -> None:
     print("Fixed-eta mass/momentum fluxes written to fixed_eta_mass_momentum_fluxes.csv")
     print("Cumulative selected-CV momentum terms written to selected_cv_momentum_cumulative.csv")
     if args.nusselt:
-        print("Wire Nusselt diagnostics written to wire_nusselt_summary.csv and wire_nusselt_local.csv")
+        print("Wire Nusselt/Biot diagnostics written to wire_nusselt_summary.csv and wire_nusselt_local.csv")
     if args.energy_cv:
         _energy_total_row = next((r for r in energy_cv_rows if r.get("boundary") == "total"), {})
         print(f"Energy control-volume budget written to energy_control_volume_budget.csv; total outward heat = {float(_energy_total_row.get('Q_total_W_per_m', np.nan)):.6e} W/m")
