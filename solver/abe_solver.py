@@ -794,7 +794,7 @@ def run_post_abe_continuation_transient(
     restart_rel_theta_reject = 1.0e0
     restart_u_abs_max = 1.0e4
     restart_theta_max = 20.0
-    restart_theta_min = -10.0
+    restart_theta_min = -15.0
 
     x_probe = max(1.0e-8, 2.0 * float(sub_mesh_star.hmin())) if sub_mesh_star is not None else 1.0e-8
     if sub_mesh_star is not None:
