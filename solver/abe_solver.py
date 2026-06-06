@@ -923,6 +923,8 @@ def run_post_abe_continuation_transient(
     if n_steps is not None:
         step_max = int(n_steps)
 
+    restart_recovery_steps = 300
+
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
     copy_state(w, w_n)
@@ -1255,25 +1257,42 @@ def run_post_abe_continuation_transient(
 
             print0(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
 
+            if restart_recovered and accepted_steps < restart_recovery_steps:
+                s = float(accepted_steps + 1) / float(restart_recovery_steps)
+
+                qn_scale_step = max(0.05, s)
+                buoyancy_scale_step = s
+                convection_scale_step = s
+                fEc_step = s * scales.fEc_abe
+
+                dt = min(dt, 1.0e-7)
+                relaxation_step = min(relaxation, 0.2)
+            else:
+                qn_scale_step = 1.0
+                buoyancy_scale_step = 1.0
+                convection_scale_step = 1.0
+                fEc_step = scales.fEc_abe
+                relaxation_step = relaxation
+
             F_tr, JF_tr = build_ptc_abe_problem(
-                W=W,
-                w=w,
-                w_prev=w_prev,
-                psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
-                mu=mu, kappa=kappa, f_b=f_b,
-                sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
-                dtau=dt,
-                buoyancy_scale=1.0,
-                qn_scale=1.0,
-                include_convection=True,
-                convection_scale=1.0,
-                fEc=fenics.Constant(scales.fEc_abe)
-            )
+                    W=W,
+                    w=w,
+                    w_prev=w_prev,
+                    psi_p=psi_p, psi_u=psi_u, psi_T=psi_T,
+                    mu=mu, kappa=kappa, f_b=f_b,
+                    sub_dx=sub_dx, sub_ds=sub_ds, qn_air=qn_air,
+                    dtau=dt,
+                    buoyancy_scale=buoyancy_scale_step,
+                    qn_scale=qn_scale_step,
+                    include_convection=True,
+                    convection_scale=convection_scale_step,
+                    fEc=fenics.Constant(fEc_step)
+                )
 
             try:
                 _, n_newton, _ = base_solver(
                     F_tr, w, boundary_conditions, JF_tr,
-                    relaxation=relaxation,
+                    relaxation=relaxation_step,
                     maxit=max_newton_it,
                     atol=atol,
                     rtol=rtol,
