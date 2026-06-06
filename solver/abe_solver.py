@@ -888,7 +888,7 @@ def run_post_abe_continuation_transient(
     n_steps: int = 10000,
     save_every: int = 50,
     relaxation: float = 1.0,
-    max_newton_it: int = 20,
+    max_newton_it: int = 200,
     max_retries_per_step: int = 8,
     atol: float = 1.0e-9,
     rtol: float = 1.0e-8,
