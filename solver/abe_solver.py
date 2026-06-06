@@ -41,6 +41,23 @@ def build_nonlinear_ABE_problem(
     )
     energy = dot(grad(psi_T), kappa * grad(T) - T * u * convection_scale_c) \
         - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
+
+    h = fenics.CellDiameter(W.mesh())
+    u_norm = fenics.sqrt(fenics.dot(u, u) + fenics.Constant(1.0e-14))
+
+    tau_supg = 1.0 / fenics.sqrt(
+            (2.0 * convection_scale_c * u_norm / h)**2
+            + (4.0 * kappa / h**2)**2
+        )
+
+    R_T = (
+        convection_scale_c * fenics.div(T * u)
+        - fenics.div(kappa * fenics.grad(T))
+        - fEc * fenics.dot(gvec, u)
+    )
+
+    energy += tau_supg * convection_scale_c * fenics.dot(u, fenics.grad(psi_T)) * R_T
+        
     F = (mass + momentum + energy) * sub_dx
 
 
@@ -97,6 +114,25 @@ def build_ptc_abe_problem(
     gvec = fenics.Constant((0.0, -1.0))
     energy = dot(grad(psi_T), kappa * grad(T) - T * u * convection_scale_c)  \
         - psi_T * fEc * dot(gvec, u)                    # extra thermal coupling therm
+    
+    h = fenics.CellDiameter(W.mesh())
+    u_norm = fenics.sqrt(fenics.dot(u, u) + fenics.Constant(1.0e-14))
+
+    tau_supg = 1.0 / fenics.sqrt(
+            (2.0 / dtau_c)**2
+            + (2.0 * convection_scale_c * u_norm / h)**2
+            + (4.0 * kappa / h**2)**2
+        )
+
+    R_T = (
+        (T - T_prev) / dtau_c
+        + convection_scale_c * fenics.div(T * u)
+        - fenics.div(kappa * fenics.grad(T))
+        - fEc * fenics.dot(gvec, u)
+    )
+
+    energy += tau_supg * convection_scale_c * fenics.dot(u, fenics.grad(psi_T)) * R_T
+    
     F = (mass + pseudo_velocity + momentum + pseudo_temperature + energy) * sub_dx
 
     F += -(qn_scale_c * kappa) * qn_air * psi_T * sub_ds(INTERFACE_TAG)
@@ -175,6 +211,82 @@ def repair_abe_mixed_state(
     )
 
     return n_bad_theta
+
+def rebuild_abe_state_from_conduction(
+    experiment,
+    W,
+    w_state,
+    sub_mesh_star,
+    sub_ds,
+    qn_air,
+    kappa,
+    scales,
+):
+    """
+    Emergency restart recovery.
+
+    Discards corrupted velocity and pressure.
+    Rebuilds theta from the pure conduction problem:
+
+        div(kappa grad(theta)) = 0
+
+    with imposed heat flux on the wire and theta=0 on outer walls.
+    """
+
+    V_theta = W.sub(2).collapse()
+
+    theta = fenics.Function(V_theta)
+    v = fenics.TestFunction(V_theta)
+    dtheta = fenics.TrialFunction(V_theta)
+
+    # Same thermal equation structure as ABE energy equation,
+    # but without velocity/convection and without fEc coupling.
+    a = fenics.inner(kappa * fenics.grad(dtheta), fenics.grad(v)) * fenics.dx
+    L = kappa * qn_air * v * sub_ds(INTERFACE_TAG)
+
+    x_min = experiment.dimensions.domain.x_min / scales.Lref
+    x_max = experiment.dimensions.domain.x_max / scales.Lref
+    y_min = experiment.dimensions.domain.y_min / scales.Lref
+    y_max = experiment.dimensions.domain.y_max / scales.Lref
+
+    class OuterWalls(fenics.SubDomain):
+        def inside(self, x, on_boundary):
+            return on_boundary and (
+                fenics.near(x[0], x_min, 1.0e-10)
+                or fenics.near(x[0], x_max, 1.0e-10)
+                or fenics.near(x[1], y_min, 1.0e-10)
+                or fenics.near(x[1], y_max, 1.0e-10)
+            )
+
+    bc_theta = fenics.DirichletBC(V_theta, fenics.Constant(0.0), OuterWalls())
+
+    fenics.solve(
+        a == L,
+        theta,
+        [bc_theta],
+        solver_parameters={"linear_solver": "mumps"},
+    )
+
+    p, u, _ = w_state.split(deepcopy=True)
+
+    p.vector().zero()
+    p.vector().apply("insert")
+
+    u.vector().zero()
+    u.vector().apply("insert")
+
+    assign_p = fenics.FunctionAssigner(W.sub(0), p.function_space())
+    assign_u = fenics.FunctionAssigner(W.sub(1), u.function_space())
+    assign_T = fenics.FunctionAssigner(W.sub(2), theta.function_space())
+
+    assign_p.assign(w_state.sub(0), p)
+    assign_u.assign(w_state.sub(1), u)
+    assign_T.assign(w_state.sub(2), theta)
+
+    print0(
+        "ABE emergency recovery: discarded corrupted p/u and rebuilt theta "
+        "from pure conduction field."
+    )
 
 def solve_abe_ptc_stage(
     experiment: Experiment,
@@ -819,27 +931,27 @@ def run_post_abe_continuation_transient(
     copy_state(w_last_accepted, w_n)
 
     if restart_recovered:
-        repair_abe_mixed_state(
+        rebuild_abe_state_from_conduction(
+            experiment=experiment,
             W=W,
             w_state=w_n,
+            sub_mesh_star=sub_mesh_star,
+            sub_ds=sub_ds,
+            qn_air=qn_air,
+            kappa=kappa,
             scales=scales,
-            T_ambient=T_ambient,
-            T_floor=250.0,
-            T_ceiling=500.0,
-            reset_pressure=True,
-            velocity_damping=0.10,
         )
 
         copy_state(w, w_n)
         copy_state(w_prev, w_n)
         copy_state(w_last_accepted, w_n)
 
-        dt = min(dt, 1.0e-5)
-        relaxation = min(relaxation, 0.4)
+        dt = min(float(dt_start), 1.0e-7)
+        relaxation = min(float(relaxation), 0.2)
 
         print0(
-            "Restart recovery mode enabled: repaired corrupted state, "
-            f"dt reset to {dt:.3e}, relaxation={relaxation:.2f}"
+            "Restart recovery mode: using rebuilt conduction state, "
+            f"dt={dt:.3e}, relaxation={relaxation:.2f}"
         )
     
     dt = float(dt_start)
@@ -1183,6 +1295,20 @@ def run_post_abe_continuation_transient(
                 rel_update_limit = restart_rel_update_reject if in_restart_settle else rel_update_reject
 
                 candidate_diag = _candidate_component_diagnostics(w, w_n)
+                theta_min_allowed = (250.0 - T_ambient) / scales.dTref
+                theta_max_allowed = (500.0 - T_ambient) / scales.dTref
+
+                if candidate_diag["theta_min"] < theta_min_allowed:
+                    raise RuntimeError(
+                        f"Rejecting step: theta_min={candidate_diag['theta_min']:.3e} "
+                        f"< allowed {theta_min_allowed:.3e}"
+                    )
+
+                if candidate_diag["theta_max"] > theta_max_allowed:
+                    raise RuntimeError(
+                        f"Rejecting step: theta_max={candidate_diag['theta_max']:.3e} "
+                        f"> allowed {theta_max_allowed:.3e}"
+                    )
 
                 print0(
                     "candidate diagnostics: "
