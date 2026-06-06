@@ -12,6 +12,7 @@ written in the simple XDMF/HDF5 format used by the current plume project, then c
     of radial 1-percent temperature-excess distances around the cylinder
   * approximate cumulative buoyancy and vertical-momentum-flux balance diagnostics
   * optional full rectangular-control-volume vertical momentum balance when pressure is supplied
+  * black-body/gray-body wire radiation estimate and fraction of supplied heat
   * CSV files and diagnostic plots, including combined profile plots across all requested heights
 
 The script intentionally does not depend on FEniCS. It uses h5py + matplotlib.tri
@@ -1167,6 +1168,109 @@ def classify_boundary_edge_name(mid: np.ndarray, xmin: float, xmax: float, ymin:
     return "other"
 
 
+
+def compute_black_body_wire_radiation_estimate(
+    Ti,
+    T_inf: float,
+    wire_center_x_m: float,
+    wire_center_y_m: float,
+    wire_radius_m: float,
+    q_input_per_length: Optional[float] = None,
+    wall_temperature_K: Optional[float] = None,
+    emissivity: float = 1.0,
+    n_angles: int = 721,
+    surface_offset_m: Optional[float] = None,
+) -> Tuple[Dict[str, float | str], List[Dict[str, float]]]:
+    """
+    Estimate radiative heat loss per unit length from the heated wire to the enclosure.
+
+    The default is the black-body upper-bound estimate
+        q'_rad = epsilon * 2*pi*r*sigma*(Tw^4 - Twall^4).
+
+    Tw is estimated from an angular average of interpolated temperatures just outside
+    the wire surface. The estimate is diagnostic only; it is not coupled back into the
+    conduction/convection post-processing integrals.
+    """
+    if wire_radius_m <= 0.0:
+        raise ValueError("Radiation estimate requires a positive wire radius.")
+    if n_angles < 8:
+        raise ValueError("Radiation estimate requires at least 8 angular samples.")
+
+    sigma = 5.670374419e-8  # W/(m^2 K^4)
+    wall_T = float(T_inf if wall_temperature_K is None else wall_temperature_K)
+    eps = float(emissivity)
+    if surface_offset_m is None:
+        surface_offset_m = max(1e-9, 1e-4 * float(wire_radius_m))
+
+    angles = np.linspace(0.0, 2.0 * np.pi, int(n_angles), endpoint=False)
+    sample_radius = float(wire_radius_m) + float(surface_offset_m)
+    xs = float(wire_center_x_m) + sample_radius * np.cos(angles)
+    ys = float(wire_center_y_m) + sample_radius * np.sin(angles)
+    Ts = finite_or_nan(Ti(xs, ys))
+    valid = np.isfinite(Ts) & (Ts > 0.0)
+
+    local_rows: List[Dict[str, float]] = []
+    qpp = np.full_like(Ts, np.nan, dtype=float)
+    qprime_density = np.full_like(Ts, np.nan, dtype=float)
+    if np.any(valid):
+        qpp[valid] = eps * sigma * (Ts[valid] ** 4 - wall_T ** 4)
+        # Per-unit-angle contribution to q' if integrated over theta.
+        qprime_density[valid] = float(wire_radius_m) * qpp[valid]
+
+    for ang, Tx, qppx, qdx in zip(angles, Ts, qpp, qprime_density):
+        local_rows.append({
+            "angle_rad": float(ang),
+            "angle_deg": float(np.degrees(ang)),
+            "T_surface_sample_K": float(Tx) if np.isfinite(Tx) else np.nan,
+            "T_wall_K": wall_T,
+            "radiative_heat_flux_W_per_m2": float(qppx) if np.isfinite(qppx) else np.nan,
+            "radiative_heat_per_length_density_W_per_m_per_rad": float(qdx) if np.isfinite(qdx) else np.nan,
+        })
+
+    if np.any(valid):
+        T_avg = float(np.mean(Ts[valid]))
+        T_min = float(np.min(Ts[valid]))
+        T_max = float(np.max(Ts[valid]))
+        T_std = float(np.std(Ts[valid], ddof=1)) if np.count_nonzero(valid) > 1 else 0.0
+        # Primary estimate: use angular mean of T^4, not (mean T)^4, so nonuniformity is retained.
+        q_rad_per_m = float(2.0 * np.pi * wire_radius_m * eps * sigma * (np.mean(Ts[valid] ** 4) - wall_T ** 4))
+        q_rad_per_m_from_avg_T = float(2.0 * np.pi * wire_radius_m * eps * sigma * (T_avg ** 4 - wall_T ** 4))
+        qpp_avg = float(eps * sigma * (np.mean(Ts[valid] ** 4) - wall_T ** 4))
+    else:
+        T_avg = T_min = T_max = T_std = np.nan
+        q_rad_per_m = q_rad_per_m_from_avg_T = qpp_avg = np.nan
+
+    q_input = float(q_input_per_length) if q_input_per_length is not None else np.nan
+    summary: Dict[str, float | str] = {
+        "model": "black_or_gray_diffuse_wire_to_large_isothermal_surroundings",
+        "notes": "Black-body upper bound when emissivity=1. Uses angular mean of sampled T^4 just outside the wire surface.",
+        "stefan_boltzmann_constant_W_per_m2_K4": sigma,
+        "emissivity": eps,
+        "wire_radius_m": float(wire_radius_m),
+        "wire_diameter_m": 2.0 * float(wire_radius_m),
+        "wire_center_x_m": float(wire_center_x_m),
+        "wire_center_y_m": float(wire_center_y_m),
+        "surface_sample_offset_m": float(surface_offset_m),
+        "surface_sample_radius_m": sample_radius,
+        "n_angles_requested": int(n_angles),
+        "n_angles_valid": int(np.count_nonzero(valid)),
+        "valid_angle_fraction": float(np.count_nonzero(valid) / int(n_angles)),
+        "T_wall_K": wall_T,
+        "T_inf_K": float(T_inf),
+        "T_wire_surface_angular_mean_K": T_avg,
+        "T_wire_surface_min_K": T_min,
+        "T_wire_surface_max_K": T_max,
+        "T_wire_surface_std_K": T_std,
+        "DeltaT_wire_surface_mean_vs_wall_K": T_avg - wall_T if np.isfinite(T_avg) else np.nan,
+        "radiative_heat_flux_area_average_W_per_m2": qpp_avg,
+        "radiative_heat_per_length_W_per_m": q_rad_per_m,
+        "radiative_heat_per_length_from_mean_T_W_per_m": q_rad_per_m_from_avg_T,
+        "q_input_per_length_W_per_m": q_input,
+        "radiative_fraction_of_input": q_rad_per_m / q_input if np.isfinite(q_rad_per_m) and np.isfinite(q_input) and q_input != 0.0 else np.nan,
+        "convective_conductive_remainder_if_subtracted_W_per_m": q_input - q_rad_per_m if np.isfinite(q_rad_per_m) and np.isfinite(q_input) else np.nan,
+    }
+    return summary, local_rows
+
 def compute_wire_nusselt_diagnostics(
     points: np.ndarray,
     cells: np.ndarray,
@@ -1626,6 +1730,14 @@ def main() -> None:
     ap.add_argument("--beta", type=float, default=None, help="Thermal expansion coefficient [1/K]; used for buoyancy diagnostics and Gr_D if --nusselt is active")
     ap.add_argument("--g", type=float, default=9.81, help="Gravity magnitude [m/s^2]")
     ap.add_argument("--q-input-per-length", type=float, default=None, help="Known heat input per unit length [W/m] for energy-balance error and Nusselt diagnostics")
+    ap.add_argument("--radiation-emissivity", type=float, default=1.0,
+                    help="Emissivity used in the wire-to-wall radiation estimate. Default 1.0 gives the black-body upper bound.")
+    ap.add_argument("--radiation-wall-temperature", type=float, default=None,
+                    help="Wall/enclosure temperature [K] for the radiation estimate. Default: --T-inf.")
+    ap.add_argument("--radiation-angles", type=int, default=721,
+                    help="Number of angular samples used to estimate the mean wire surface temperature for radiation.")
+    ap.add_argument("--radiation-surface-offset", type=float, default=None,
+                    help="Distance [m] outside the wire surface used to sample Tw for radiation. Default: max(1e-9, 1e-4*r).")
     ap.add_argument("--nusselt", action="store_true",
                     help="Compute local and overall wire/cylinder Nusselt numbers, Gr_D-scaled Nu_delta, and optional Biot number.")
     ap.add_argument("--nusselt-angles", type=int, default=361,
@@ -1769,6 +1881,21 @@ def main() -> None:
     wire_top_y_m = wire_y_m + wire_radius_m
     if not (ymin <= wire_y_m <= ymax):
         raise SystemExit(f"Inferred wire centre y={wire_y_m:g} m lies outside mesh bounds [{ymin:g}, {ymax:g}] m.")
+
+    radiation_summary, radiation_local_rows = compute_black_body_wire_radiation_estimate(
+        Ti,
+        T_inf=args.T_inf,
+        wire_center_x_m=args.wire_center_x,
+        wire_center_y_m=wire_y_m,
+        wire_radius_m=wire_radius_m,
+        q_input_per_length=args.q_input_per_length,
+        wall_temperature_K=args.radiation_wall_temperature,
+        emissivity=args.radiation_emissivity,
+        n_angles=args.radiation_angles,
+        surface_offset_m=args.radiation_surface_offset,
+    )
+    write_csv(outdir / "black_body_radiation_estimate.csv", [radiation_summary])
+    write_csv(outdir / "black_body_radiation_by_angle.csv", radiation_local_rows)
 
     if args.profile_half_width is None:
         xs = np.linspace(xmin, xmax, args.nx)
@@ -3369,6 +3496,14 @@ def main() -> None:
     print(f"Velocity virtual origin    y0 = {fitU['y0']:.6e} m, R2={fitU['r2']:.4f}")
     print(f"Near-wire 1% thermal boundary-layer thickness angular mean = {thermal_bl_mean_m:.6e} m")
     print(f"Valid boundary-layer ray crossings = {delta_arr.size}/{args.bl_angles}")
+    print("Black-body / gray-body radiation estimate:")
+    print(f"  emissivity = {float(radiation_summary.get('emissivity', np.nan)):.6g}")
+    print(f"  mean sampled wire surface temperature = {float(radiation_summary.get('T_wire_surface_angular_mean_K', np.nan)):.6f} K")
+    print(f"  wall/enclosure temperature = {float(radiation_summary.get('T_wall_K', np.nan)):.6f} K")
+    print(f"  radiative heat loss = {float(radiation_summary.get('radiative_heat_per_length_W_per_m', np.nan)):.6e} W/m")
+    print(f"  radiative fraction of input = {float(radiation_summary.get('radiative_fraction_of_input', np.nan)):.6e}")
+    print(f"  convective/conductive remainder if subtracted = {float(radiation_summary.get('convective_conductive_remainder_if_subtracted_W_per_m', np.nan)):.6e} W/m")
+    print("Black-body radiation estimate written to black_body_radiation_estimate.csv")
     print("Plume enthalpy-flow balance written to plume_enthalpy_balance.csv")
     print("Fixed-eta mass/momentum fluxes written to fixed_eta_mass_momentum_fluxes.csv")
     print("Cumulative selected-CV momentum terms written to selected_cv_momentum_cumulative.csv")

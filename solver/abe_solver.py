@@ -104,6 +104,78 @@ def build_ptc_abe_problem(
     JF = fenics.derivative(F, w, fenics.TrialFunction(W))
     return F, JF
 
+def repair_abe_mixed_state(
+    W,
+    w_state,
+    scales,
+    T_ambient=292.95,
+    T_floor=250.0,
+    T_ceiling=500.0,
+    reset_pressure=True,
+    velocity_damping=0.25,
+):
+    """
+    Emergency repair for corrupted ABE mixed state.
+
+    w_state contains nondimensional fields:
+        p*, u*, theta
+
+    theta = (T - T_ambient) / dTref
+
+    Bad temperature DOFs are reset to ambient, i.e. theta = 0.
+    Velocity is damped globally because corrupted temperature has already
+    contaminated buoyancy and pressure.
+    """
+
+    p, u, theta = w_state.split(deepcopy=True)
+
+    theta_min_allowed = (float(T_floor) - float(T_ambient)) / float(scales.dTref)
+    theta_max_allowed = (float(T_ceiling) - float(T_ambient)) / float(scales.dTref)
+
+    theta_arr = theta.vector().get_local()
+
+    bad_theta = (
+        ~np.isfinite(theta_arr)
+        | (theta_arr < theta_min_allowed)
+        | (theta_arr > theta_max_allowed)
+    )
+
+    n_bad_theta = int(np.count_nonzero(bad_theta))
+
+    if n_bad_theta > 0:
+        theta_arr[bad_theta] = 0.0
+        theta.vector().set_local(theta_arr)
+        theta.vector().apply("insert")
+
+    # Damp velocity because bad T has likely created bad buoyancy impulses.
+    if velocity_damping is not None:
+        u.vector()[:] *= float(velocity_damping)
+        u.vector().apply("insert")
+
+    # Pressure is only a Lagrange multiplier / hydrodynamic pressure.
+    # If it has huge spikes, it is safer to reset it.
+    if reset_pressure:
+        p.vector().zero()
+        p.vector().apply("insert")
+
+    assign_p = fenics.FunctionAssigner(W.sub(0), p.function_space())
+    assign_u = fenics.FunctionAssigner(W.sub(1), u.function_space())
+    assign_T = fenics.FunctionAssigner(W.sub(2), theta.function_space())
+
+    assign_p.assign(w_state.sub(0), p)
+    assign_u.assign(w_state.sub(1), u)
+    assign_T.assign(w_state.sub(2), theta)
+
+    print0(
+        "ABE emergency repair: "
+        f"bad theta DOFs reset={n_bad_theta}, "
+        f"theta_allowed=[{theta_min_allowed:.3e}, {theta_max_allowed:.3e}], "
+        f"velocity_damping={velocity_damping}, "
+        f"reset_pressure={reset_pressure}"
+    )
+
+    return n_bad_theta
+
 def solve_abe_ptc_stage(
     experiment: Experiment,
     run_root,
@@ -746,6 +818,30 @@ def run_post_abe_continuation_transient(
     w_last_accepted = fenics.Function(W)
     copy_state(w_last_accepted, w_n)
 
+    if restart_recovered:
+        repair_abe_mixed_state(
+            W=W,
+            w_state=w_n,
+            scales=scales,
+            T_ambient=T_ambient,
+            T_floor=250.0,
+            T_ceiling=500.0,
+            reset_pressure=True,
+            velocity_damping=0.10,
+        )
+
+        copy_state(w, w_n)
+        copy_state(w_prev, w_n)
+        copy_state(w_last_accepted, w_n)
+
+        dt = min(dt, 1.0e-5)
+        relaxation = min(relaxation, 0.4)
+
+        print0(
+            "Restart recovery mode enabled: repaired corrupted state, "
+            f"dt reset to {dt:.3e}, relaxation={relaxation:.2f}"
+        )
+    
     dt = float(dt_start)
     t = float(start_time)
     step = int(start_step)
