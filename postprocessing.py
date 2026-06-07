@@ -60,8 +60,20 @@ def parse_step(path: Path, prefix: str) -> int:
 
 def read_xdmf_h5_function(path: Path):
     with h5py.File(path, "r") as h5:
-        coords = np.asarray(h5["Mesh/mesh/geometry"], dtype=float)
-        topology = np.asarray(h5["Mesh/mesh/topology"], dtype=np.int64)
+        if "Mesh/mesh/geometry" in h5:
+            geom_path = "Mesh/mesh/geometry"
+            topo_path = "Mesh/mesh/topology"
+        elif "Mesh/0/mesh/geometry" in h5:
+            geom_path = "Mesh/0/mesh/geometry"
+            topo_path = "Mesh/0/mesh/topology"
+        else:
+            raise KeyError(
+                f"Could not find mesh geometry/topology in {path}. "
+                f"Expected Mesh/mesh/... or Mesh/0/mesh/..."
+            )
+
+        coords = np.asarray(h5[geom_path], dtype=float)
+        topology = np.asarray(h5[topo_path], dtype=np.int64)
         values = np.asarray(h5["VisualisationVector/0"], dtype=float)
 
     if coords.shape[1] == 3:

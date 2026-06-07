@@ -216,13 +216,15 @@ def plot_field_with_streamlines(
 
     _streamplot(ax, X, Y, U, V)
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlabel("x",size=15)
-    ax.set_ylabel("y",size=15)
-    ax.tick_params(axis='both', which='major', labelsize=14)
+    ax.set_xlabel("x",size=18)
+    ax.set_ylabel("y",size=18)
+    ax.tick_params(axis='both', which='major', labelsize=18)
     if show_title:
         ax.set_title(f"{label}, transient {snapshot.step}")
-    cbar = fig.colorbar(cf, ax=ax, shrink=0.86)
-    cbar.set_label(label)
+    cbar = fig.colorbar(cf, ax=ax, shrink=0.7)
+    cbar.set_label(label, size=18)
+    cbar.ax.tick_params(labelsize=16) 
+
 
     out_path = out_dir / fname
     fig.savefig(out_path, dpi=dpi)

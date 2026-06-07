@@ -1566,8 +1566,8 @@ def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, yl
             plt.semilogy(x, y, label=label)
         else:
             plt.plot(x, y, label=label)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.xlabel(xlabel, size=22)
+    plt.ylabel(ylabel, size=22)
     maybe_set_title(title, show_titles)
     plt.grid(True, which="both", alpha=0.35)
     if len(ys) > 1:
@@ -2735,8 +2735,8 @@ def main() -> None:
                 lim = np.nanpercentile(np.array(all_eta), xlim_percentile)
                 if np.isfinite(lim) and lim > 0:
                     plt.xlim(-lim, lim)
-            plt.xlabel(r"$\eta=(x/h)Gr_h^{1/5}$ [-]")
-            plt.ylabel(ylabel)
+            plt.xlabel(r"$\eta=(x/h)Gr_h^{1/5}$ [-]", size=22)
+            plt.ylabel(ylabel, size=22)
             maybe_set_title(title, args.plot_titles)
             plt.grid(True, alpha=0.35)
             plt.legend()
