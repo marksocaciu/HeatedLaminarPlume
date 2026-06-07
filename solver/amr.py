@@ -1211,7 +1211,7 @@ def checkpoint_from_xdmf_snapshots(
     output_checkpoint_dir = str(output_checkpoint_dir)
 
     scales = compute_nondimensional_scales(experiment)
-    T_ambient = float(experiment.initial_conditions.temperature_ambient)
+    T_ambient = float(293.15)  # K, for nondimensional temperature conversion
 
     def infer_attr_name(xdmf_path):
         root = ET.parse(xdmf_path).getroot()
