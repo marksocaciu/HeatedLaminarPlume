@@ -1383,9 +1383,9 @@ def checkpoint_from_xdmf_snapshots(
     u_dim = fenics.Function(Vu_dim)
     T_dim = fenics.Function(VT_dim)
 
-    read_xdmf_function(p_xdmf, p_dim)
-    read_xdmf_function(u_xdmf, u_dim)
-    read_xdmf_function(T_xdmf, T_dim)
+    read_xdmf_scalar_cg1(p_xdmf, p_dim)
+    read_xdmf_vector_cg1(u_xdmf, u_dim)
+    read_xdmf_scalar_cg1(T_xdmf, T_dim)
 
     print0(
         f"[XDMF->CHK] loaded fields: "
