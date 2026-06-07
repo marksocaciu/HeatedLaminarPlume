@@ -6,6 +6,7 @@ import shutil
 import math
 from pathlib import Path
 
+from solver import scales
 from utils.imports import *
 from solver.scales import *
 from solver.params_bcs import *
@@ -1176,3 +1177,164 @@ def foreign_checkpoint_to_target_checkpoint(
 
     print0(f"[FOREIGN] wrote projected checkpoint: {output_checkpoint_dir}")
     return output_checkpoint_dir
+
+def checkpoint_from_xdmf_snapshots(
+    output_checkpoint_dir: str,
+    mesh_xdmf: str,
+    p_xdmf: str,
+    u_xdmf: str,
+    T_xdmf: str,
+    experiment,
+    step: int = 0,
+    time_value: float = 0.0,
+    dt_value: float = 1.0e-6,
+):
+    """
+    Build a normal restart checkpoint from dimensional visualization XDMF/H5 files.
+
+    Expected input fields:
+        p_xdmf : dimensional pressure [Pa] or equivalent project output pressure
+        u_xdmf : dimensional velocity [m/s]
+        T_xdmf : dimensional absolute temperature [K]
+
+    Output checkpoint contains nondimensional:
+        /mesh       star-scaled mesh
+        /p_star
+        /u_star
+        /theta_star
+    """
+
+    import xml.etree.ElementTree as ET
+    from utils.geometry import read_mesh
+    from utils.transfer import scale_mesh_inplace
+
+    output_checkpoint_dir = str(output_checkpoint_dir)
+
+    scales = compute_nondimensional_scales(experiment)
+    T_ambient = float(experiment.initial_conditions.temperature_ambient)
+
+    def infer_attr_name(xdmf_path):
+        root = ET.parse(xdmf_path).getroot()
+        for node in root.iter():
+            if node.tag.endswith("Attribute"):
+                name = node.attrib.get("Name", "").strip()
+                if name:
+                    return name
+        raise RuntimeError(f"Could not infer Attribute Name from {xdmf_path}")
+
+    def read_xdmf_function(xdmf_path, function):
+        attr = infer_attr_name(xdmf_path)
+        with fenics.XDMFFile(function.function_space().mesh().mpi_comm(), xdmf_path) as xdmf:
+            try:
+                xdmf.read_checkpoint(function, attr, 0)
+            except RuntimeError:
+                xdmf.read(function)
+        return function
+
+    # ------------------------------------------------------------------
+    # 1. Read old dimensional mesh.
+    # ------------------------------------------------------------------
+    mesh = fenics.Mesh()
+
+    with fenics.XDMFFile(COMM, mesh_xdmf) as xdmf:
+        xdmf.read(mesh)
+
+    try:
+        mesh.bounding_box_tree().build(mesh)
+    except Exception:
+        pass
+
+    print0(
+        f"[XDMF->CHK] read dimensional mesh: "
+        f"cells={mesh.num_cells()}, vertices={mesh.num_vertices()}"
+    )
+
+    # ------------------------------------------------------------------
+    # 2. Read dimensional fields on the old dimensional mesh.
+    # ------------------------------------------------------------------
+    Vp_dim = fenics.FunctionSpace(mesh, "CG", 1)
+    Vu_dim = fenics.VectorFunctionSpace(mesh, "CG", 2)
+    VT_dim = fenics.FunctionSpace(mesh, "CG", 1)
+
+    p_dim = fenics.Function(Vp_dim)
+    u_dim = fenics.Function(Vu_dim)
+    T_dim = fenics.Function(VT_dim)
+
+    read_xdmf_function(p_xdmf, p_dim)
+    read_xdmf_function(u_xdmf, u_dim)
+    read_xdmf_function(T_xdmf, T_dim)
+
+    print0(
+        f"[XDMF->CHK] loaded fields: "
+        f"T_min={global_vec_min(T_dim):.6e}, "
+        f"T_max={global_vec_max(T_dim):.6e}, "
+        f"u_min={global_vec_min(u_dim):.6e}, "
+        f"u_max={global_vec_max(u_dim):.6e}"
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Convert fields to nondimensional variables.
+    # ------------------------------------------------------------------
+    p_star_dim = fenics.Function(Vp_dim)
+    u_star_dim = fenics.Function(Vu_dim)
+    theta_dim = fenics.Function(VT_dim)
+
+    # p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.Pref)
+    # u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref)
+    p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.rho * scales.Uref_abe**2)
+    u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref_abe)
+    theta_dim.vector()[:] = (T_dim.vector()[:] - T_ambient) / float(scales.dTref)
+
+    p_star_dim.vector().apply("insert")
+    u_star_dim.vector().apply("insert")
+    theta_dim.vector().apply("insert")
+
+    p_star_dim.rename("p_star", "p_star")
+    u_star_dim.rename("u_star", "u_star")
+    theta_dim.rename("theta_star", "theta_star")
+
+    print0(
+        f"[XDMF->CHK] nondimensional ranges: "
+        f"theta_min={global_vec_min(theta_dim):.6e}, "
+        f"theta_max={global_vec_max(theta_dim):.6e}, "
+        f"u_star_min={global_vec_min(u_star_dim):.6e}, "
+        f"u_star_max={global_vec_max(u_star_dim):.6e}"
+    )
+
+    # ------------------------------------------------------------------
+    # 4. Scale mesh to star coordinates before writing checkpoint.
+    # ------------------------------------------------------------------
+    scale_mesh_inplace(mesh, float(scales.Lref))
+
+    try:
+        mesh.bounding_box_tree().build(mesh)
+    except Exception:
+        pass
+
+    # ------------------------------------------------------------------
+    # 5. Assemble mixed state and write checkpoint.
+    # ------------------------------------------------------------------
+    W = build_mixed_space_on_mesh(mesh)
+    w_n = assign_split_to_mixed(W, p_star_dim, u_star_dim, theta_dim)
+
+    meta = {
+        "step": int(step),
+        "time": float(time_value),
+        "dt": float(dt_value),
+        "source": "reconstructed_from_xdmf_snapshots",
+        "xdmf_mesh": os.path.abspath(mesh_xdmf),
+        "xdmf_pressure": os.path.abspath(p_xdmf),
+        "xdmf_velocity": os.path.abspath(u_xdmf),
+        "xdmf_temperature": os.path.abspath(T_xdmf),
+    }
+
+    write_checkpoint_with_mesh(
+        output_checkpoint_dir,
+        mesh,
+        w_n,
+        meta,
+    )
+
+    print0(f"[XDMF->CHK] wrote reconstructed checkpoint: {output_checkpoint_dir}")
+    return output_checkpoint_dir
+

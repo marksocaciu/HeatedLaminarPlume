@@ -2107,6 +2107,18 @@ def main():
         help="Forced near-wire refinement radius in multiples of wire radius.",
     )
 
+    argparser.add_argument("--checkpoint-from-xdmf", action="store_true")
+
+    argparser.add_argument("--xdmf-mesh", type=str, default="")
+    argparser.add_argument("--xdmf-pressure", type=str, default="")
+    argparser.add_argument("--xdmf-velocity", type=str, default="")
+    argparser.add_argument("--xdmf-temperature", type=str, default="")
+
+    argparser.add_argument("--xdmf-checkpoint-out", type=str, default="")
+    argparser.add_argument("--xdmf-step", type=int, default=0)
+    argparser.add_argument("--xdmf-time", type=float, default=0.0)
+    argparser.add_argument("--xdmf-dt", type=float, default=1.0e-6)
+
     argparser.add_argument("--foreign-restart-checkpoint", type=str, default="")
     argparser.add_argument("--foreign-source-experiment-index", type=int, default=-1)
     argparser.add_argument("--foreign-target-experiment-index", type=int, default=-1)
@@ -2121,6 +2133,36 @@ def main():
     )
     experiment = experiment_list[args.experiment_index]
     print0(f"Running experiment: {experiment.name}")
+
+    if args.checkpoint_from_xdmf:
+        required = {
+            "--xdmf-mesh": args.xdmf_mesh,
+            "--xdmf-pressure": args.xdmf_pressure,
+            "--xdmf-velocity": args.xdmf_velocity,
+            "--xdmf-temperature": args.xdmf_temperature,
+            "--xdmf-checkpoint-out": args.xdmf_checkpoint_out,
+        }
+
+        missing = [name for name, value in required.items() if not value]
+        if missing:
+            raise ValueError(
+                "--checkpoint-from-xdmf requires: " + ", ".join(missing)
+            )
+
+        checkpoint_from_xdmf_snapshots(
+            output_checkpoint_dir=args.xdmf_checkpoint_out,
+            mesh_xdmf=args.xdmf_mesh,
+            p_xdmf=args.xdmf_pressure,
+            u_xdmf=args.xdmf_velocity,
+            T_xdmf=args.xdmf_temperature,
+            experiment=experiment,
+            step=args.xdmf_step,
+            time_value=args.xdmf_time,
+            dt_value=args.xdmf_dt,
+        )
+
+        print0("Reconstructed checkpoint from XDMF snapshots.")
+        return
 
     if args.foreign_restart_checkpoint:
         if args.foreign_source_experiment_index < 0:
