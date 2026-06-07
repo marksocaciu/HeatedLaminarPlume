@@ -1404,7 +1404,7 @@ def checkpoint_from_xdmf_snapshots(
 
     # p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.Pref)
     # u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref)
-    p_star_dim.vector()[:] = p_dim.vector()[:] / float(scales.rho * scales.Uref_abe**2)
+    p_star_dim.vector()[:] = p_dim.vector()[:] / float(experiment.fluid.properties["rho"] * scales.Uref_abe**2)
     u_star_dim.vector()[:] = u_dim.vector()[:] / float(scales.Uref_abe)
     theta_dim.vector()[:] = (T_dim.vector()[:] - T_ambient) / float(scales.dTref)
 
