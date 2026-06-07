@@ -5,6 +5,7 @@ import json
 import shutil
 import math
 from pathlib import Path
+import h5py
 
 from solver import scales
 from utils.imports import *
@@ -1211,7 +1212,7 @@ def checkpoint_from_xdmf_snapshots(
     output_checkpoint_dir = str(output_checkpoint_dir)
 
     scales = compute_nondimensional_scales(experiment)
-    T_ambient = float(293.15)  # K, for nondimensional temperature conversion
+    T_ambient = float(292.96)  # K, for nondimensional temperature conversion
 
     def infer_attr_name(xdmf_path):
         root = ET.parse(xdmf_path).getroot()
@@ -1222,13 +1223,135 @@ def checkpoint_from_xdmf_snapshots(
                     return name
         raise RuntimeError(f"Could not infer Attribute Name from {xdmf_path}")
 
-    def read_xdmf_function(xdmf_path, function):
-        attr = infer_attr_name(xdmf_path)
-        with fenics.XDMFFile(function.function_space().mesh().mpi_comm(), xdmf_path) as xdmf:
-            try:
-                xdmf.read_checkpoint(function, attr, 0)
-            except RuntimeError:
-                xdmf.read(function)
+    def _first_dataitem_for_attribute(xdmf_path):
+        """
+        Return the HDF5 file and dataset path referenced by the first Attribute
+        in a visualization-style XDMF file.
+
+        Typical XDMF text looks like:
+            air_temperature_transient_72000.h5:/VisualisationVector/0
+        """
+        root = ET.parse(xdmf_path).getroot()
+
+        for attr in root.iter():
+            if not attr.tag.endswith("Attribute"):
+                continue
+
+            attr_name = attr.attrib.get("Name", "").strip()
+
+            for dataitem in attr.iter():
+                if not dataitem.tag.endswith("DataItem"):
+                    continue
+
+                text = (dataitem.text or "").strip()
+                if ".h5:" in text or ".hdf5:" in text:
+                    h5_name, h5_dataset = text.split(":", 1)
+
+                    h5_name = h5_name.strip()
+                    h5_dataset = h5_dataset.strip()
+
+                    if not os.path.isabs(h5_name):
+                        h5_name = os.path.join(os.path.dirname(xdmf_path), h5_name)
+
+                    return attr_name, h5_name, h5_dataset
+
+        raise RuntimeError(f"Could not find HDF5 DataItem in {xdmf_path}")
+
+
+    def _read_visualization_h5_array(xdmf_path):
+        attr_name, h5_path, h5_dataset = _first_dataitem_for_attribute(xdmf_path)
+
+        print0(
+            f"[XDMF->CHK] reading visualization field "
+            f"attr='{attr_name}', h5='{h5_path}', dataset='{h5_dataset}'"
+        )
+
+        with h5py.File(h5_path, "r") as h5:
+            data = np.asarray(h5[h5_dataset])
+
+        return data
+
+
+    def read_xdmf_scalar_cg1(xdmf_path, function):
+        """
+        Read scalar vertex visualization data into a CG1 scalar Function.
+
+        Must be run on the same mesh as the XDMF geometry.
+        Recommended: run this reconstruction step in serial.
+        """
+        V = function.function_space()
+        mesh = V.mesh()
+
+        data = _read_visualization_h5_array(xdmf_path)
+
+        if data.ndim == 2:
+            if data.shape[1] != 1:
+                raise RuntimeError(
+                    f"Expected scalar data in {xdmf_path}, got shape {data.shape}"
+                )
+            data = data[:, 0]
+
+        n_vertices = mesh.num_vertices()
+        if data.shape[0] != n_vertices:
+            raise RuntimeError(
+                f"Scalar data size mismatch for {xdmf_path}: "
+                f"data has {data.shape[0]} rows, mesh has {n_vertices} vertices. "
+                f"This usually means the field XDMF and mesh XDMF are not from the same run."
+            )
+
+        v2d = fenics.vertex_to_dof_map(V)
+        function.vector()[:] = 0.0
+        function.vector()[v2d] = data
+        function.vector().apply("insert")
+
+        return function
+
+
+    def read_xdmf_vector_cg1(xdmf_path, function):
+        """
+        Read vector vertex visualization data into a vector CG1 Function.
+
+        If the target velocity space later needs to be P2, assign_split_to_mixed()
+        will interpolate this CG1 velocity into the mixed P2 velocity space.
+        """
+        Vu = function.function_space()
+        mesh = Vu.mesh()
+
+        data = _read_visualization_h5_array(xdmf_path)
+
+        if data.ndim != 2 or data.shape[1] < 2:
+            raise RuntimeError(
+                f"Expected vector data with at least two columns in {xdmf_path}, "
+                f"got shape {data.shape}"
+            )
+
+        n_vertices = mesh.num_vertices()
+        if data.shape[0] != n_vertices:
+            raise RuntimeError(
+                f"Vector data size mismatch for {xdmf_path}: "
+                f"data has {data.shape[0]} rows, mesh has {n_vertices} vertices. "
+                f"This usually means the field XDMF and mesh XDMF are not from the same run."
+            )
+
+        V1 = fenics.FunctionSpace(mesh, "CG", 1)
+        ux = fenics.Function(V1)
+        uy = fenics.Function(V1)
+
+        v2d = fenics.vertex_to_dof_map(V1)
+
+        ux.vector()[:] = 0.0
+        uy.vector()[:] = 0.0
+
+        ux.vector()[v2d] = data[:, 0]
+        uy.vector()[v2d] = data[:, 1]
+
+        ux.vector().apply("insert")
+        uy.vector().apply("insert")
+
+        assigner = fenics.FunctionAssigner(Vu, [V1, V1])
+        assigner.assign(function, [ux, uy])
+        function.vector().apply("insert")
+
         return function
 
     # ------------------------------------------------------------------
@@ -1253,7 +1376,7 @@ def checkpoint_from_xdmf_snapshots(
     # 2. Read dimensional fields on the old dimensional mesh.
     # ------------------------------------------------------------------
     Vp_dim = fenics.FunctionSpace(mesh, "CG", 1)
-    Vu_dim = fenics.VectorFunctionSpace(mesh, "CG", 2)
+    Vu_dim = fenics.VectorFunctionSpace(mesh, "CG", 1)
     VT_dim = fenics.FunctionSpace(mesh, "CG", 1)
 
     p_dim = fenics.Function(Vp_dim)
