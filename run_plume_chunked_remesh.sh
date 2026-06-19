@@ -285,7 +285,7 @@ run_remesh() {
     mkdir -p "${coarse}"
     rm -rf "${output}"
 
-    local cmd=("${MPIRUN_BIN}" -np 1 ${PYTHON_BIN}" "${MAIN_PY}"
+    local cmd=("${MPIRUN_BIN}" -np 1 "${PYTHON_BIN}" "${MAIN_PY}"
         --experiment-index "${EXPERIMENT_INDEX}"
         --remesh-restart-checkpoint "${input}"
         --coarse-remesh-run-root "${coarse}"
