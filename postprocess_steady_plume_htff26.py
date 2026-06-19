@@ -3710,9 +3710,30 @@ def main() -> None:
                 buoy = float(row_i.get("buoyancy_vertical_force_N_per_m", np.nan))
                 pres = float(row_i.get("pressure_vertical_force_N_per_m", np.nan))
                 visc = float(row_i.get("viscous_vertical_force_N_per_m", np.nan))
+                Gr_h_top = (
+                    float(args.g) * float(args.beta) * float(theta_line_source) * float(ht)**3 / float(nu)**2
+                    if (
+                        np.isfinite(ht) and float(ht) > 0.0
+                        and np.isfinite(theta_line_source) and float(theta_line_source) > 0.0
+                        and np.isfinite(nu) and float(nu) > 0.0
+                    )
+                    else np.nan
+                )
+                Gr_h_bottom = (
+                    float(args.g) * float(args.beta) * float(theta_line_source) * float(y_bottom_cum - wire_y_m)**3 / float(nu)**2
+                    if (
+                        np.isfinite(y_bottom_cum - wire_y_m) and float(y_bottom_cum - wire_y_m) > 0.0
+                        and np.isfinite(theta_line_source) and float(theta_line_source) > 0.0
+                        and np.isfinite(nu) and float(nu) > 0.0
+                    )
+                    else np.nan
+                )
                 cumulative_selected_momentum_rows.append({
                     "top_height_above_wire_m": float(ht),
+                    "top_Gr_h": float(Gr_h_top),
                     "bottom_height_above_wire_m": float(y_bottom_cum - wire_y_m),
+                    "bottom_Gr_h": float(Gr_h_bottom),
+                    "Gr_h_definition": "g*beta*(Q_line/(rho*cp*nu))*h^3/nu^2, with h measured from wire centre",
                     "increase_of_momentum_top_minus_bottom_N_per_m": adv_tb,
                     "buoyancy_N_per_m": buoy,
                     "entrainment_advective_side_flux_N_per_m": entrainment,
@@ -3728,15 +3749,41 @@ def main() -> None:
             write_csv(outdir / "selected_cv_momentum_cumulative.csv", cumulative_selected_momentum_rows)
             if cumulative_selected_momentum_rows:
                 hc = np.array([r["top_height_above_wire_m"] for r in cumulative_selected_momentum_rows], dtype=float)
+                momentum_term_series = [
+                    ("momentum gain", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("buoyancy force", np.array([r["buoyancy_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("entrainment", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("pressure force", np.array([r["pressure_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("viscous stress force", np.array([r["viscous_stress_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                ]
                 plot_xy(outdir / "selected_cv_momentum_cumulative_terms.png", hc,
-                        [("momentum gain", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
-                         ("buoyancy force", np.array([r["buoyancy_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
-                         ("entrainment", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
-                         ("pressure force", np.array([r["pressure_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
-                         ("viscous stress force", np.array([r["viscous_stress_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float))],
+                        momentum_term_series,
                         "top height above wire [m]", "vertical momentum term [N/m]",
                         "Selected-CV cumulative vertical momentum terms",
                         figsize=plot_figsize, show_titles=args.plot_titles, dpi=220)
+
+                # Same selected-control-volume momentum balance, but with the local
+                # height-based Grashof number on the x-axis. This is the thesis-facing
+                # view for checking where the finite-wire/confinement effects appear
+                # in terms of Gr_h instead of dimensional height.
+                Gr_h_c = np.array([r.get("top_Gr_h", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)
+                valid_gr = np.isfinite(Gr_h_c) & (Gr_h_c > 0.0)
+                for _, vals in momentum_term_series:
+                    valid_gr &= np.isfinite(vals)
+                if np.count_nonzero(valid_gr) >= 2:
+                    order = np.argsort(Gr_h_c[valid_gr])
+                    fig, ax = plt.subplots(figsize=plot_figsize)
+                    xgr = Gr_h_c[valid_gr][order]
+                    for label, vals in momentum_term_series:
+                        ax.plot(xgr, vals[valid_gr][order], label=label)
+                    ax.set_xscale("log")
+                    ax.set_xlabel(r"$Gr_h=g\beta\Theta h^3/\nu^2$ [-]")
+                    ax.set_ylabel("vertical momentum term [N/m]")
+                    maybe_set_ax_title(ax, r"Selected-CV cumulative vertical momentum terms vs $Gr_h$", args.plot_titles)
+                    ax.grid(True, which="both", alpha=0.35)
+                    place_legend_outside_right(ax)
+                    save_figure_full(fig, outdir / "selected_cv_momentum_cumulative_terms_vs_Gr_h.png", dpi=220)
+                    plt.close(fig)
         except Exception as exc:
             cumulative_selected_momentum_rows.append({
                 "enabled": False,
@@ -4282,7 +4329,7 @@ def main() -> None:
     print("Black-body radiation estimate written to black_body_radiation_estimate.csv")
     print("Plume enthalpy-flow balance written to plume_enthalpy_balance.csv")
     print("Fixed-eta mass/momentum fluxes written to fixed_eta_mass_momentum_fluxes.csv")
-    print("Cumulative selected-CV momentum terms written to selected_cv_momentum_cumulative.csv")
+    print("Cumulative selected-CV momentum terms written to selected_cv_momentum_cumulative.csv; Gr_h-axis plot written when possible")
     if args.nusselt:
         print("Wire Nusselt/Biot diagnostics written to wire_nusselt_summary.csv and wire_nusselt_local.csv")
     if args.energy_cv:
