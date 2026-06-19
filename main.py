@@ -488,6 +488,7 @@ def base_version(
         existing_run_root: str = "",
         steady_from_last_transient: bool = False,
         restart_from_checkpoint_mesh: str = "",
+        stop_at_step: int | None = None,
     ):
     mkdir0(experiment.name)
 
@@ -1004,6 +1005,7 @@ def base_version(
                 SUPG=SUPG,
                 restart_recovered=restart_from_last_transient,
                 restart_step=restart_meta["step"],
+                stop_at_step=stop_at_step,
             )
 
         print0("transient status:", transient_info["status"])
@@ -1478,6 +1480,7 @@ def abs_version(
         existing_run_root: str = "",
         steady_from_last_transient: bool = False,
         restart_from_checkpoint_mesh: str = "",
+        stop_at_step: int | None = None,
     ):
     mkdir0(experiment.name)
 
@@ -1984,6 +1987,7 @@ def abs_version(
             history_csv_path=run_root + "/transient_history.csv",
             restart_recovered=restart_from_last_transient,
             restart_step=restart_meta["step"],
+            stop_at_step=stop_at_step,
         )
 
     print0("transient status:", transient_info["status"])
@@ -2032,6 +2036,15 @@ def main():
     argparser.add_argument("--existing-run-root", type=str, default="")
     argparser.add_argument("--steady-from-last-transient", action="store_true")
     argparser.add_argument("--formulation", type=str, default="abe", help="Solver formulation to use")
+    argparser.add_argument(
+        "--stop-at-step",
+        type=int,
+        default=None,
+        help=(
+            "Stop the transient solve after accepting this absolute/global step. "
+            "A final restart_checkpoint is written even if the step is not a normal save_every step."
+        ),
+    )
 
     argparser.add_argument(
         "--refine-restart-checkpoint",
@@ -2259,6 +2272,7 @@ def main():
             existing_run_root=args.existing_run_root,
             steady_from_last_transient=args.steady_from_last_transient,
             restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
+            stop_at_step=args.stop_at_step,
         )
     elif args.formulation == "abe":
         abs_version(
@@ -2267,6 +2281,7 @@ def main():
             existing_run_root=args.existing_run_root,
             steady_from_last_transient=args.steady_from_last_transient,
             restart_from_checkpoint_mesh=args.restart_from_checkpoint_mesh,
+            stop_at_step=args.stop_at_step,
         )
     else:
         temperature_dependent_version(

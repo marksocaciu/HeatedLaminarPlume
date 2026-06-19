@@ -97,6 +97,22 @@ def maybe_set_ax_title(ax, title: str, show_titles: bool) -> None:
         ax.set_title(title)
 
 
+def place_legend_outside_right(ax=None, *args, **kwargs):
+    """Place a plot legend outside the axes, centered on the right edge.
+
+    This keeps the plotting area unobstructed and gives all figures the same
+    legend placement convention as the selected momentum-control-volume plots.
+    Positional arguments are forwarded to Axes.legend, so combined legends
+    such as twin-axis handles still work.
+    """
+    if ax is None:
+        ax = plt.gca()
+    kwargs.pop("loc", None)
+    kwargs.setdefault("bbox_to_anchor", (1.02, 0.5))
+    kwargs.setdefault("borderaxespad", 0.0)
+    return ax.legend(*args, loc="center left", **kwargs)
+
+
 @dataclass
 class FieldData:
     points_mesh: np.ndarray          # (n, 2), original mesh coordinates
@@ -1711,7 +1727,7 @@ def compute_wire_nusselt_diagnostics(
     return summary_rows, local_rows
 
 
-def plot_local_nusselt(path: Path, rows: List[Dict[str, float | str]], *, figsize: Tuple[float, float], show_titles: bool = False) -> None:
+def plot_local_nusselt(path: Path, rows: List[Dict[str, float | str]], *, figsize: Tuple[float, float] = None, show_titles: bool = False) -> None:
     if not rows:
         return
     phi = np.asarray([r["angle_deg"] for r in rows], dtype=float)
@@ -1727,7 +1743,7 @@ def plot_local_nusselt(path: Path, rows: List[Dict[str, float | str]], *, figsiz
         maskd = np.isfinite(phi) & np.isfinite(Nu_delta)
         orderd = np.argsort(phi[maskd])
         plt.plot(phi[maskd][orderd], Nu_delta[maskd][orderd], linewidth=1.8, label=r"$Nu_\delta$")
-        plt.legend()
+        place_legend_outside_right()
     plt.xlabel(r"surface angle $\phi$ [deg]")
     plt.ylabel(r"Nusselt number [-]")
     maybe_set_title("Local wire Nusselt diagnostics", show_titles)
@@ -1766,7 +1782,7 @@ def plot_xy(path: Path, x, ys: Sequence[Tuple[str, np.ndarray]], xlabel: str, yl
     maybe_set_title(title, show_titles)
     plt.grid(True, which="both", alpha=0.35)
     if len(ys) > 1:
-        plt.legend()
+        place_legend_outside_right()
     plt.tight_layout()
     plt.show()
     plt.savefig(path, dpi=dpi)
@@ -2062,7 +2078,7 @@ def plot_entrainment_loglog_scaling(
     ax.set_ylabel(ylabel)
     maybe_set_ax_title(ax, title, show_titles)
     ax.grid(True, which="both", alpha=0.3)
-    ax.legend(fontsize=8)
+    place_legend_outside_right(ax, fontsize=8)
     fig.tight_layout()
     fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
@@ -2152,7 +2168,7 @@ def main() -> None:
                     help="Upper face height relative to wire centre [m]. Default: 0.035 m.")
     ap.add_argument("--energy-cv-n-boundary", type=int, default=1201,
                     help="Number of quadrature samples on each energy-CV boundary. Default: 1201.")
-    ap.add_argument("--plot-width-inch", type=float, default=3.0,
+    ap.add_argument("--plot-width-inch", type=float, default=None,
                     help="Width of saved plot figures in inches. Default is thesis-friendly for two plots per row.")
     ap.add_argument("--plot-height-inch", type=float, default=None,
                     help="Optional height of saved plot figures in inches. Default is 0.72 * plot width.")
@@ -2201,7 +2217,7 @@ def main() -> None:
     ap.add_argument("--bl-nr", type=int, default=600, help="Number of radial samples per angular direction for boundary-layer search")
     args = ap.parse_args()
     configure_plot_style(args.plot_font_size)
-    plot_figsize = thesis_figsize(args.plot_width_inch, args.plot_height_inch)
+    # plot_figsize = thesis_figsize(args.plot_width_inch, args.plot_height_inch)
 
     if args.coords_are_dimensionless:
         if args.lref is None:
@@ -2679,7 +2695,7 @@ def main() -> None:
         )
         write_csv(outdir / "wire_nusselt_summary.csv", nusselt_summary_rows)
         write_csv(outdir / "wire_nusselt_local.csv", nusselt_local_rows)
-        plot_local_nusselt(outdir / "wire_nusselt_local.png", nusselt_local_rows, figsize=plot_figsize, show_titles=args.plot_titles)
+        plot_local_nusselt(outdir / "wire_nusselt_local.png", nusselt_local_rows, show_titles=args.plot_titles)
 
     # Approximate balance curves at many y-levels using the same x sampling.
     balance_rows = []
@@ -2872,7 +2888,7 @@ def main() -> None:
         vals = [args.q_input_per_length if args.q_input_per_length else np.nan,
                 boundary_totals["Q_escape_total_W_per_m"],
                 float(np.nanmax([r["Q_total_W_per_m"] for r in plane_rows])) if plane_rows else np.nan]
-        plt.figure(figsize=plot_figsize)
+        # plt.figure(figsize=plot_figsize)
         plt.bar(labels, vals)
         plt.ylabel("heat rate per unit depth [W/m]")
         maybe_set_title("Global/diagnostic heat budget", args.plot_titles)
@@ -2965,7 +2981,7 @@ def main() -> None:
     # Linearized virtual-origin convergence plots. Intercept with zero gives y0.
     def plot_linearized_virtual_origin(path, yy_, amp_, exponent, fit, ylabel, title):
         mask = np.isfinite(yy_) & np.isfinite(amp_) & (amp_ > 0)
-        plt.figure(figsize=plot_figsize)
+        # plt.figure(figsize=plot_figsize)
         z = np.full_like(yy_, np.nan, dtype=float)
         z[mask] = amp_[mask] ** (1.0 / exponent)
         plt.plot(yy_[mask] - wire_y_m, z[mask], label="transformed centreline")
@@ -2981,7 +2997,7 @@ def main() -> None:
         plt.ylabel(ylabel)
         maybe_set_title(title, args.plot_titles)
         plt.grid(True, alpha=0.35)
-        plt.legend()
+        place_legend_outside_right()
         plt.tight_layout()
         plt.savefig(path, dpi=180)
         plt.close()
@@ -2994,7 +3010,7 @@ def main() -> None:
     # Angular near-wire boundary-layer plot.
     angle_deg = np.array([r["angle_deg"] for r in ray_rows], dtype=float)
     delta_ang = np.array([r["thermal_boundary_layer_thickness_m"] for r in ray_rows], dtype=float)
-    plt.figure(figsize=plot_figsize)
+    # plt.figure(figsize=plot_figsize)
     plt.plot(angle_deg, delta_ang / wire_radius_m)
     if np.isfinite(thermal_bl_mean_m):
         plt.axhline(thermal_bl_mean_m / wire_radius_m, linestyle="--", label=f"mean={thermal_bl_mean_m / wire_radius_m:.4g} r")
@@ -3002,26 +3018,26 @@ def main() -> None:
     plt.ylabel("1% thermal thickness / r")
     maybe_set_title("Near-wire angular thermal boundary-layer thickness", args.plot_titles)
     plt.grid(True, alpha=0.35)
-    plt.legend()
+    place_legend_outside_right()
     plt.tight_layout()
     plt.savefig(outdir / "near_wire_boundary_layer_by_angle.png", dpi=180)
     plt.close()
 
     # Polar-style visualization of the same radial thickness values.
-    plt.figure(figsize=(args.plot_width_inch, args.plot_width_inch))
+    # plt.figure(figsize=(args.plot_width_inch, args.plot_width_inch))
     ax = plt.subplot(111, projection="polar")
     ax.plot(angles, delta_ang / wire_radius_m)
     if np.isfinite(thermal_bl_mean_m):
         ax.plot(angles, np.full_like(angles, thermal_bl_mean_m / wire_radius_m), linestyle="--", label="mean")
     maybe_set_ax_title(ax, "Angular 1% thermal thickness / r", args.plot_titles)
-    ax.legend(loc="upper right")
+    place_legend_outside_right(ax)
     plt.tight_layout()
     plt.savefig(outdir / "near_wire_boundary_layer_polar.png", dpi=180)
     plt.close()
 
     # Combined profile plots: one figure per quantity, with all requested heights overlaid.
     def combined_profile_plot(filename: str, quantity_key: str, ylabel: str, title: str) -> None:
-        plt.figure(figsize=plot_figsize)
+        # plt.figure(figsize=plot_figsize)
         for h in args.planes:
             rows = [r for r in profile_rows if abs(r["height_m"] - h) < 1e-15]
             if not rows:
@@ -3036,7 +3052,7 @@ def main() -> None:
         plt.ylabel(ylabel)
         maybe_set_title(title, args.plot_titles)
         plt.grid(True, alpha=0.35)
-        plt.legend()
+        place_legend_outside_right()
         plt.tight_layout()
         plt.savefig(outdir / filename, dpi=180)
         plt.close()
@@ -3113,8 +3129,8 @@ def main() -> None:
             })
         write_csv(outdir / "plane_profiles_eta.csv", eta_rows)
 
-        def combined_eta_plot(filename: str, quantity_key: str, ylabel: str, title: str, xlim_percentile: float = 99.0) -> None:
-            plt.figure(figsize=plot_figsize)
+        def combined_eta_plot(filename: str, quantity_key: str, ylabel: str, title: str) -> None:
+            # plt.figure(figsize=plot_figsize)
             all_eta = []
             eta_plot_half_width = float(args.eta_plot_half_width) if args.eta_plot_half_width is not None else 0.0
             use_eta_window = np.isfinite(eta_plot_half_width) and eta_plot_half_width > 0.0
@@ -3131,17 +3147,11 @@ def main() -> None:
                     all_eta.extend(np.abs(et[m]).tolist())
                     o = np.argsort(et[m])
                     plt.plot(et[m][o], qp[m][o], label=f"h={h:g} m")
-            if use_eta_window:
-                plt.xlim(-eta_plot_half_width, eta_plot_half_width)
-            elif all_eta:
-                lim = np.nanpercentile(np.array(all_eta), xlim_percentile)
-                if np.isfinite(lim) and lim > 0:
-                    plt.xlim(-lim, lim)
             plt.xlabel(r"$\eta=(x/h)Gr_h^{1/5}$ [-]", size=22)
             plt.ylabel(ylabel, size=22)
             maybe_set_title(title, args.plot_titles)
             plt.grid(True, alpha=0.35)
-            plt.legend()
+            place_legend_outside_right()
             plt.tight_layout()
             plt.savefig(outdir / filename, dpi=220)
             plt.close()
@@ -3406,7 +3416,7 @@ def main() -> None:
         plt.axhline(0.0, linestyle="--", linewidth=1)
         plt.xlabel("Height above wire [m]")
         plt.ylabel("Entrainment velocity [m/s]")
-        plt.legend()
+        place_legend_outside_right()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(outdir / "entrainment_velocity_vs_height.png", dpi=220)
@@ -3421,7 +3431,7 @@ def main() -> None:
         plt.axhline(0.0, linestyle="--", linewidth=1)
         plt.xlabel("Height above wire [m]")
         plt.ylabel("dM/dy [kg/(s m²)]")
-        plt.legend()
+        place_legend_outside_right()
         plt.grid(True, alpha=0.3)
         plt.tight_layout()
         plt.savefig(outdir / "entrainment_mass_flux_derivative.png", dpi=220)
@@ -3475,7 +3485,7 @@ def main() -> None:
             hh = np.array([r["height_m"] for r in fixed_eta_mass_momentum_rows], dtype=float)
             mm = np.array([r["mass_flux_signed_kg_per_s_per_m"] for r in fixed_eta_mass_momentum_rows], dtype=float)
             mom = np.array([r["vertical_momentum_flux_positive_N_per_m"] for r in fixed_eta_mass_momentum_rows], dtype=float)
-            fig, ax1 = plt.subplots(figsize=plot_figsize)
+            fig, ax1 = plt.subplots()
             ax2 = ax1.twinx()
             l1, = ax1.plot(hh, mom, marker="o", label="vertical momentum flux")
             l2, = ax2.plot(hh, mm, marker="s", linestyle="--", label="mass flux")
@@ -3484,7 +3494,7 @@ def main() -> None:
             ax2.set_ylabel("mass flux [kg/(s m)]")
             maybe_set_ax_title(ax1, "Fixed-eta mass and vertical momentum flux", args.plot_titles)
             ax1.grid(True, alpha=0.35)
-            ax1.legend([l1, l2], [l1.get_label(), l2.get_label()], loc="best")
+            place_legend_outside_right(ax1, [l1, l2], [l1.get_label(), l2.get_label()])
             fig.tight_layout()
             fig.savefig(outdir / "fixed_eta_mass_momentum_fluxes.png", dpi=220)
             plt.close(fig)
@@ -3893,7 +3903,7 @@ def main() -> None:
             if comp_half_width is not None:
                 mask &= np.abs(xp) <= comp_half_width
             order = np.argsort(xp[mask])
-            plt.figure(figsize=plot_figsize)
+            # plt.figure(figsize=plot_figsize)
             plt.plot(args.comparison_x_scale * xp[mask][order], qp[mask][order], label="numerical", linewidth=2.0)
 
             exp_grouped = group_overlay_rows_by_label_and_height(exp_overlay_rows, h, args.comparison_height_tol)
@@ -3923,7 +3933,7 @@ def main() -> None:
             plt.ylabel(ylabel)
             maybe_set_title(f"{title_prefix}, h={h:g} m", args.plot_titles)
             plt.grid(True, alpha=0.35)
-            plt.legend()
+            place_legend_outside_right()
             plt.tight_layout()
             safe_h = str(f"{h:.6g}").replace(".", "p").replace("-", "m")
             plt.savefig(outdir / f"{filename_prefix}_h_{safe_h}m_comparison.png", dpi=220)
@@ -3979,7 +3989,7 @@ def main() -> None:
     def plot_centerline_loglog(path: Path, h_axis: np.ndarray, amp: np.ndarray, free_fit: Dict[str, float],
                                bl_fit: Dict[str, float], ylabel: str, xlabel: str, title: str,
                                theory_exponent: float) -> None:
-        plt.figure(figsize=plot_figsize)
+        # plt.figure(figsize=plot_figsize)
         mask = np.isfinite(h_axis) & np.isfinite(amp) & (h_axis > 0.0) & (amp > 0.0)
         plt.loglog(h_axis[mask], amp[mask], label="numerical")
         hfit = h_axis[mask]
@@ -3996,11 +4006,9 @@ def main() -> None:
                            linestyle=":", linewidth=2.0, label=f"BL theory: n={theory_exponent:.3f}")
         plt.xlabel(xlabel)
         plt.ylabel(ylabel)
-        plt.xlim(left=4e-3, right=5e-2)
-        plt.ylim(bottom=2e-2)
         maybe_set_title(title, args.plot_titles)
         plt.grid(True, which="both", alpha=0.35)
-        plt.legend()
+        place_legend_outside_right()
         plt.tight_layout()
         plt.savefig(path, dpi=220)
         plt.close()

@@ -1445,6 +1445,7 @@ def run_post_continuation_transient(
     start_step: int = 0,
     restart_recovered=False,
     restart_step:int = 0,
+    stop_at_step: int | None = None,
 ):
     """
     Long-time backward-Euler transient workflow with rollback, adaptive timestep
@@ -1461,6 +1462,14 @@ def run_post_continuation_transient(
 
     if n_steps is not None:
         step_max = int(n_steps)
+
+    if stop_at_step is not None:
+        stop_at_step = int(stop_at_step)
+        if stop_at_step < int(start_step):
+            print0(
+                f"Warning: --stop-at-step={stop_at_step} is smaller than the restart/current step "
+                f"{int(start_step)}. The transient loop will not advance."
+            )
 
     boundary_conditions = set_bcs(W, sub_ft, T_air_bc, T_c, experiment, scales)
 
@@ -1756,11 +1765,16 @@ def run_post_continuation_transient(
     print0(f"  dt_cut     = {dt_cut:.3e}")
     print0(f"  t_end      = {t_end:.3e}")
     print0(f"  step_max   = {step_max}")
+    print0(f"  stop_at_step = {stop_at_step}")
     print0(f"  save_every = {save_every}")
     print0("  target     = full coupled transient (lambda=1, convection=1)")
     print0("=" * 72)
 
-    while step < int(step_max) and t < float(t_end):
+    while (
+        step < int(step_max)
+        and t < float(t_end)
+        and (stop_at_step is None or step < int(stop_at_step))
+    ):
         trial_success = False
         local_retry = 0
         last_error = None
@@ -1968,8 +1982,11 @@ def run_post_continuation_transient(
         if history_csv_path:
             _append_history_csv(history_csv_path, row)
 
+        regular_save = save_every > 0 and step % save_every == 0
+        force_save_for_stop = stop_at_step is not None and step >= int(stop_at_step)
+
         if (
-            save_every > 0 and step % save_every == 0 and
+            (regular_save or force_save_for_stop) and
             sub_mesh_star is not None and sub_mesh_dim is not None and
             p_path and u_path and T_path
         ):
@@ -2084,6 +2101,14 @@ def run_post_continuation_transient(
                 except Exception as err:
                     print0(f"Biot diagnostic skipped at step {step:04d}: {err}")
 
+        if stop_at_step is not None and step >= int(stop_at_step):
+            status = "stop_at_step_reached"
+            print0(
+                f"Transient stopping criterion satisfied: reached absolute step "
+                f"{int(stop_at_step)}."
+            )
+            break
+
         is_steady, max_drift = _statistically_steady(history)
         if is_steady:
             status = "statistically_steady"
@@ -2125,6 +2150,8 @@ def run_post_continuation_transient(
 
         dt = min(dt_cfl, dt)
 
+    if stop_at_step is not None and step >= int(stop_at_step) and status == "transient_complete":
+        status = "stop_at_step_reached"
     if step >= int(step_max) and status == "transient_complete":
         status = "step_limit_reached"
     if t >= float(t_end) and status == "transient_complete":
