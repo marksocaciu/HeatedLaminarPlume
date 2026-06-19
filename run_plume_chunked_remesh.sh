@@ -64,7 +64,7 @@ run_solver_segment() {
     local stop_step="$1"
     local restart_dir="$2"
 
-    local cmd=("${MPIRUN_BIN}" -np "${NP}" "${PYTHON_BIN}" "${MAIN_PY}"
+    local cmd=("${MPIRUN_BIN}" -np "${NP}" --use-hwthread-cpus "${PYTHON_BIN}" "${MAIN_PY}"
         --formulation "${FORMULATION}"
         --experiment-index "${EXPERIMENT_INDEX}"
         --stop-at-step "${stop_step}"

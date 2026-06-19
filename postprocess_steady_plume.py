@@ -2923,7 +2923,7 @@ def main() -> None:
                 rho=float(args.rho), cp=float(args.cp), mu=float(args.mu), beta=float(args.beta), g=float(args.g),
             )
             y_bottom_cum = max(float(wire_y_m + wire_radius_m), float(ymin) + 1e-10 * max(ymax - ymin, xmax - xmin, 1.0))
-            y_top_limit = min(float(wire_y_m + 0.09), float(ymax) - 1e-10 * max(ymax - ymin, xmax - xmin, 1.0))
+            y_top_limit = min(float(wire_y_m + args.energy_cv_y_top), float(ymax) - 1e-10 * max(ymax - ymin, xmax - xmin, 1.0))
             if y_top_limit <= y_bottom_cum:
                 raise ValueError("0.09 m cumulative top is outside the available mesh above the wire top.")
             top_heights = np.linspace(y_bottom_cum - wire_y_m, y_top_limit - wire_y_m, 80)

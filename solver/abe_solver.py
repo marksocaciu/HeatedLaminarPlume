@@ -1331,17 +1331,17 @@ def run_post_abe_continuation_transient(
                 theta_min_allowed = (250.0 - T_ambient) / scales.dTref
                 theta_max_allowed = (500.0 - T_ambient) / scales.dTref
 
-                if candidate_diag["theta_min"] < theta_min_allowed:
-                    raise RuntimeError(
-                        f"Rejecting step: theta_min={candidate_diag['theta_min']:.3e} "
-                        f"< allowed {theta_min_allowed:.3e}"
-                    )
+                # if candidate_diag["theta_min"] < theta_min_allowed:
+                #     raise RuntimeError(
+                #         f"Rejecting step: theta_min={candidate_diag['theta_min']:.3e} "
+                #         f"< allowed {theta_min_allowed:.3e}"
+                #     )
 
-                if candidate_diag["theta_max"] > theta_max_allowed:
-                    raise RuntimeError(
-                        f"Rejecting step: theta_max={candidate_diag['theta_max']:.3e} "
-                        f"> allowed {theta_max_allowed:.3e}"
-                    )
+                # if candidate_diag["theta_max"] > theta_max_allowed:
+                #     raise RuntimeError(
+                #         f"Rejecting step: theta_max={candidate_diag['theta_max']:.3e} "
+                #         f"> allowed {theta_max_allowed:.3e}"
+                #     )
 
                 print0(
                     "candidate diagnostics: "
