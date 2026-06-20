@@ -941,29 +941,29 @@ def run_post_abe_continuation_transient(
     w_last_accepted = fenics.Function(W)
     copy_state(w_last_accepted, w_n)
 
-    if restart_recovered:
-        rebuild_abe_state_from_conduction(
-            experiment=experiment,
-            W=W,
-            w_state=w_n,
-            sub_mesh_star=sub_mesh_star,
-            sub_ds=sub_ds,
-            qn_air=qn_air,
-            kappa=kappa,
-            scales=scales,
-        )
+    # if restart_recovered:
+    #     rebuild_abe_state_from_conduction(
+    #         experiment=experiment,
+    #         W=W,
+    #         w_state=w_n,
+    #         sub_mesh_star=sub_mesh_star,
+    #         sub_ds=sub_ds,
+    #         qn_air=qn_air,
+    #         kappa=kappa,
+    #         scales=scales,
+    #     )
 
-        copy_state(w, w_n)
-        copy_state(w_prev, w_n)
-        copy_state(w_last_accepted, w_n)
+    #     copy_state(w, w_n)
+    #     copy_state(w_prev, w_n)
+    #     copy_state(w_last_accepted, w_n)
 
-        dt = min(float(dt_start), 1.0e-7)
-        relaxation = min(float(relaxation), 0.2)
+    #     dt = min(float(dt_start), 1.0e-7)
+    #     relaxation = min(float(relaxation), 0.2)
 
-        print0(
-            "Restart recovery mode: using rebuilt conduction state, "
-            f"dt={dt:.3e}, relaxation={relaxation:.2f}"
-        )
+    #     print0(
+    #         "Restart recovery mode: using rebuilt conduction state, "
+    #         f"dt={dt:.3e}, relaxation={relaxation:.2f}"
+    #     )
     
     dt = float(dt_start)
     t = float(start_time)
@@ -1271,22 +1271,22 @@ def run_post_abe_continuation_transient(
 
             print0(f"\n=== transient step {step + 1:04d} | t={t:.6e} | dt={dt:.3e} | retry={local_retry} ===")
 
-            if restart_recovered and accepted_steps < restart_recovery_steps:
-                s = float(accepted_steps + 1) / float(restart_recovery_steps)
+            # if restart_recovered and accepted_steps < restart_recovery_steps:
+            #     s = float(accepted_steps + 1) / float(restart_recovery_steps)
 
-                qn_scale_step = max(0.05, s)
-                buoyancy_scale_step = s
-                convection_scale_step = s
-                fEc_step = s * scales.fEc_abe
+            #     qn_scale_step = max(0.05, s)
+            #     buoyancy_scale_step = s
+            #     convection_scale_step = s
+            #     fEc_step = s * scales.fEc_abe
 
-                dt = min(dt, 1.0e-7)
-                relaxation_step = min(relaxation, 0.2)
-            else:
-                qn_scale_step = 1.0
-                buoyancy_scale_step = 1.0
-                convection_scale_step = 1.0
-                fEc_step = scales.fEc_abe
-                relaxation_step = relaxation
+            #     dt = min(dt, 1.0e-7)
+            #     relaxation_step = min(relaxation, 0.2)
+            # else:
+            qn_scale_step = 1.0
+            buoyancy_scale_step = 1.0
+            convection_scale_step = 1.0
+            fEc_step = scales.fEc_abe
+            relaxation_step = relaxation
 
             F_tr, JF_tr = build_ptc_abe_problem(
                     W=W,
