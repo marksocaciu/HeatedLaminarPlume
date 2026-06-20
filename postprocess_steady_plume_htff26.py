@@ -321,6 +321,38 @@ def cell_areas(points: np.ndarray, cells: np.ndarray) -> np.ndarray:
     return 0.5 * np.abs((p1[:, 0] - p0[:, 0]) * (p2[:, 1] - p0[:, 1]) - (p2[:, 0] - p0[:, 0]) * (p1[:, 1] - p0[:, 1]))
 
 
+def cell_values_to_node_average(cells: np.ndarray, cell_values: np.ndarray, n_points: int) -> np.ndarray:
+    """Average cell-centred values onto mesh nodes for robust interpolation.
+
+    Matplotlib's automatic Delaunay triangulation of cell centres can fail for
+    stretched/near-degenerate plume meshes.  For diagnostic interpolation of a
+    P0 heat-flux field, averaging neighbouring cell values to the original mesh
+    nodes lets us reuse the already-valid FEniCS triangle connectivity.
+    """
+    vals = np.asarray(cell_values, dtype=float)
+    if vals.ndim == 1:
+        vals_2d = vals[:, None]
+    else:
+        vals_2d = vals
+    if vals_2d.shape[0] != cells.shape[0]:
+        raise ValueError(
+            f"Expected one cell value per triangle, got {vals_2d.shape[0]} values for {cells.shape[0]} cells."
+        )
+
+    out = np.zeros((int(n_points), vals_2d.shape[1]), dtype=float)
+    counts = np.zeros(int(n_points), dtype=float)
+    finite_cell = np.all(np.isfinite(vals_2d), axis=1)
+    for local_node in range(3):
+        node_ids = cells[finite_cell, local_node].astype(np.int64)
+        np.add.at(out, node_ids, vals_2d[finite_cell])
+        np.add.at(counts, node_ids, 1.0)
+
+    valid_nodes = counts > 0.0
+    out[valid_nodes] /= counts[valid_nodes, None]
+    out[~valid_nodes] = np.nan
+    return out[:, 0] if vals.ndim == 1 else out
+
+
 def sample_line(Ti, uxi, uyi, x: np.ndarray, y: float):
     yy = np.full_like(x, y, dtype=float)
     T = finite_or_nan(Ti(x, yy))
@@ -1246,7 +1278,12 @@ def integrate_selected_control_volume_vertical_momentum(
         "advective_left_N_per_m": float(adv_left),
         "advective_right_N_per_m": float(adv_right),
         "advective_top_plus_bottom_N_per_m": float(adv_top + adv_bottom),
-        "advective_side_entrainment_N_per_m": float(adv_left + adv_right),
+        # Outward-normal side advective flux is negative for side inflow into the CV.
+        # Report entrainment with the thesis-facing positive convention: positive means
+        # vertical momentum enters the control volume through the lateral boundaries.
+        "advective_side_flux_out_N_per_m": float(adv_left + adv_right),
+        "advective_side_entrainment_N_per_m": float(-(adv_left + adv_right)),
+        "advective_side_entrainment_sign_convention": "positive_means_into_control_volume",
         "pressure_vertical_force_N_per_m": float(pressure_total),
         "pressure_top_N_per_m": float(pres_top),
         "pressure_bottom_N_per_m": float(pres_bottom),
@@ -2413,14 +2450,17 @@ def main() -> None:
     plane_rows = []
     profile_rows = []
 
-    # If heat flux is cell-centred, interpolate it from triangle centres onto plane samples.
+    # If heat flux is cell-centred, interpolate it on the original mesh.
+    # Do NOT triangulate cell centres with a fresh Delaunay triangulation: for
+    # strongly stretched/near-degenerate plume meshes this can make Matplotlib's
+    # TrapezoidMapTriFinder fail with "Triangulation is invalid".  Instead,
+    # average the P0 cell values to the original P1 nodes and reuse the valid
+    # FEniCS connectivity already used by T, u and p.
     qx_i = qy_i = None
     if Qdata is not None:
-        cc = cell_centres(Tdata.points_m, Tdata.cells)
-        # Triangulate cell centres for interpolation. This is a diagnostic interpolation only.
-        qtri = mtri.Triangulation(cc[:, 0], cc[:, 1])
-        qx_i = mtri.LinearTriInterpolator(qtri, Qdata.values[:, 0])
-        qy_i = mtri.LinearTriInterpolator(qtri, Qdata.values[:, 1])
+        q_node = cell_values_to_node_average(Tdata.cells, Qdata.values[:, :2], Tdata.points_m.shape[0])
+        qx_i = mtri.LinearTriInterpolator(tri, q_node[:, 0])
+        qy_i = mtri.LinearTriInterpolator(tri, q_node[:, 1])
 
     for h in args.planes:
         yp = float(wire_y_m + h)
@@ -3707,6 +3747,7 @@ def main() -> None:
                     continue
                 adv_tb = float(row_i.get("advective_top_plus_bottom_N_per_m", np.nan))
                 entrainment = float(row_i.get("advective_side_entrainment_N_per_m", np.nan))
+                entrainment_out = float(row_i.get("advective_side_flux_out_N_per_m", np.nan))
                 buoy = float(row_i.get("buoyancy_vertical_force_N_per_m", np.nan))
                 pres = float(row_i.get("pressure_vertical_force_N_per_m", np.nan))
                 visc = float(row_i.get("viscous_vertical_force_N_per_m", np.nan))
@@ -3737,6 +3778,8 @@ def main() -> None:
                     "increase_of_momentum_top_minus_bottom_N_per_m": adv_tb,
                     "buoyancy_N_per_m": buoy,
                     "entrainment_advective_side_flux_N_per_m": entrainment,
+                    "side_advective_flux_out_N_per_m": entrainment_out,
+                    "entrainment_sign_convention": "positive_means_into_control_volume",
                     "pressure_force_N_per_m": pres,
                     "viscous_stress_force_N_per_m": visc,
                     "rhs_pressure_plus_viscous_plus_buoyancy_N_per_m": float(row_i.get("rhs_pressure_plus_viscous_plus_buoyancy_N_per_m", np.nan)),
@@ -3752,7 +3795,7 @@ def main() -> None:
                 momentum_term_series = [
                     ("momentum gain", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("buoyancy force", np.array([r["buoyancy_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
-                    ("entrainment", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("entrainment (into CV)", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("pressure force", np.array([r["pressure_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("viscous stress force", np.array([r["viscous_stress_force_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                 ]
@@ -3767,15 +3810,17 @@ def main() -> None:
                 # view for checking where the finite-wire/confinement effects appear
                 # in terms of Gr_h instead of dimensional height.
                 Gr_h_c = np.array([r.get("top_Gr_h", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)
-                valid_gr = np.isfinite(Gr_h_c) & (Gr_h_c > 0.0)
-                for _, vals in momentum_term_series:
-                    valid_gr &= np.isfinite(vals)
-                if np.count_nonzero(valid_gr) >= 2:
-                    order = np.argsort(Gr_h_c[valid_gr])
+                valid_x_gr = np.isfinite(Gr_h_c) & (Gr_h_c > 0.0)
+                series_with_data = []
+                for label, vals in momentum_term_series:
+                    valid = valid_x_gr & np.isfinite(vals)
+                    if np.count_nonzero(valid) >= 2:
+                        series_with_data.append((label, vals, valid))
+                if series_with_data:
                     fig, ax = plt.subplots(figsize=plot_figsize)
-                    xgr = Gr_h_c[valid_gr][order]
-                    for label, vals in momentum_term_series:
-                        ax.plot(xgr, vals[valid_gr][order], label=label)
+                    for label, vals, valid in series_with_data:
+                        order = np.argsort(Gr_h_c[valid])
+                        ax.plot(Gr_h_c[valid][order], vals[valid][order], label=label)
                     ax.set_xscale("log")
                     ax.set_xlabel(r"$Gr_h=g\beta\Theta h^3/\nu^2$ [-]")
                     ax.set_ylabel("vertical momentum term [N/m]")
