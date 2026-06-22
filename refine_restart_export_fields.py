@@ -69,21 +69,37 @@ def mkdir0(path: str | Path) -> None:
     fenics.MPI.barrier(COMM)
 
 
+def _mpi4py_comm():
+    """Return an mpi4py communicator for legacy DOLFIN variants.
+
+    Some installations expose fenics.MPI.comm_world as a DOLFIN MPICommWrapper
+    with .tompi4py(); others already expose an mpi4py Intracomm.
+    """
+    if hasattr(COMM, "tompi4py"):
+        return COMM.tompi4py()
+    if hasattr(COMM, "allreduce"):
+        return COMM
+    return None
+
+
 def global_min(x: float) -> float:
-    if MPI4Py is not None:
-        return COMM.tompi4py().allreduce(float(x), op=MPI4Py.MIN)
+    comm = _mpi4py_comm()
+    if MPI4Py is not None and comm is not None:
+        return float(comm.allreduce(float(x), op=MPI4Py.MIN))
     return float(fenics.MPI.min(COMM, float(x)))
 
 
 def global_max(x: float) -> float:
-    if MPI4Py is not None:
-        return COMM.tompi4py().allreduce(float(x), op=MPI4Py.MAX)
+    comm = _mpi4py_comm()
+    if MPI4Py is not None and comm is not None:
+        return float(comm.allreduce(float(x), op=MPI4Py.MAX))
     return float(fenics.MPI.max(COMM, float(x)))
 
 
 def global_sum_int(x: int) -> int:
-    if MPI4Py is not None:
-        return int(COMM.tompi4py().allreduce(int(x), op=MPI4Py.SUM))
+    comm = _mpi4py_comm()
+    if MPI4Py is not None and comm is not None:
+        return int(comm.allreduce(int(x), op=MPI4Py.SUM))
     return int(fenics.MPI.sum(COMM, int(x)))
 
 
