@@ -3775,6 +3775,8 @@ def main() -> None:
                     "bottom_height_above_wire_m": float(y_bottom_cum - wire_y_m),
                     "bottom_Gr_h": float(Gr_h_bottom),
                     "Gr_h_definition": "g*beta*(Q_line/(rho*cp*nu))*h^3/nu^2, with h measured from wire centre",
+                    "actual_top_momentum_flow_N_per_m": float(row_i.get("advective_top_N_per_m", np.nan)),
+                    "actual_bottom_momentum_inflow_N_per_m": float(-row_i.get("advective_bottom_N_per_m", np.nan)) if np.isfinite(float(row_i.get("advective_bottom_N_per_m", np.nan))) else np.nan,
                     "increase_of_momentum_top_minus_bottom_N_per_m": adv_tb,
                     "buoyancy_N_per_m": buoy,
                     "entrainment_advective_side_flux_N_per_m": entrainment,
@@ -3793,6 +3795,7 @@ def main() -> None:
             if cumulative_selected_momentum_rows:
                 hc = np.array([r["top_height_above_wire_m"] for r in cumulative_selected_momentum_rows], dtype=float)
                 momentum_term_series = [
+                    ("actual top momentum flow", np.array([r["actual_top_momentum_flow_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("momentum gain", np.array([r["increase_of_momentum_top_minus_bottom_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("buoyancy force", np.array([r["buoyancy_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
                     ("entrainment (into CV)", np.array([r["entrainment_advective_side_flux_N_per_m"] for r in cumulative_selected_momentum_rows], dtype=float)),
