@@ -154,7 +154,7 @@ def make_indicator(mesh: fenics.Mesh, theta: fenics.Function, u: fenics.Function
     grad_u = fenics.sqrt(fenics.inner(fenics.grad(u), fenics.grad(u)) + fenics.DOLFIN_EPS)
     speed = fenics.sqrt(fenics.inner(u, u) + fenics.DOLFIN_EPS)
     eta_expr = h * (grad_theta + fenics.Constant(float(u_weight)) * grad_u)
-    eta_expr += fenics.Constant(float(theta_weight)) * fenics.abs(theta)
+    eta_expr += fenics.Constant(float(theta_weight)) * fenics.sqrt(theta * theta + fenics.DOLFIN_EPS)
     eta_expr += fenics.Constant(float(speed_weight)) * speed
     return fenics.project(eta_expr, V0, solver_type="mumps")
 
