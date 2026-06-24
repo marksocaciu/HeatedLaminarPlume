@@ -987,8 +987,11 @@ def run_post_abe_continuation_transient(
                     for key, value in row.items():
                         if key is None:
                             continue
-                        if value is None or value == "":
-                            converted[key] = value
+                        # if value is None or value == "":
+                        #     converted[key] = value
+                        #     continue
+                        if value is None or str(value).strip() == "":
+                            converted[key] = float("nan")
                             continue
                         try:
                             converted[key] = int(value) if key == "step" else float(value)
@@ -1218,10 +1221,37 @@ def run_post_abe_continuation_transient(
             pass
         return float(dt_value)
 
+    # def _window_mean(values):
+    #     vals = [float(v) for v in values if np.isfinite(v)]
+    #     if not vals:
+    #         return float("nan")
+    #     return float(np.mean(vals))
+    def _as_finite_float(v):
+        try:
+            if v is None:
+                return None
+            if isinstance(v, str):
+                v = v.strip()
+                if v == "":
+                    return None
+            x = float(v)
+            if np.isfinite(x):
+                return x
+        except Exception:
+            return None
+        return None
+
+
     def _window_mean(values):
-        vals = [float(v) for v in values if np.isfinite(v)]
+        vals = []
+        for v in values:
+            x = _as_finite_float(v)
+            if x is not None:
+                vals.append(x)
+
         if not vals:
             return float("nan")
+
         return float(np.mean(vals))
 
     def _statistically_steady(rows):
@@ -1232,9 +1262,14 @@ def run_post_abe_continuation_transient(
         keys = [f"uy_{y:.3f}m" for y in probe_heights_m] + [f"theta_{y:.3f}m" for y in probe_heights_m]
         drifts = []
         for key in keys:
+            # m_prev = _window_mean([r.get(key, float("nan")) for r in prev])
+            # m_curr = _window_mean([r.get(key, float("nan")) for r in curr])
+            # if np.isfinite(m_prev) and np.isfinite(m_curr):
+            #     drifts.append(abs(m_curr - m_prev) / (abs(m_curr) + 1.0e-14))
             m_prev = _window_mean([r.get(key, float("nan")) for r in prev])
             m_curr = _window_mean([r.get(key, float("nan")) for r in curr])
-            if np.isfinite(m_prev) and np.isfinite(m_curr):
+
+            if np.isfinite(float(m_prev)) and np.isfinite(float(m_curr)):
                 drifts.append(abs(m_curr - m_prev) / (abs(m_curr) + 1.0e-14))
         if not drifts:
             return False, float("nan")
