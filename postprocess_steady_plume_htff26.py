@@ -368,6 +368,56 @@ def robust_trapz(y: np.ndarray, x: np.ndarray) -> float:
     return float(np.trapezoid(y[mask], x[mask]))
 
 
+def integrate_horizontal_convective_enthalpy(
+    Ti,
+    uyi,
+    xpts: np.ndarray,
+    y: float,
+    rho: float,
+    cp: float,
+    T_inf: float,
+) -> Dict[str, float | int]:
+    """Integrate rho*cp*u_y*(T-T_inf) on a horizontal cut.
+
+    The signed value is the true convective enthalpy flux through the cut.
+    The upward/downward splits are useful in closed domains where recirculation
+    can carry warm fluid downward in the outer region.
+    """
+    xpts = np.asarray(xpts, dtype=float)
+    ypts = np.full_like(xpts, float(y), dtype=float)
+    Tline = finite_or_nan(Ti(xpts, ypts))
+    uyline = finite_or_nan(uyi(xpts, ypts))
+    dT = Tline - float(T_inf)
+    qconv = float(rho) * float(cp) * uyline * dT
+    good = np.isfinite(xpts) & np.isfinite(uyline) & np.isfinite(dT) & np.isfinite(qconv)
+    if np.count_nonzero(good) < 2:
+        return {
+            "n_enthalpy_samples": int(np.count_nonzero(good)),
+            "enthalpy_signed_W_per_m": np.nan,
+            "enthalpy_upward_only_W_per_m": np.nan,
+            "enthalpy_downward_only_W_per_m": np.nan,
+            "enthalpy_upward_positive_temperature_W_per_m": np.nan,
+            "enthalpy_abs_vertical_flow_W_per_m": np.nan,
+        }
+    xx = xpts[good]
+    uu = uyline[good]
+    dd = dT[good]
+    qq = qconv[good]
+    order = np.argsort(xx)
+    xx = xx[order]
+    uu = uu[order]
+    dd = dd[order]
+    qq = qq[order]
+    return {
+        "n_enthalpy_samples": int(xx.size),
+        "enthalpy_signed_W_per_m": robust_trapz(qq, xx),
+        "enthalpy_upward_only_W_per_m": robust_trapz(np.where(uu > 0.0, qq, 0.0), xx),
+        "enthalpy_downward_only_W_per_m": robust_trapz(np.where(uu < 0.0, qq, 0.0), xx),
+        "enthalpy_upward_positive_temperature_W_per_m": robust_trapz(np.where((uu > 0.0) & (dd > 0.0), qq, 0.0), xx),
+        "enthalpy_abs_vertical_flow_W_per_m": robust_trapz(np.abs(qq), xx),
+    }
+
+
 def first_crossing_half_width(x: np.ndarray, f: np.ndarray, threshold: float, side: str) -> float:
     """Return distance from x=0 to first |x| where f <= threshold on one side."""
     mask = np.isfinite(x) & np.isfinite(f)
@@ -2866,8 +2916,13 @@ def main() -> None:
             qcond_y = -args.k * finite_or_nan(dTdy_line)
         qconv_y = args.rho * args.cp * uyline * theta
         Qconv = robust_trapz(qconv_y, xs)
+        Qconv_up = robust_trapz(np.where(uyline > 0.0, qconv_y, 0.0), xs)
+        Qconv_down = robust_trapz(np.where(uyline < 0.0, qconv_y, 0.0), xs)
+        Qconv_up_positive_temp = robust_trapz(np.where((uyline > 0.0) & (theta > 0.0), qconv_y, 0.0), xs)
+        Qconv_abs_vertical_flow = robust_trapz(np.abs(qconv_y), xs)
         Qcond = robust_trapz(qcond_y, xs)
         mom_y = robust_trapz(args.rho * uyline * uyline, xs)
+        mom_y_signed = robust_trapz(args.rho * uyline * np.abs(uyline), xs)
         ke_flux = robust_trapz(0.5 * args.rho * speed2 * uyline, xs)
         mass_flux = robust_trapz(args.rho * uyline, xs)
         buoy_line = np.nan
@@ -2877,8 +2932,19 @@ def main() -> None:
             "y_m": yp,
             "height_above_wire_m": yp - wire_y_m,
             "Q_total_W_per_m": Qconv + Qcond,
+            "Q_conv_signed_W_per_m": Qconv,
+            "Q_conv_upward_only_W_per_m": Qconv_up,
+            "Q_conv_downward_only_W_per_m": Qconv_down,
+            "Q_conv_upward_positive_temperature_W_per_m": Qconv_up_positive_temp,
+            "Q_conv_abs_vertical_flow_W_per_m": Qconv_abs_vertical_flow,
+            "Q_cond_y_W_per_m": Qcond,
+            "enthalpy_signed_W_per_m": Qconv,
+            "enthalpy_upward_only_W_per_m": Qconv_up,
+            "enthalpy_downward_only_W_per_m": Qconv_down,
+            "enthalpy_upward_positive_temperature_W_per_m": Qconv_up_positive_temp,
             "mass_flux_kg_per_s_per_m": mass_flux,
             "vertical_momentum_flux_N_per_m": mom_y,
+            "signed_vertical_momentum_flux_N_per_m": mom_y_signed,
             "kinetic_energy_flux_W_per_m": ke_flux,
             "buoyancy_force_density_integral_N_per_m2": buoy_line,
         })
@@ -2896,6 +2962,21 @@ def main() -> None:
             for r, c in zip(balance_rows, cum):
                 r["cumulative_buoyancy_N_per_m"] = c
     write_csv(outdir / "balance_curves.csv", balance_rows)
+    enthalpy_flow_rows = []
+    for r in balance_rows:
+        enthalpy_flow_rows.append({
+            "y_m": r.get("y_m", np.nan),
+            "height_above_wire_m": r.get("height_above_wire_m", np.nan),
+            "enthalpy_signed_W_per_m": r.get("enthalpy_signed_W_per_m", np.nan),
+            "enthalpy_upward_only_W_per_m": r.get("enthalpy_upward_only_W_per_m", np.nan),
+            "enthalpy_downward_only_W_per_m": r.get("enthalpy_downward_only_W_per_m", np.nan),
+            "enthalpy_upward_positive_temperature_W_per_m": r.get("enthalpy_upward_positive_temperature_W_per_m", np.nan),
+            "enthalpy_abs_vertical_flow_W_per_m": r.get("Q_conv_abs_vertical_flow_W_per_m", np.nan),
+            "conductive_vertical_heat_flow_W_per_m": r.get("Q_cond_y_W_per_m", np.nan),
+            "total_vertical_heat_flow_W_per_m": r.get("Q_total_W_per_m", np.nan),
+            "vertical_momentum_flux_N_per_m": r.get("vertical_momentum_flux_N_per_m", np.nan),
+        })
+    write_csv(outdir / "enthalpy_flow_vs_height.csv", enthalpy_flow_rows)
 
     # Momentum/buoyancy balance proxy.
     # This is not a closed Navier-Stokes momentum balance because pressure, viscous
@@ -3086,6 +3167,15 @@ def main() -> None:
                  ("unresolved cumulative terms", np.array([r["cumulative_unresolved_terms_proxy_N_per_m"] for r in momentum_rows], dtype=float))],
                 "height above wire [m]", "force per unit depth [N/m]",
                 "Cumulative vertical momentum-balance proxy")
+
+    if enthalpy_flow_rows:
+        eh_cont = np.array([r["height_above_wire_m"] for r in enthalpy_flow_rows], dtype=float)
+        plot_xy(outdir / "enthalpy_flow_vs_height.png", eh_cont,
+                [("signed enthalpy flow", np.array([r["enthalpy_signed_W_per_m"] for r in enthalpy_flow_rows], dtype=float)),
+                 ("upward enthalpy flow", np.array([r["enthalpy_upward_only_W_per_m"] for r in enthalpy_flow_rows], dtype=float)),
+                 ("downward enthalpy flow", np.array([r["enthalpy_downward_only_W_per_m"] for r in enthalpy_flow_rows], dtype=float))],
+                "height above wire [m]", "convective enthalpy flow [W/m]",
+                "Convective enthalpy flow at momentum-balance heights")
 
     if full_momentum_rows:
         mhf = np.array([r["height_top_above_wire_m"] for r in full_momentum_rows], dtype=float)
@@ -3769,6 +3859,19 @@ def main() -> None:
                     )
                     else np.nan
                 )
+                xhalf_top = float(np.asarray(geom_i["x_half_fun"](np.asarray([geom_i["y_top_m"]], dtype=float)), dtype=float)[0])
+                xhalf_bottom = float(np.asarray(geom_i["x_half_fun"](np.asarray([geom_i["y_bottom_m"]], dtype=float)), dtype=float)[0])
+                n_hline = max(201, min(int(args.energy_cv_n_boundary), 1001))
+                x_top_enthalpy = np.linspace(-xhalf_top, xhalf_top, n_hline)
+                x_bottom_enthalpy = np.linspace(-xhalf_bottom, xhalf_bottom, n_hline)
+                H_top = integrate_horizontal_convective_enthalpy(
+                    Ti, uyi, x_top_enthalpy, float(geom_i["y_top_m"]),
+                    rho=float(args.rho), cp=float(args.cp), T_inf=float(args.T_inf),
+                )
+                H_bottom = integrate_horizontal_convective_enthalpy(
+                    Ti, uyi, x_bottom_enthalpy, float(geom_i["y_bottom_m"]),
+                    rho=float(args.rho), cp=float(args.cp), T_inf=float(args.T_inf),
+                )
                 cumulative_selected_momentum_rows.append({
                     "top_height_above_wire_m": float(ht),
                     "top_Gr_h": float(Gr_h_top),
@@ -3777,6 +3880,15 @@ def main() -> None:
                     "Gr_h_definition": "g*beta*(Q_line/(rho*cp*nu))*h^3/nu^2, with h measured from wire centre",
                     "actual_top_momentum_flow_N_per_m": float(row_i.get("advective_top_N_per_m", np.nan)),
                     "actual_bottom_momentum_inflow_N_per_m": float(-row_i.get("advective_bottom_N_per_m", np.nan)) if np.isfinite(float(row_i.get("advective_bottom_N_per_m", np.nan))) else np.nan,
+                    "top_enthalpy_signed_W_per_m": float(H_top.get("enthalpy_signed_W_per_m", np.nan)),
+                    "top_enthalpy_upward_only_W_per_m": float(H_top.get("enthalpy_upward_only_W_per_m", np.nan)),
+                    "top_enthalpy_downward_only_W_per_m": float(H_top.get("enthalpy_downward_only_W_per_m", np.nan)),
+                    "bottom_enthalpy_signed_W_per_m": float(H_bottom.get("enthalpy_signed_W_per_m", np.nan)),
+                    "bottom_enthalpy_upward_only_W_per_m": float(H_bottom.get("enthalpy_upward_only_W_per_m", np.nan)),
+                    "enthalpy_gain_top_minus_bottom_signed_W_per_m": float(H_top.get("enthalpy_signed_W_per_m", np.nan)) - float(H_bottom.get("enthalpy_signed_W_per_m", np.nan)),
+                    "top_enthalpy_window_half_width_m": xhalf_top,
+                    "bottom_enthalpy_window_half_width_m": xhalf_bottom,
+                    "n_enthalpy_top_samples": int(H_top.get("n_enthalpy_samples", 0)),
                     "increase_of_momentum_top_minus_bottom_N_per_m": adv_tb,
                     "buoyancy_N_per_m": buoy,
                     "entrainment_advective_side_flux_N_per_m": entrainment,
@@ -3831,6 +3943,34 @@ def main() -> None:
                     ax.grid(True, which="both", alpha=0.35)
                     place_legend_outside_right(ax)
                     save_figure_full(fig, outdir / "selected_cv_momentum_cumulative_terms_vs_Gr_h.png", dpi=220)
+                    plt.close(fig)
+
+                enthalpy_term_series = [
+                    ("top signed enthalpy flow", np.array([r.get("top_enthalpy_signed_W_per_m", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("top upward enthalpy flow", np.array([r.get("top_enthalpy_upward_only_W_per_m", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("bottom signed enthalpy flow", np.array([r.get("bottom_enthalpy_signed_W_per_m", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)),
+                    ("top-bottom signed enthalpy gain", np.array([r.get("enthalpy_gain_top_minus_bottom_signed_W_per_m", np.nan) for r in cumulative_selected_momentum_rows], dtype=float)),
+                ]
+                plot_xy(outdir / "selected_cv_enthalpy_cumulative_flow.png", hc,
+                        enthalpy_term_series,
+                        "top height above wire [m]", "convective enthalpy flow [W/m]",
+                        "Selected-CV enthalpy flow at cumulative momentum heights",
+                        figsize=plot_figsize, show_titles=args.plot_titles, dpi=220)
+
+                if series_with_data:
+                    fig, ax = plt.subplots(figsize=plot_figsize)
+                    for label, vals in enthalpy_term_series:
+                        valid = valid_x_gr & np.isfinite(vals)
+                        if np.count_nonzero(valid) >= 2:
+                            order = np.argsort(Gr_h_c[valid])
+                            ax.plot(Gr_h_c[valid][order], vals[valid][order], label=label)
+                    ax.set_xscale("log")
+                    ax.set_xlabel(r"$Gr_h=g\beta\Theta h^3/\nu^2$ [-]")
+                    ax.set_ylabel("convective enthalpy flow [W/m]")
+                    maybe_set_ax_title(ax, r"Selected-CV enthalpy flow vs $Gr_h$", args.plot_titles)
+                    ax.grid(True, which="both", alpha=0.35)
+                    place_legend_outside_right(ax)
+                    save_figure_full(fig, outdir / "selected_cv_enthalpy_cumulative_flow_vs_Gr_h.png", dpi=220)
                     plt.close(fig)
         except Exception as exc:
             cumulative_selected_momentum_rows.append({
