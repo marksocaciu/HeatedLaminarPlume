@@ -1616,7 +1616,7 @@ def build_buoyancy_force_from_theta(theta_air_star, experiment):
 
     # Gravity direction follows your existing convention:
     # upward plume from vertical buoyancy; adjust sign if your star formulation differs.
-    gvec = fenics.Constant((0.0, 1.0))
+    gvec = fenics.Constant((0.0, -1.0))
 
     # Standard nondimensional buoyancy: (Ra / Pr) * theta * g
     f_b = (Ra / Pr) * theta_air_star * gvec
