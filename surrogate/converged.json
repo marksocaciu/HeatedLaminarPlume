@@ -9,25 +9,25 @@
     {
       "case_id": "brodowicz_reduced_2",
       "experiment_index": 1,
-      "run_root": "PlumeCase_Brodowitz_reduced_2/runs/base_20260522_161759_pid318951/",
+      "run_root": "../PlumeCase_Brodowitz_reduced_2/runs/base_20260522_161759_pid318951/",
       "steady_checkpoint": "base/steady_from_transient_checkpoint"
     },
     {
       "case_id": "deschamps_desrayaud_air_cylinder_ra1e6_14",
       "experiment_index": 7,
-      "run_root": "PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260514_115237_pid4001315/",
+      "run_root": "../PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260514_115237_pid4001315/",
       "steady_checkpoint": "base/steady_from_transient_checkpoint"
     },
     {
       "case_id": "deschamps_desrayaud_air_cylinder_ra1e6_18",
       "experiment_index": 7,
-      "run_root": "PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260518_213901_pid3314469/",
+      "run_root": "../PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260518_213901_pid3314469/",
       "steady_checkpoint": "base/steady_from_transient_checkpoint"
     },
     {
       "case_id": "deschamps_desrayaud_air_cylinder_ra1e6_A2",
       "experiment_index": 8,
-      "run_root": "PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6_A2/runs/base_20260814_122933_pid1701134/",
+      "run_root": "../PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6_A2/runs/base_20260814_122933_pid1701134/",
       "steady_checkpoint": "base/steady_from_transient_checkpoint"
     }
   ]
