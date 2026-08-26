@@ -1,0 +1,30 @@
+{
+  "sampling": {
+    "near_wire_fraction": 0.35,
+    "near_wire_Rwire": 4.0,
+    "plume_fraction": 0.35,
+    "plume_half_width_X": 0.12
+  },
+  "cases": [
+    {
+      "experiment_index": 1,
+      "run_root": "/PlumeCase_Brodowitz_reduced_2/runs/base_20260522_161759_pid318951/",
+      "steady_checkpoint": "base/steady_from_transient_checkpoint"
+    },
+    {
+      "experiment_index": 7,
+      "run_root": "/PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260514_115237_pid4001315/",
+      "steady_checkpoint": "base/steady_from_transient_checkpoint"
+    },
+    {
+      "experiment_index": 7,
+      "run_root": "/PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6/runs/base_20260518_213901_pid3314469/",
+      "steady_checkpoint": "base/steady_from_transient_checkpoint"
+    },
+    {
+      "experiment_index": 7,
+      "run_root": "/PlumeCase_PlumeCase_DeschampsDesrayaud_Air_Cylinder_Ra1e6_A2/runs/base_20260814_122933_pid1701134/",
+      "steady_checkpoint": "base/steady_from_transient_checkpoint"
+    }
+  ]
+}
