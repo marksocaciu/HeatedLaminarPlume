@@ -24,6 +24,10 @@ from utils.parser import parser
 from utils.transfer import scale_mesh_inplace
 
 from surrogate.model import NpzSurrogate
+from surrogate.common import (
+    INPUT_NAMES, case_features, case_geometry, length_reference,
+    load_registry, ml_coordinates,
+)
 
 
 def _nested(obj, path, default=None):
@@ -50,70 +54,35 @@ def _first_number(experiment, paths, default=None):
     raise KeyError("Experiment has none of: %s" % ", ".join(paths))
 
 
-def experiment_feature_values(experiment, scales):
-    """Return named constant controls available to the learned model."""
-    diameter = _first_number(experiment, ("dimensions.wire.diameter",))
-    values = {
-        "pr": scales.Pr,
-        "ra": scales.Ra,
-        "gr": scales.Gr,
-        "gr_wire": scales.Gr_wire,
-        "wire_diameter": diameter,
-        "diameter": diameter,
-        "lref": scales.Lref,
-        "dtref": scales.dTref,
-        "uref": scales.Uref,
-        "uplume": scales.Uplume,
-        "q_line": scales.QL,
-        "ql": scales.QL,
-        "q_surface": scales.qsurf,
-        "x_min_star": _first_number(
-            experiment, ("dimensions.domain.x_min",), 0.0) / scales.Lref,
-        "x_max_star": _first_number(
-            experiment, ("dimensions.domain.x_max",)) / scales.Lref,
-        "y_min_star": _first_number(
-            experiment, ("dimensions.domain.y_min",), 0.0) / scales.Lref,
-        "y_max_star": _first_number(
-            experiment, ("dimensions.domain.y_max",)) / scales.Lref,
-    }
-    # Common training-script spellings.
-    values.update({"Pr": values["pr"], "Ra": values["ra"],
-                   "Gr": values["gr"], "Gr_wire": values["gr_wire"],
-                   "QL": values["ql"]})
-    return values
-
-
-def build_features(coords, feature_names, experiment, scales):
-    constants = experiment_feature_values(experiment, scales)
-    x_star, y_star = coords[:, 0], coords[:, 1]
-    coordinate_values = {
-        "x": x_star, "y": y_star, "x_star": x_star, "y_star": y_star,
-        "x_hat": x_star, "y_hat": y_star,
-    }
-    columns = []
-    unknown = []
-    for name in feature_names:
-        name_lower = name.lower()
-        if name_lower in coordinate_values:
-            columns.append(coordinate_values[name_lower])
-        elif name in constants and constants[name] is not None:
-            columns.append(np.full(coords.shape[0], constants[name], dtype=float))
-        elif name_lower in constants and constants[name_lower] is not None:
-            columns.append(np.full(coords.shape[0], constants[name_lower], dtype=float))
-        else:
-            unknown.append(name)
-    if unknown:
+def build_features(coords, feature_names, experiment, case, scales):
+    """Reproduce the dataset's exact nine inputs at solver-star coordinates."""
+    geometry = case_geometry(experiment, case)
+    lref = length_reference(experiment, case, geometry)
+    if not np.isclose(lref, float(scales.Lref), rtol=1.0e-12, atol=0.0):
         raise ValueError(
-            "Cannot construct surrogate features %s from this experiment. "
-            "Rename them to supported coordinate/control names or add them to "
-            "experiment_feature_values()." % ", ".join(unknown)
+            "Dataset length_reference %.16e differs from solver Lref %.16e; "
+            "a restart mesh cannot use two coordinate scalings" %
+            (lref, float(scales.Lref))
         )
-    return np.column_stack(columns)
+    spatial = ml_coordinates(coords, geometry, lref)
+    constants = case_features(experiment, case, geometry)
+    canonical = np.column_stack(
+        (spatial, np.tile(constants, (coords.shape[0], 1))))
+    canonical_names = [str(name) for name in INPUT_NAMES.tolist()]
+    indices = []
+    for name in feature_names:
+        if name not in canonical_names:
+            raise ValueError(
+                "Model feature %r is not in the dataset schema %s" %
+                (name, canonical_names)
+            )
+        indices.append(canonical_names.index(name))
+    return canonical[:, indices]
 
 
-def _predict_column(model, coords, experiment, scales, aliases, default=None):
+def _predict_column(model, coords, experiment, case, scales, aliases, default=None):
     output = model.predict(build_features(
-        coords, model.feature_names, experiment, scales))
+        coords, model.feature_names, experiment, case, scales))
     index = model.target_index(*aliases)
     if index is None:
         if default is None:
@@ -135,7 +104,7 @@ def _function_from_values(space, values, name):
     return function
 
 
-def predict_state(mesh_star, experiment, model, clip_theta=True):
+def predict_state(mesh_star, experiment, case, model, clip_theta=True):
     W = build_mixed_space_on_mesh(mesh_star)
     Vp, _ = W.sub(0).collapse(True)
     Vu, _ = W.sub(1).collapse(True)
@@ -149,16 +118,16 @@ def predict_state(mesh_star, experiment, model, clip_theta=True):
             (-1, mesh_star.geometry().dim()))
 
     p_values = _predict_column(
-        model, coords(Vp), experiment, scales,
+        model, coords(Vp), experiment, case, scales,
         ("p_star", "p", "pressure_star"), default=0.0)
     ux_values = _predict_column(
-        model, coords(Vux), experiment, scales,
+        model, coords(Vux), experiment, case, scales,
         ("u_star", "ux_star", "u", "ux"))
     uy_values = _predict_column(
-        model, coords(Vuy), experiment, scales,
+        model, coords(Vuy), experiment, case, scales,
         ("v_star", "uy_star", "v", "uy"))
     theta_values = _predict_column(
-        model, coords(VT), experiment, scales,
+        model, coords(VT), experiment, case, scales,
         ("theta_star", "theta", "temperature_star"))
     if clip_theta:
         theta_values = np.maximum(theta_values, 0.0)
@@ -192,6 +161,23 @@ def _select_experiment(experiments, index, name):
     return experiments[index]
 
 
+def _select_case(registry, experiment_index, case_id=None):
+    matches = [case for case in registry["cases"]
+               if int(case["experiment_index"]) == int(experiment_index)]
+    if case_id:
+        matches = [case for case in matches
+                   if str(case.get("case_id", "")) == str(case_id)]
+    if len(matches) != 1:
+        raise ValueError(
+            "Expected exactly one registry case for experiment %d%s; found %d. "
+            "Use --case-id when the registry contains multiple matching cases." %
+            (experiment_index,
+             " and case_id %r" % case_id if case_id else "",
+             len(matches))
+        )
+    return matches[0]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--experiments-json", required=True)
@@ -200,6 +186,12 @@ def main():
     choice.add_argument("--experiment-index", type=int)
     choice.add_argument("--experiment")
     ap.add_argument("--model", required=True)
+    ap.add_argument(
+        "--registry",
+        default=os.path.join(os.path.dirname(__file__), "converged.json"),
+        help="Case registry used by build_dataset.py (default: converged.json)")
+    ap.add_argument("--case-id",
+                    help="Registry case_id when an experiment has multiple cases")
     ap.add_argument("--air-cells",
                     help="Dimensional air-only cells XDMF for this experiment")
     ap.add_argument("--air-facets",
@@ -229,6 +221,9 @@ def main():
     experiment = _select_experiment(
         experiments, args.experiment_index if args.experiment_index is not None else 0,
         args.experiment)
+    experiment_index = experiments.index(experiment)
+    registry = load_registry(os.path.abspath(args.registry))
+    case = _select_case(registry, experiment_index, args.case_id)
     scales = compute_nondimensional_scales(experiment)
     model = NpzSurrogate(args.model)
 
@@ -248,13 +243,17 @@ def main():
     mesh.bounding_box_tree().build(mesh)
 
     _, w_n = predict_state(
-        mesh, experiment, model, clip_theta=not args.allow_negative_theta)
+        mesh, experiment, case, model,
+        clip_theta=not args.allow_negative_theta)
     meta = {
         "step": 0,
         "time": 0.0,
         "dt": float(args.dt),
         "source": "surrogate_initial_guess",
         "experiment": str(experiment.name),
+        "experiment_index": int(experiment_index),
+        "surrogate_case_id": str(case.get("case_id", "")),
+        "surrogate_registry": os.path.abspath(args.registry),
         "surrogate_model": os.path.abspath(args.model),
         "surrogate_features": model.feature_names,
         "surrogate_targets": model.target_names,
