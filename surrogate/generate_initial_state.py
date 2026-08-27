@@ -162,20 +162,50 @@ def _select_experiment(experiments, index, name):
 
 
 def _select_case(registry, experiment_index, case_id=None):
-    matches = [case for case in registry["cases"]
-               if int(case["experiment_index"]) == int(experiment_index)]
+    """Return optional per-case overrides for the target experiment.
+
+    The registry contains *converged training cases*.  A new target experiment
+    therefore legitimately has no registry entry.  In that case an empty dict is
+    returned, causing case_geometry(), length_reference(), and case_features() to
+    use the experiment definition itself.
+
+    A case_id remains useful when deliberately generating from an experiment that
+    has multiple registered variants/overrides.
+    """
+    matches = [
+        case for case in registry["cases"]
+        if int(case["experiment_index"]) == int(experiment_index)
+    ]
+
     if case_id:
-        matches = [case for case in matches
-                   if str(case.get("case_id", "")) == str(case_id)]
-    if len(matches) != 1:
-        raise ValueError(
-            "Expected exactly one registry case for experiment %d%s; found %d. "
-            "Use --case-id when the registry contains multiple matching cases." %
-            (experiment_index,
-             " and case_id %r" % case_id if case_id else "",
-             len(matches))
+        selected = [
+            case for case in matches
+            if str(case.get("case_id", "")) == str(case_id)
+        ]
+        if len(selected) != 1:
+            raise ValueError(
+                "Expected exactly one registry case for experiment %d and "
+                "case_id %r; found %d." %
+                (experiment_index, case_id, len(selected))
+            )
+        return selected[0]
+
+    if len(matches) == 0:
+        # This is the normal path for a genuinely new, unsolved experiment.
+        print(
+            "No converged registry entry for target experiment %d; "
+            "using experiment-defined geometry/features." % experiment_index
         )
-    return matches[0]
+        return {}
+
+    if len(matches) == 1:
+        return matches[0]
+
+    raise ValueError(
+        "Registry contains %d cases for experiment %d. "
+        "Use --case-id to choose which per-case overrides to apply." %
+        (len(matches), experiment_index)
+    )
 
 
 def main():
